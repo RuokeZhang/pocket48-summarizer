@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}口袋48直播总结{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Pocket48 replay workflow</p>
+      <h1>粘贴回放链接，自动生成字幕与总结</h1>
+      <p class="lede">公开回放 → 音频提取 → Paraformer 字幕 → 弹幕高光 → AI 结构化总结。</p>
+    </div>
+  </section>
+
+  {% if missing_configuration %}
+    <section class="notice warning">
+      <strong>处理配置尚未就绪</strong>
+      <p>请在 <code>.env</code> 中补齐：{{ missing_configuration | join(", ") }}</p>
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <form id="create-job-form" class="submit-form">
+      <label for="share-url">口袋48成员直播分享链接</label>
+      <div class="input-row">
+        <input
+          id="share-url"
+          name="url"
+          type="url"
+          required
+          placeholder="https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=..."
+          autocomplete="off"
+        >
+        <button type="submit" {% if missing_configuration %}disabled{% endif %}>开始处理</button>
+      </div>
+      <p id="create-job-error" class="form-error" role="alert"></p>
+      <small>仅支持已结束、无需登录即可访问的公开回放。</small>
+    </form>
+  </section>
+
+  <section class="section-heading">
+    <div>
+      <p class="eyebrow">History</p>
+      <h2>最近任务</h2>
+    </div>
+  </section>
+
+  <section class="job-grid">
+    {% for job in jobs %}
+      <a class="job-card" href="/jobs/{{ job.id }}">
+        <div class="job-card-top">
+          <span class="status status-{{ job.status }}">{{ job.status }}</span>
+          <time>{{ job.created_at[:19].replace("T", " ") }}</time>
+        </div>
+        <h3>{{ job.title or "等待解析回放" }}</h3>
+        <p>{{ job.member_name or "未知主播" }} · {{ job.live_id }}</p>
+        <div class="progress-track"><span style="width: {{ job.progress_percent }}%"></span></div>
+        <small>{{ job.progress_message }}</small>
+      </a>
+    {% else %}
+      <div class="empty-state">
+        <strong>还没有任务</strong>
+        <p>提交一个公开回放链接后，处理进度会显示在这里。</p>
+      </div>
+    {% endfor %}
+  </section>
+{% endblock %}

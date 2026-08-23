@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}请求失败{% endblock %}
+{% block content %}
+  <section class="panel error-page">
+    <p class="eyebrow">Error</p>
+    <h1>{{ error.message }}</h1>
+    <p><code>{{ error.code }}</code></p>
+    <a class="button-link" href="/">返回首页</a>
+  </section>
+{% endblock %}

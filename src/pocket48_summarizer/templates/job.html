@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title or "处理回放" }}{% endblock %}
+{% block content %}
+  <section
+    class="job-hero"
+    data-job-id="{{ job.id }}"
+    data-job-active="{{ 'true' if job.status in ['queued', 'running'] else 'false' }}"
+  >
+    <a class="back-link" href="/">← 返回任务列表</a>
+    <div class="job-title-row">
+      <div>
+        <p class="eyebrow">{{ job.member_name or "等待解析主播" }}</p>
+        <h1>{{ job.title or "正在解析回放" }}</h1>
+        <p class="job-meta">直播 ID：<code>{{ job.live_id }}</code>{% if job.replay_started_at %} · {{ job.replay_started_at[:19].replace("T", " ") }}{% endif %}</p>
+      </div>
+      <span id="job-status" class="status status-{{ job.status }}">{{ job.status }}</span>
+    </div>
+    <div class="progress-track large"><span id="job-progress-bar" style="width: {{ job.progress_percent }}%"></span></div>
+    <div class="progress-copy">
+      <strong id="job-progress-message">{{ job.progress_message }}</strong>
+      <span id="job-progress-percent">{{ job.progress_percent }}%</span>
+    </div>
+  </section>
+
+  {% if job.error_message %}
+    <section class="notice error">
+      <strong>{{ job.error_code }}</strong>
+      <p>{{ job.error_message }}</p>
+      {% if job.error_retryable %}
+        <button id="retry-job" type="button">重试任务</button>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if job.cleanup_warning %}
+    <section class="notice warning">
+      <strong>结果已保存，但临时文件清理需要注意</strong>
+      <p>{{ job.cleanup_warning }}</p>
+    </section>
+  {% endif %}
+
+  {% if job.status == "completed" %}
+    <nav class="download-row">
+      <a href="/jobs/{{ job.id }}/transcript.srt">下载 SRT</a>
+      <a href="/jobs/{{ job.id }}/asr.json">下载 ASR JSON</a>
+      <a href="/jobs/{{ job.id }}/summary.md">下载 Markdown</a>
+    </nav>
+  {% endif %}
+
+  {% if summary %}
+    <section class="panel summary-panel">
+      <p class="eyebrow">Overview</p>
+      <h2>摘要</h2>
+      <p class="summary-overview">{{ summary.overview }}</p>
+    </section>
+
+    <section class="two-column">
+      <div class="panel">
+        <p class="eyebrow">Timeline</p>
+        <h2>时间线</h2>
+        <ol class="timeline">
+          {% for item in summary.timeline %}
+            <li>
+              <time>{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</time>
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.detail }}</p>
+              <small>字幕证据：{{ item.evidence_segment_ids | join(", ") }}</small>
+            </li>
+          {% endfor %}
+        </ol>
+      </div>
+      <div class="panel">
+        <p class="eyebrow">Topics</p>
+        <h2>主要话题</h2>
+        <div class="topic-list">
+          {% for topic in summary.topics %}
+            <article>
+              <strong>{{ topic.name }}</strong>
+              <p>{{ topic.detail }}</p>
+            </article>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Highlights</p>
+      <h2>高光</h2>
+      <div class="highlight-grid">
+        {% for item in summary.highlights %}
+          <article>
+            <time>{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</time>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.detail }}</p>
+            {% if item.danmaku_evidence %}<small>弹幕参考：{{ item.danmaku_evidence }}</small>{% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Verification</p>
+      <h2>待核实项</h2>
+      {% if summary.verification_needed %}
+        <ul>{% for item in summary.verification_needed %}<li>{{ item }}</li>{% endfor %}</ul>
+      {% else %}
+        <p>无。</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if peaks %}
+    <section class="panel">
+      <p class="eyebrow">Danmaku signals</p>
+      <h2>弹幕活跃高峰</h2>
+      <div class="peak-grid">
+        {% for peak in peaks %}
+          <article>
+            <strong>#{{ peak.rank }} · {{ format_clock(peak.start_ms) }}–{{ format_clock(peak.end_ms) }}</strong>
+            <p>{{ peak.message_count }} 条弹幕 · 强度 {{ peak.score }}</p>
+            <small>
+              {% for sample in peak.samples[:3] %}
+                {{ sample.text }}{% if not loop.last %} / {% endif %}
+              {% endfor %}
+            </small>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="two-column">
+    <div class="panel">
+      <p class="eyebrow">Transcript</p>
+      <h2>字幕{% if transcript %}（前 {{ transcript | length }} 条）{% endif %}</h2>
+      <div class="scroll-list">
+        {% for segment in transcript %}
+          <article id="segment-{{ segment.sequence }}">
+            <time>{{ format_clock(segment.start_ms) }}</time>
+            <p>{{ segment.text }}</p>
+          </article>
+        {% else %}
+          <p class="muted">字幕尚未生成。</p>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="panel">
+      <p class="eyebrow">Danmaku</p>
+      <h2>弹幕{% if danmaku %}（前 {{ danmaku | length }} 条）{% endif %}</h2>
+      <div class="scroll-list">
+        {% for entry in danmaku %}
+          <article>
+            <time>{{ format_clock(entry.timestamp_ms) }}</time>
+            <p><strong>{{ entry.author }}</strong> {{ entry.text }}</p>
+          </article>
+        {% else %}
+          <p class="muted">没有可用弹幕。</p>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">Job events</p>
+    <h2>处理记录</h2>
+    <ol class="event-list">
+      {% for event in events %}
+        <li class="event-{{ event.level }}">
+          <time>{{ event.created_at[:19].replace("T", " ") }}</time>
+          <span>{{ event.message }}</span>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endblock %}

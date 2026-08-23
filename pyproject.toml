@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pocket48-summarizer"
+version = "0.1.0"
+description = "Local web application for transcribing and summarizing public Pocket48 replays."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Ruoke Zhang" }]
+dependencies = [
+  "fastapi==0.141.1",
+  "httpx==0.28.1",
+  "jinja2==3.1.6",
+  "oss2==2.19.1",
+  "pydantic-settings==2.15.0",
+  "uvicorn==0.52.4",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+]
+
+[project.scripts]
+pocket48-summarizer = "pocket48_summarizer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pocket48_summarizer = [
+  "migrations/*.sql",
+  "static/*",
+  "templates/*.html",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]
