@@ -10,6 +10,7 @@ from .config import Settings
 from .errors import AppError
 from .pipeline import ReplayPipeline
 from .repository import JobRepository
+from .runtime_lock import shared_runtime_lock
 
 
 class DurableWorker:
@@ -46,7 +47,14 @@ class DurableWorker:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                self.logger.exception("Worker task stopped after failure")
             self._task = None
+
+    async def wait(self) -> None:
+        if self._task is None:
+            raise RuntimeError("Worker has not been started")
+        await self._task
 
     def notify(self) -> None:
         self._wake.set()
@@ -54,11 +62,29 @@ class DurableWorker:
     async def _run(self) -> None:
         while not self._stopping.is_set():
             await self._cleanup_expired_artifacts_if_due()
-            job = await asyncio.to_thread(
-                self.repository.claim_next_job,
-                self.worker_id,
-                self.settings.worker_lease_seconds,
-            )
+            maintenance_active = False
+            with shared_runtime_lock(
+                self.settings.worker_operation_lock_path
+            ):
+                if self.settings.worker_maintenance_path.exists():
+                    maintenance_active = True
+                    job = None
+                else:
+                    job = await asyncio.to_thread(
+                        self.repository.claim_next_job,
+                        self.worker_id,
+                        self.settings.worker_lease_seconds,
+                    )
+            if maintenance_active:
+                self._wake.clear()
+                try:
+                    await asyncio.wait_for(
+                        self._wake.wait(),
+                        timeout=self.settings.worker_poll_seconds,
+                    )
+                except TimeoutError:
+                    pass
+                continue
             if job is None:
                 self._wake.clear()
                 try:

@@ -31,13 +31,18 @@ def create_app(
     repository = services.repository if services else JobRepository(database)
     if services is None:
         if settings.enable_worker and not settings.missing_processing_configuration():
-            services = build_services(settings, repository)
+            services = build_services(
+                settings,
+                repository,
+                include_clipper=settings.enable_clipper,
+            )
         else:
             services = ApplicationServices(repository=repository)
     if services.auth is None:
         services.auth = AuthService(settings, AuthRepository(database))
     if (
-        services.clipper is None
+        settings.enable_clipper
+        and services.clipper is None
         and not settings.missing_clip_configuration()
     ):
         services.clipper = VideoClipService(
@@ -87,7 +92,11 @@ def create_app(
             status = 429
         if exc.retryable and exc.code.endswith("_not_ready"):
             status = 409
-        if exc.code in {"configuration_error", "worker_unavailable"}:
+        if exc.code in {
+            "clipper_maintenance",
+            "configuration_error",
+            "worker_unavailable",
+        }:
             status = 503
         if request.url.path.startswith("/api/") or request.url.path == "/healthz":
             return JSONResponse(

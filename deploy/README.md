@@ -1,19 +1,19 @@
-# 阿里云北京 ECS 部署
+# 阿里云香港 ECS 蓝绿部署
 
-目标架构：北京地域 2 vCPU / 4 GiB ECS、私有 OSS、Caddy HTTPS、systemd 单 Worker、SQLite 每日备份。已完成的直播结果公开可见；提交任务和剪视频需要邀请账号。生产模板把剪辑限制为单并发、每段最长 10 分钟。
+目标架构：香港地域 ECS、私有 OSS、Caddy HTTPS、蓝绿 Web 槽位、独立单 Worker、SQLite 每日备份。已完成的直播结果和剪辑下载公开可见；提交任务和新建剪辑需要邀请账号。生产模板把剪辑限制为单并发、每段最长 10 分钟。
 
 ## 1. 云资源
 
-1. 在华北 2（北京）创建 Ubuntu 24.04 ECS，建议 40 GiB ESSD、按量付费和按使用流量公网带宽。
+1. 在中国香港创建 Ubuntu 24.04 ECS，建议至少 2 vCPU / 2 GiB、40 GiB ESSD、按量付费和按使用流量公网带宽。2 GiB 规格应额外配置 2 GiB Swap。
 2. 安全组仅开放：
    - TCP 22：限制为管理员当前公网 IP。
    - TCP 80、443：`0.0.0.0/0` 和 `::/0`。
    - 不开放 8000；应用只监听 `127.0.0.1`。
-3. 在同一地域创建私有 OSS Bucket，并保持“阻止公共访问”开启。
+3. 在香港地域创建私有 OSS Bucket，并保持“阻止公共访问”开启。
 4. 只给临时音频前缀 `pocket48-summarizer/` 设置 1 天生命周期规则。不要让该规则覆盖永久剪辑前缀 `pocket48-clips/`。
 5. 创建专用 RAM 用户，仅授予上述两个 Bucket 前缀的 `oss:PutObject`、`oss:GetObject` 和 `oss:DeleteObject`。不要使用主账号 AccessKey。
 
-国内 ECS 绑定公开域名前通常需要 ICP 备案。先确认 `ruokezhang.com` 已备案；否则 DNS 和 HTTPS 即使配置成功，也可能被云厂商阻断。
+香港 ECS 不要求 ICP 备案。Cloudflare 记录使用 DNS only，由 Caddy 直接终止 TLS。
 
 ## 2. 安装
 
@@ -26,7 +26,7 @@ sudo /opt/pocket48-summarizer/scripts/install-server.sh
 sudoedit /etc/pocket48-summarizer/app.env
 ```
 
-填写 OSS、DashScope 和 LLM 凭证。`ALIYUN_OSS_ENDPOINT` 使用北京内网 Endpoint 上传；`ALIYUN_OSS_PUBLIC_ENDPOINT` 必须使用公网 Endpoint，供 DashScope 和浏览器读取短期签名 URL。剪辑上传到独立的 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
+填写 OSS、DashScope 和 LLM 凭证。`ALIYUN_OSS_ENDPOINT` 使用香港内网 Endpoint 上传；`ALIYUN_OSS_PUBLIC_ENDPOINT` 必须使用公网 Endpoint，供 DashScope 和浏览器读取短期签名 URL。剪辑上传到独立的 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
 
 环境文件权限默认为 `root:pocket48 0640`。不要把它复制进 Git 仓库或粘贴到日志。
 
@@ -44,7 +44,7 @@ scp /tmp/pocket48-production.sqlite3 root@<ECS_IP>:/tmp/
 在 ECS 上安装快照：
 
 ```bash
-sudo systemctl stop pocket48-summarizer
+sudo systemctl stop pocket48-worker 'pocket48-web@*'
 sudo install -m 0600 -o pocket48 -g pocket48 \
   /tmp/pocket48-production.sqlite3 \
   /var/lib/pocket48-summarizer/pocket48.sqlite3
@@ -62,7 +62,8 @@ sudo -u pocket48 bash -c '
   set -a
   source /etc/pocket48-summarizer/app.env
   set +a
-  exec /opt/pocket48-summarizer/.venv/bin/pocket48-users \
+  active=$(cat /var/lib/pocket48-summarizer/deploy/active-slot)
+  exec /opt/pocket48-summarizer-slots/$active/.venv/bin/pocket48-users \
     create --username admin --admin
 '
 ```
@@ -71,26 +72,44 @@ sudo -u pocket48 bash -c '
 
 ## 5. DNS、启动与验证
 
-把 `p48.ruokezhang.com` 的 A 记录指向 ECS 公网 IP。确认解析生效后：
+把 `p48.ruokezhang.com` 的 DNS only A 记录指向 ECS 公网 IP。确认解析生效后，从管理 checkout 创建第一个 release：
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl enable --now pocket48-summarizer
 sudo systemctl enable --now pocket48-summarizer-backup.timer
 sudo systemctl enable --now caddy
-curl --fail http://127.0.0.1:8000/healthz
+sudo /opt/pocket48-summarizer/scripts/deploy-release.sh HEAD
 curl --fail https://p48.ruokezhang.com/healthz
 ```
 
-浏览器未登录时应看到最近公开结果，但看不到提交表单和剪辑按钮；登录后应能提交任务并剪辑时间线。
+浏览器未登录时应看到最近公开结果和已有剪辑下载，但看不到提交表单和剪辑按钮；登录后应能提交任务并新建剪辑。
 
-## 6. 运维
+## 6. 蓝绿发布与回滚
+
+发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑会短暂返回维护提示。独立 Worker 会在当前任务结束后切换，新任务可继续排队。
 
 ```bash
-sudo systemctl status pocket48-summarizer caddy
-sudo journalctl -u pocket48-summarizer -n 200 --no-pager
+cd /opt/pocket48-summarizer
+sudo git fetch origin
+sudo git pull --ff-only
+sudo ./scripts/deploy-release.sh origin/main
+```
+
+健康检查失败时脚本不会切流量。需要回到上一 Web release：
+
+```bash
+sudo /opt/pocket48-summarizer/scripts/rollback-release.sh
+```
+
+Migration 必须采用 expand/contract：发布时只新增兼容字段或表，不能在旧 Web/Worker 仍运行时删除或改名。Release 目录位于 `/opt/pocket48-summarizer-releases/`，不要删除 blue、green 或 Worker symlink 当前引用的目录。
+
+## 7. 运维
+
+```bash
+sudo systemctl status 'pocket48-web@*' pocket48-worker caddy
+sudo journalctl -u pocket48-worker -n 200 --no-pager
 sudo systemctl list-timers pocket48-summarizer-backup.timer
 sudo ls -lh /var/backups/pocket48-summarizer
 ```
 
-备份保留 14 天。升级代码后，在 `/opt/pocket48-summarizer` 拉取最新提交、重新安装依赖和项目，再重启服务。
+备份保留 14 天。`active-slot` 和 `previous-slot` 位于 `/var/lib/pocket48-summarizer/deploy/`；Caddy 当前上游位于 `/etc/caddy/pocket48-upstream.caddy`。

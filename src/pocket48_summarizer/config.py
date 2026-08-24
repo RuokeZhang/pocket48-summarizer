@@ -21,10 +21,13 @@ class Settings(BaseSettings):
 
     app_host: str = "127.0.0.1"
     app_port: int = Field(default=8000, ge=1, le=65535)
+    app_release: str = "development"
     allow_remote_bind: bool = False
     trusted_hosts: str = "localhost,127.0.0.1,testserver"
     enable_worker: bool = True
+    enable_clipper: bool = True
     data_dir: Path = Path("./data")
+    maintenance_dir: Path | None = None
     database_name: str = "pocket48.sqlite3"
     ffmpeg_path: str = "ffmpeg"
     auth_required: bool = False
@@ -123,9 +126,31 @@ class Settings(BaseSettings):
     def temp_dir(self) -> Path:
         return self.data_dir / "tmp"
 
+    @property
+    def clip_maintenance_path(self) -> Path:
+        return (self.maintenance_dir or self.data_dir) / "clip-maintenance"
+
+    @property
+    def worker_maintenance_path(self) -> Path:
+        return (self.maintenance_dir or self.data_dir) / "worker-maintenance"
+
+    @property
+    def clip_operation_lock_path(self) -> Path:
+        return (self.maintenance_dir or self.data_dir) / "clip-operation.lock"
+
+    @property
+    def worker_operation_lock_path(self) -> Path:
+        return (self.maintenance_dir or self.data_dir) / "worker-operation.lock"
+
+    @property
+    def worker_ready_path(self) -> Path:
+        return (self.maintenance_dir or self.data_dir) / "worker-ready"
+
     def prepare_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        if self.maintenance_dir:
+            self.maintenance_dir.mkdir(parents=True, exist_ok=True)
 
     def ffmpeg_executable(self) -> str | None:
         candidate = Path(self.ffmpeg_path).expanduser()

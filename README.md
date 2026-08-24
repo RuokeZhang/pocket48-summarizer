@@ -92,7 +92,7 @@ AUTH_REQUIRED=true pocket48-users create --username admin --admin
 
 ## 公开部署
 
-阿里云北京 ECS 的 systemd、Caddy、备份、历史数据库迁移和首个管理员创建流程见 [`deploy/README.md`](deploy/README.md)。迁移本机 SQLite 快照后，已有的 `completed` 直播会自动显示在公开首页；处理中、失败任务和处理日志仍只对提交者或管理员可见。
+阿里云香港 ECS 的蓝绿 Web 槽位、独立 Worker、Caddy 原子切流量、自动回滚、备份、历史数据库迁移和首个管理员创建流程见 [`deploy/README.md`](deploy/README.md)。迁移本机 SQLite 快照后，已有的 `completed` 直播会自动显示在公开首页；处理中、失败任务和处理日志仍只对提交者或管理员可见。
 
 剪视频会从 Pocket48 HLS 拉取目标时间段并用 H.264 重新编码，再上传到私有 OSS。上传成功后删除 ECS 临时文件；下载时生成短期签名 URL。对几十秒到数分钟片段，2C4G 单并发通常足够；生产模板限制为单并发且每片最长 10 分钟，重复请求直接复用已生成对象。
 

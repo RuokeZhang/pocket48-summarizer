@@ -219,6 +219,11 @@ class VideoClipService:
             state.error = exc.message
             self.repository.fail_video_clip(key[0], key[1], exc.message)
         except asyncio.CancelledError:
+            state.status = "failed"
+            state.error = "服务重启中，请重新剪辑"
+            self.repository.fail_video_clip(
+                key[0], key[1], state.error
+            )
             raise
         except Exception:
             self.logger.exception("Unexpected video clipping failure")

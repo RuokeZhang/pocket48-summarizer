@@ -66,6 +66,7 @@ def test_create_and_view_job(settings, repository):
     with TestClient(app) as client:
         health = client.get("/healthz")
         assert health.status_code == 200
+        assert health.json()["release"] == "development"
         response = client.post(
             "/api/jobs",
             json={
@@ -82,6 +83,26 @@ def test_create_and_view_job(settings, repository):
         page = client.get(f"/jobs/{job_id}")
         assert page.status_code == 200
         assert "1297967327104274432" in page.text
+
+
+def test_web_without_embedded_worker_can_queue_job(settings, repository):
+    app = create_app(
+        settings,
+        ApplicationServices(repository=repository),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=1297967327104274433"
+                )
+            },
+        )
+
+    assert response.status_code == 201
+    assert repository.get_job(response.json()["id"]).status.value == "queued"
 
 
 def test_rejects_ssrf_input(settings, repository):
@@ -208,6 +229,9 @@ def test_timeline_clip_can_be_created_and_downloaded(
 
     with TestClient(app) as client:
         page = client.get(f"/jobs/{job.id}")
+        settings.clip_maintenance_path.touch()
+        blocked = client.post(f"/api/jobs/{job.id}/clips/0")
+        settings.clip_maintenance_path.unlink()
         response = client.post(f"/api/jobs/{job.id}/clips/0")
         download = client.get(f"/jobs/{job.id}/clips/0/download")
         clipper.state.oss_object_key = "clips/job/timeline.mp4"
@@ -218,6 +242,8 @@ def test_timeline_clip_can_be_created_and_downloaded(
         )
 
     assert 'class="clip-button"' in page.text
+    assert blocked.status_code == 503
+    assert blocked.json()["error"]["code"] == "clipper_maintenance"
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
     assert response.json()["download_url"].endswith("/clips/0/download")
@@ -488,6 +514,7 @@ def test_any_invited_user_can_clip_a_public_result(
 
     with TestClient(app) as anonymous:
         page = anonymous.get(f"/jobs/{job_id}")
+        clip_status = anonymous.get(f"/api/jobs/{job_id}/clips/0")
         download = anonymous.get(f"/jobs/{job_id}/clips/0/download")
 
     assert response.status_code == 200
@@ -500,5 +527,8 @@ def test_any_invited_user_can_clip_a_public_result(
         in page.text
     )
     assert 'data-seek-ms="30000"' in page.text
+    assert clip_status.status_code == 200
+    assert clip_status.json()["status"] == "completed"
+    assert clip_status.json()["download_url"].endswith("/clips/0/download")
     assert download.status_code == 200
     assert download.content == b"public clip"

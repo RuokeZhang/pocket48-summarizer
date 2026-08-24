@@ -19,6 +19,7 @@ from .errors import AppError
 from .media.clips import ClipState
 from .models import FinalSummary, JobRecord, JobStatus
 from .parsing.transcript import transcript_to_srt
+from .runtime_lock import shared_runtime_lock
 from .security import parse_share_url
 from .summarization.chunking import format_clock
 
@@ -296,6 +297,7 @@ async def job_page(request: Request, job_id: str) -> Response:
             "can_create_clips": (
                 context is not None
                 and request.app.state.services.clipper is not None
+                and not request.app.state.settings.clip_maintenance_path.exists()
             ),
         },
     )
@@ -312,12 +314,6 @@ async def create_job(request: Request, payload: CreateJobRequest) -> Response:
     if existing is not None and existing.status == JobStatus.COMPLETED:
         return JSONResponse(public_job_payload(existing), status_code=200)
     settings.require_processing_configuration()
-    if services.worker is None:
-        raise AppError(
-            "worker_unavailable",
-            "处理 Worker 未启动，请检查配置后重启应用",
-            True,
-        )
     job, created = services.repository.create_or_get_job(
         normalized_url,
         live_id,
@@ -325,7 +321,8 @@ async def create_job(request: Request, payload: CreateJobRequest) -> Response:
         daily_limit=settings.daily_job_limit,
         quota_start=request.app.state.auth.quota_day_start_utc(),
     )
-    services.worker.notify()
+    if services.worker:
+        services.worker.notify()
     return JSONResponse(
         public_job_payload(job), status_code=201 if created else 200
     )
@@ -378,12 +375,6 @@ async def retry_job(request: Request, job_id: str) -> dict:
     context, _ = require_owned_job(request, job_id)
     request.app.state.auth.require_csrf(request, context)
     services = request.app.state.services
-    if services.worker is None:
-        raise AppError(
-            "worker_unavailable",
-            "处理 Worker 未启动，请检查配置后重启应用",
-            True,
-        )
     job = (
         services.repository.retry_job(job_id)
         if context.user.is_admin
@@ -391,7 +382,8 @@ async def retry_job(request: Request, job_id: str) -> dict:
             job_id, context.user.id
         )
     )
-    services.worker.notify()
+    if services.worker:
+        services.worker.notify()
     return public_job_payload(job)
 
 
@@ -409,13 +401,21 @@ async def create_timeline_clip(
             "视频剪辑服务未启动",
             True,
         )
-    state = clipper.start(
-        job_id=job.id,
-        timeline_index=timeline_index,
-        manifest_url=job.media_url,
-        start_ms=item.start_ms,
-        end_ms=item.end_ms,
-    )
+    settings = request.app.state.settings
+    with shared_runtime_lock(settings.clip_operation_lock_path):
+        if settings.clip_maintenance_path.exists():
+            raise AppError(
+                "clipper_maintenance",
+                "服务正在发布新版本，请稍后再剪辑",
+                True,
+            )
+        state = clipper.start(
+            job_id=job.id,
+            timeline_index=timeline_index,
+            manifest_url=job.media_url,
+            start_ms=item.start_ms,
+            end_ms=item.end_ms,
+        )
     return JSONResponse(
         clip_payload(job.id, timeline_index, state),
         status_code=200 if state.status == "completed" else 202,
@@ -543,6 +543,7 @@ async def health(request: Request) -> dict:
     settings = request.app.state.settings
     return {
         "status": "ok",
+        "release": settings.app_release,
         "worker_enabled": request.app.state.services.worker is not None,
         "missing_configuration": settings.missing_processing_configuration(),
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import sqlite3
 from pathlib import Path
 
@@ -18,6 +19,15 @@ class Database:
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.path.with_name(f"{self.path.name}.migrate.lock")
+        with lock_path.open("a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                self._run_migrations()
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _run_migrations(self) -> None:
         migration_dir = Path(__file__).with_name("migrations")
         with self.connect() as connection:
             connection.execute(

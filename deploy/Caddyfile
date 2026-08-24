@@ -17,5 +17,5 @@ p48.ruokezhang.com {
 		X-Frame-Options "DENY"
 	}
 
-	reverse_proxy 127.0.0.1:8000
+	import /etc/caddy/pocket48-upstream.caddy
 }

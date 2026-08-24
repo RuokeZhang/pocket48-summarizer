@@ -175,18 +175,22 @@ const clipRows = document.querySelectorAll(".timeline > li[data-clip-index]");
 const renderClipState = (row, payload) => {
   const button = row.querySelector(".clip-button");
   const status = row.querySelector(".clip-status");
-  if (!button || !status) return;
+  if (!status) return;
   status.replaceChildren();
   if (payload.status === "running") {
-    button.disabled = true;
-    button.textContent = "剪辑中…";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "剪辑中…";
+    }
     status.hidden = false;
     status.textContent = "FFmpeg 正在后台生成视频。";
     return;
   }
   if (payload.status === "completed") {
-    button.disabled = true;
-    button.textContent = "已剪好";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "已剪好";
+    }
     status.hidden = false;
     status.append(document.createTextNode(`${payload.filename} 已生成 · `));
     const link = document.createElement("a");
@@ -196,14 +200,18 @@ const renderClipState = (row, payload) => {
     return;
   }
   if (payload.status === "failed") {
-    button.disabled = false;
-    button.textContent = "重试剪视频";
+    if (button) {
+      button.disabled = false;
+      button.textContent = "重试剪视频";
+    }
     status.hidden = false;
     status.textContent = payload.error || "视频剪辑失败";
     return;
   }
-  button.disabled = false;
-  button.textContent = "剪视频";
+  if (button) {
+    button.disabled = false;
+    button.textContent = "剪视频";
+  }
   status.hidden = true;
 };
 
@@ -232,28 +240,29 @@ const pollClip = async (row) => {
 
 for (const row of clipRows) {
   const button = row.querySelector(".clip-button");
-  if (!button) continue;
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    button.textContent = "正在启动…";
-    try {
-      const response = await apiFetch(
-        `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/clips/${encodeURIComponent(row.dataset.clipIndex)}`,
-        { method: "POST" }
-      );
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error?.message || "启动视频剪辑失败");
-      renderClipState(row, payload);
-      if (payload.status === "running") {
-        window.setTimeout(() => void pollClip(row), 1000);
+  if (button) {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      button.textContent = "正在启动…";
+      try {
+        const response = await apiFetch(
+          `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/clips/${encodeURIComponent(row.dataset.clipIndex)}`,
+          { method: "POST" }
+        );
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error?.message || "启动视频剪辑失败");
+        renderClipState(row, payload);
+        if (payload.status === "running") {
+          window.setTimeout(() => void pollClip(row), 1000);
+        }
+      } catch (requestError) {
+        renderClipState(row, {
+          status: "failed",
+          error: requestError instanceof Error ? requestError.message : "启动视频剪辑失败"
+        });
       }
-    } catch (requestError) {
-      renderClipState(row, {
-        status: "failed",
-        error: requestError instanceof Error ? requestError.message : "启动视频剪辑失败"
-      });
-    }
-  });
+    });
+  }
   void pollClip(row);
 }
 

@@ -39,7 +39,10 @@ class ApplicationServices:
 
 
 def build_services(
-    settings: Settings, repository: JobRepository
+    settings: Settings,
+    repository: JobRepository,
+    *,
+    include_clipper: bool = True,
 ) -> ApplicationServices:
     settings.require_processing_configuration()
     pocket48 = Pocket48Client(settings)
@@ -62,7 +65,11 @@ def build_services(
     return ApplicationServices(
         repository=repository,
         worker=worker,
-        clipper=VideoClipService(settings, repository, oss),
+        clipper=(
+            VideoClipService(settings, repository, oss)
+            if include_clipper
+            else None
+        ),
         pocket48=pocket48,
         hls=hls,
         dashscope=dashscope,

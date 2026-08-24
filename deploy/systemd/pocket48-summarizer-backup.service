@@ -1,12 +1,12 @@
 [Unit]
 Description=Back up Pocket48 Summarizer SQLite database
-After=pocket48-summarizer.service
+After=pocket48-worker.service
 
 [Service]
 Type=oneshot
 User=pocket48
 Group=pocket48
-ExecStart=/opt/pocket48-summarizer/scripts/backup-sqlite.sh
+ExecStart=/usr/local/lib/pocket48-summarizer/backup-sqlite.sh
 UMask=0077
 
 NoNewPrivileges=true
