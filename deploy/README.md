@@ -86,7 +86,7 @@ curl --fail https://p48.ruokezhang.com/healthz
 
 ## 6. 蓝绿发布与回滚
 
-发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑会短暂返回维护提示。独立 Worker 会在当前任务结束后切换，新任务可继续排队。
+发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑会短暂返回维护提示。独立 Worker 会在当前任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务并重新排队；任务已持久化的 DashScope ID 和总结分块会继续复用，不会从头重复提交。
 
 ```bash
 cd /opt/pocket48-summarizer
