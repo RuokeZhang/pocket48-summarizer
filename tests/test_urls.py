@@ -4,13 +4,23 @@ from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.security import parse_share_url, validate_https_url
 
 
-def test_parse_supported_share_url():
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/2019appshare/memberLiveShare/index.html",
+        "/2019appshare/memberLiveShare/",
+        "/2019appshare/memberLiveShare",
+    ],
+)
+def test_parse_supported_share_url(path):
     normalized, live_id = parse_share_url(
-        " https://h5.48.cn/2019appshare/memberLiveShare/index.html"
-        "?id=1297967327104274432 "
+        f" https://h5.48.cn{path}?id=1297967327104274432 "
     )
     assert live_id == "1297967327104274432"
-    assert normalized.endswith(f"?id={live_id}")
+    assert normalized == (
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html"
+        f"?id={live_id}"
+    )
 
 
 @pytest.mark.parametrize(

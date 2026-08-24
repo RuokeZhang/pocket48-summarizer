@@ -6,8 +6,11 @@ from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 from .errors import AppError
 
+CANONICAL_SHARE_PATH = "/2019appshare/memberLiveShare/index.html"
 SUPPORTED_SHARE_PATHS = {
-    "/2019appshare/memberLiveShare/index.html",
+    CANONICAL_SHARE_PATH,
+    "/2019appshare/memberLiveShare",
+    "/2019appshare/memberLiveShare/",
 }
 POCKET_API_HOSTS = {"pocketapi.48.cn"}
 MEDIA_HOSTS = {"idol-vod.48.cn"}
@@ -45,7 +48,13 @@ def parse_share_url(value: str) -> tuple[str, str]:
             "invalid_live_id", "分享链接缺少有效的直播 ID", False
         )
     normalized = urlunsplit(
-        ("https", "h5.48.cn", parsed.path, f"id={ids[0]}", "")
+        (
+            "https",
+            "h5.48.cn",
+            CANONICAL_SHARE_PATH,
+            f"id={ids[0]}",
+            "",
+        )
     )
     return normalized, ids[0]
 
