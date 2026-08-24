@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     max_danmaku_bytes: int = Field(default=20 * 1024 * 1024, ge=1024)
     max_hls_segments: int = Field(default=20_000, ge=1)
     hls_concurrent_fragments: int = Field(default=8, ge=1, le=32)
-    max_replay_hours: float = Field(default=12.0, gt=0, le=12)
+    max_replay_hours: float = Field(default=0.0, ge=0, le=168)
     max_clip_minutes: float = Field(default=10.0, gt=0, le=30)
     clip_concurrency: int = Field(default=2, ge=1, le=4)
     clip_retry_attempts: int = Field(default=3, ge=1, le=5)

@@ -45,3 +45,48 @@ async def test_rejects_unfinished_manifest(settings):
             "https://idol-vod.48.cn/path/replay.m3u8"
         )
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_allows_long_replay_when_hour_limit_is_disabled(settings):
+    manifest = """#EXTM3U
+#EXTINF:14400,
+segment.ts
+#EXT-X-ENDLIST
+"""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, text=manifest)
+        )
+    )
+    settings.max_replay_hours = 0
+    inspector = HLSInspector(settings, client)
+
+    result = await inspector.inspect(
+        "https://idol-vod.48.cn/path/replay.m3u8"
+    )
+
+    assert result.duration_ms == 14_400_000
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_optional_hour_limit_can_still_be_enabled(settings):
+    manifest = """#EXTM3U
+#EXTINF:14400,
+segment.ts
+#EXT-X-ENDLIST
+"""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, text=manifest)
+        )
+    )
+    settings.max_replay_hours = 3
+    inspector = HLSInspector(settings, client)
+
+    with pytest.raises(AppError, match="3 小时上限"):
+        await inspector.inspect(
+            "https://idol-vod.48.cn/path/replay.m3u8"
+        )
+    await client.aclose()

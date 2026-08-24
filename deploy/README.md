@@ -28,6 +28,8 @@ sudoedit /etc/pocket48-summarizer/app.env
 
 填写 OSS、DashScope 和 LLM 凭证。`ALIYUN_OSS_ENDPOINT` 使用香港内网 Endpoint 上传；`ALIYUN_OSS_PUBLIC_ENDPOINT` 必须使用公网 Endpoint，供 DashScope 和浏览器读取短期签名 URL。剪辑上传到独立的 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
 
+`MAX_REPLAY_HOURS=0` 表示不设置回放小时上限。若已有服务器配置仍为 `3`，部署新版本前需要在 `/etc/pocket48-summarizer/app.env` 中改为 `0`。
+
 环境文件权限默认为 `root:pocket48 0640`。不要把它复制进 Git 仓库或粘贴到日志。
 
 ## 3. 迁移本机已有结果

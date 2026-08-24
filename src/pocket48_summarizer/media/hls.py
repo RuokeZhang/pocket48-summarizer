@@ -153,7 +153,11 @@ class HLSInspector:
                 "HLS 播放列表不包含可处理的媒体分片",
                 False,
             )
-        if duration_seconds > self.settings.max_replay_hours * 3600:
+        if (
+            self.settings.max_replay_hours > 0
+            and duration_seconds
+            > self.settings.max_replay_hours * 3600
+        ):
             raise AppError(
                 "replay_too_long",
                 f"回放超过 {self.settings.max_replay_hours:g} 小时上限",
