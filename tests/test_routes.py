@@ -614,6 +614,8 @@ def test_playback_track_is_public_and_user_can_request_translation(
     with TestClient(app) as anonymous:
         page = anonymous.get(f"/jobs/{job_id}")
         track = anonymous.get(f"/api/jobs/{job_id}/playback-track")
+        styles = anonymous.get("/static/styles.css")
+        javascript = anonymous.get("/static/app.js")
         denied = anonymous.post(
             f"/api/jobs/{job_id}/translations/en",
             follow_redirects=False,
@@ -622,10 +624,20 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert page.status_code == 200
     assert 'id="subtitle-mode"' in page.text
     assert 'id="live-danmaku-panel"' in page.text
+    assert 'class="live-danmaku-panel mobile-danmaku-overlay"' in page.text
     assert 'id="playback-layout"' in page.text
     assert 'id="language-toggle"' in page.text
     assert "i18n.js?v=20260825-1" in page.text
+    assert "styles.css?v=20260825-3" in page.text
+    assert "app.js?v=20260825-3" in page.text
     assert 'id="danmaku-opacity"' not in page.text
+    assert styles.status_code == 200
+    assert "(pointer: coarse)" in styles.text
+    assert ".mobile-danmaku-overlay" in styles.text
+    assert "position: absolute" in styles.text
+    assert javascript.status_code == 200
+    assert "mobileDanmakuMedia" in javascript.text
+    assert "mobileDensityProfiles" in javascript.text
     assert track.status_code == 200
     assert track.json()["subtitles"][0] == {
         "sequence": 1,

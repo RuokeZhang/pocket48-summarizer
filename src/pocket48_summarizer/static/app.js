@@ -359,6 +359,21 @@ const densityProfiles = {
   normal: { maxBubbles: 22, minGapMs: 250, contextMs: 8000 },
   high: { maxBubbles: 38, minGapMs: 0, contextMs: 12000 }
 };
+const mobileDensityProfiles = {
+  low: { maxBubbles: 3, minGapMs: 900, contextMs: 3500 },
+  normal: { maxBubbles: 5, minGapMs: 450, contextMs: 5000 },
+  high: { maxBubbles: 8, minGapMs: 150, contextMs: 6500 }
+};
+const mobileDanmakuMedia = window.matchMedia(
+  "(max-width: 760px), (max-width: 900px) and (pointer: coarse)"
+);
+
+const activeDanmakuProfile = () => {
+  const profiles = mobileDanmakuMedia.matches
+    ? mobileDensityProfiles
+    : densityProfiles;
+  return profiles[danmakuDensity?.value] || profiles.normal;
+};
 
 let playbackTrack = null;
 let playbackSyncPayload = null;
@@ -462,7 +477,7 @@ const appendDanmakuBubble = (entry, isContext = false) => {
   header.append(author, time);
   bubble.append(header, text);
   liveDanmakuStream.append(bubble);
-  const profile = densityProfiles[danmakuDensity.value] || densityProfiles.normal;
+  const profile = activeDanmakuProfile();
   const bubbles = liveDanmakuStream.querySelectorAll(".danmaku-bubble");
   for (let index = 0; index < bubbles.length - profile.maxBubbles; index += 1) {
     bubbles[index].remove();
@@ -477,7 +492,7 @@ const rebuildDanmakuContext = (milliseconds) => {
     clearDanmakuStream("danmakuDisabled");
     return;
   }
-  const profile = densityProfiles[danmakuDensity.value] || densityProfiles.normal;
+  const profile = activeDanmakuProfile();
   clearDanmakuStream("");
   const startIndex = lowerBoundByTime(
     entries,
@@ -517,7 +532,7 @@ const renderDanmaku = (milliseconds, reset = false) => {
     lastMediaTimeMs = milliseconds;
     return;
   }
-  const profile = densityProfiles[danmakuDensity.value] || densityProfiles.normal;
+  const profile = activeDanmakuProfile();
   while (
     nextDanmakuIndex < entries.length
     && entries[nextDanmakuIndex].timestamp_ms <= milliseconds
@@ -775,6 +790,19 @@ danmakuDensity?.addEventListener("change", () => {
   lastMediaTimeMs = null;
   rebuildDanmakuContext(playbackMediaTimeMs());
 });
+
+const handleMobileDanmakuLayoutChange = () => {
+  lastMediaTimeMs = null;
+  rebuildDanmakuContext(playbackMediaTimeMs());
+};
+if (typeof mobileDanmakuMedia.addEventListener === "function") {
+  mobileDanmakuMedia.addEventListener(
+    "change",
+    handleMobileDanmakuLayoutChange
+  );
+} else {
+  mobileDanmakuMedia.addListener(handleMobileDanmakuLayoutChange);
+}
 
 syncOffset?.addEventListener("input", () => {
   const milliseconds = Number(syncOffset.value);
