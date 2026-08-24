@@ -43,6 +43,8 @@ class VideoClipService:
         self._states: dict[tuple[str, int], ClipState] = {}
         self._tasks: dict[tuple[str, int], asyncio.Task[None]] = {}
         self._capacity = asyncio.Semaphore(settings.clip_concurrency)
+        self._retry_attempts = settings.clip_retry_attempts
+        self._retry_delay_seconds = settings.clip_retry_delay_seconds
 
     async def startup(self) -> None:
         self.repository.recover_running_video_clips()
@@ -184,35 +186,70 @@ class VideoClipService:
     ) -> None:
         try:
             async with self._capacity:
-                if not (
-                    state.output_path.is_file()
-                    and state.output_path.stat().st_size > 0
-                ):
-                    if not manifest_url:
-                        raise AppError(
-                            "video_clip_missing",
-                            "本地视频片段不存在，请重新剪辑",
-                            True,
+                for attempt in range(1, self._retry_attempts + 1):
+                    try:
+                        if not (
+                            state.output_path.is_file()
+                            and state.output_path.stat().st_size > 0
+                        ):
+                            if not manifest_url:
+                                raise AppError(
+                                    "video_clip_missing",
+                                    "本地视频片段不存在，请重新剪辑",
+                                    True,
+                                )
+                            await self.ffmpeg.clip_video(
+                                manifest_url,
+                                state.output_path,
+                                start_ms,
+                                end_ms,
+                            )
+                        object_key = self.oss.clip_object_key(
+                            key[0], state.output_path.name
                         )
-                    await self.ffmpeg.clip_video(
-                        manifest_url,
-                        state.output_path,
-                        start_ms,
-                        end_ms,
+                        await self.oss.upload_clip(
+                            state.output_path,
+                            object_key,
+                            state.output_path.name,
+                        )
+                        self.repository.complete_video_clip(
+                            key[0], key[1], object_key
+                        )
+                        state.oss_object_key = object_key
+                        state.output_path.unlink(missing_ok=True)
+                        break
+                    except asyncio.CancelledError:
+                        raise
+                    except AppError as exc:
+                        if (
+                            not exc.retryable
+                            or exc.code == "video_clip_missing"
+                            or attempt == self._retry_attempts
+                        ):
+                            raise
+                        self.logger.warning(
+                            "Retrying video clip after transient failure",
+                            extra={
+                                "job_id": key[0],
+                                "timeline_index": key[1],
+                                "attempt": attempt,
+                                "error_code": exc.code,
+                            },
+                        )
+                    except Exception:
+                        if attempt == self._retry_attempts:
+                            raise
+                        self.logger.exception(
+                            "Retrying video clip after unexpected failure",
+                            extra={
+                                "job_id": key[0],
+                                "timeline_index": key[1],
+                                "attempt": attempt,
+                            },
+                        )
+                    await asyncio.sleep(
+                        self._retry_delay_seconds * (2 ** (attempt - 1))
                     )
-                object_key = self.oss.clip_object_key(
-                    key[0], state.output_path.name
-                )
-                await self.oss.upload_clip(
-                    state.output_path,
-                    object_key,
-                    state.output_path.name,
-                )
-                self.repository.complete_video_clip(
-                    key[0], key[1], object_key
-                )
-                state.oss_object_key = object_key
-                state.output_path.unlink(missing_ok=True)
             state.status = "completed"
         except AppError as exc:
             state.status = "failed"

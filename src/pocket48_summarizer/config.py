@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     max_replay_hours: float = Field(default=12.0, gt=0, le=12)
     max_clip_minutes: float = Field(default=10.0, gt=0, le=30)
     clip_concurrency: int = Field(default=2, ge=1, le=4)
+    clip_retry_attempts: int = Field(default=3, ge=1, le=5)
+    clip_retry_delay_seconds: float = Field(default=5.0, ge=0, le=60)
     max_audio_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1024)
     failed_audio_retention_hours: int = Field(default=24, ge=1, le=168)
 

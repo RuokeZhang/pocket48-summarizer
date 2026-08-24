@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.media.clips import VideoClipService
 
 
@@ -38,6 +39,21 @@ class FakeOSS:
 class SlowFFmpeg:
     async def clip_video(self, *args, **kwargs):
         await asyncio.Event().wait()
+
+
+class FlakyFFmpeg(FakeFFmpeg):
+    def __init__(self):
+        self.calls = 0
+
+    async def clip_video(self, *args, **kwargs):
+        self.calls += 1
+        if self.calls < 3:
+            raise AppError(
+                "video_clip_failed",
+                "temporary HLS failure",
+                True,
+            )
+        return await super().clip_video(*args, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -153,3 +169,36 @@ async def test_shutdown_marks_running_clip_failed(settings, repository):
     record = repository.get_video_clip(job.id, 0)
     assert record is not None
     assert record.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_transient_clip_failure_is_retried(settings, repository):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=991103",
+        "991103",
+    )
+    ffmpeg = FlakyFFmpeg()
+    service = VideoClipService(
+        settings.model_copy(
+            update={
+                "clip_retry_attempts": 3,
+                "clip_retry_delay_seconds": 0,
+            }
+        ),
+        repository,
+        FakeOSS(),  # type: ignore[arg-type]
+        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+    )
+
+    state = service.start(
+        job_id=job.id,
+        timeline_index=0,
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=5000,
+    )
+    await service._tasks[(job.id, 0)]
+
+    assert ffmpeg.calls == 3
+    assert state.status == "completed"
+    assert repository.get_video_clip(job.id, 0).status == "completed"
