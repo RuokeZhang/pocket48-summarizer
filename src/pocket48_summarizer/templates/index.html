@@ -4,31 +4,31 @@
   <section class="hero">
     <div>
       <p class="eyebrow">Pocket48 replay workflow</p>
-      <h1>从直播回放到字幕、总结与精彩片段</h1>
-      <p class="lede">粘贴公开回放链接，自动整理完整字幕与弹幕，生成 AI 时间线和高光；支持在线播放、按时间跳转，并一键剪辑视频。</p>
+      <h1 data-i18n="homeHeroTitle">从直播回放到字幕、总结与精彩片段</h1>
+      <p class="lede" data-i18n="homeHeroLede">粘贴公开回放链接，自动整理完整字幕与弹幕，生成 AI 时间线和高光；支持在线播放、按时间跳转，并一键剪辑视频。</p>
       {% if current_user and current_user.id != "local" %}
         {% if has_unlimited_jobs %}
-          <p class="quota-copy">当前额度：无限任务，单个回放最长由站点配置限制。</p>
+          <p class="quota-copy" data-i18n="quotaUnlimited">当前额度：无限任务，单个回放最长由站点配置限制。</p>
         {% else %}
-          <p class="quota-copy">当前额度：每天 {{ daily_job_limit }} 个任务，单个回放最长由站点配置限制。</p>
+          <p class="quota-copy" data-i18n="quotaDaily" data-i18n-param-count="{{ daily_job_limit }}">当前额度：每天 {{ daily_job_limit }} 个任务，单个回放最长由站点配置限制。</p>
         {% endif %}
       {% elif not current_user %}
-        <p class="quota-copy">已完成的回放、字幕与总结可公开浏览；登录后可以提交新回放，并从时间线一键剪视频。</p>
+        <p class="quota-copy" data-i18n="publicAccess">已完成的回放、字幕与总结可公开浏览；登录后可以提交新回放，并从时间线一键剪视频。</p>
       {% endif %}
     </div>
   </section>
 
   {% if current_user and current_user.is_admin and missing_configuration %}
     <section class="notice warning">
-      <strong>处理配置尚未就绪</strong>
-      <p>请在 <code>.env</code> 中补齐：{{ missing_configuration | join(", ") }}</p>
+      <strong data-i18n="configNotReady">处理配置尚未就绪</strong>
+      <p><span data-i18n="configFill">请在环境配置中补齐：</span> <code>{{ missing_configuration | join(", ") }}</code></p>
     </section>
   {% endif %}
 
   <section class="panel">
     {% if current_user %}
       <form id="create-job-form" class="submit-form">
-      <label for="share-url">口袋48成员直播分享链接</label>
+      <label for="share-url" data-i18n="shareUrlLabel">口袋48成员直播分享链接</label>
       <div class="input-row">
         <input
           id="share-url"
@@ -38,16 +38,16 @@
           placeholder="https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=..."
           autocomplete="off"
         >
-        <button type="submit" {% if not processing_ready %}disabled{% endif %}>开始处理</button>
+        <button type="submit" data-i18n="startProcessing" {% if not processing_ready %}disabled{% endif %}>开始处理</button>
       </div>
       <p id="create-job-error" class="form-error" role="alert"></p>
-      <small>仅支持已结束、无需登录即可访问的公开回放。</small>
+      <small data-i18n="publicReplayOnly">仅支持已结束、无需登录即可访问的公开回放。</small>
       </form>
     {% else %}
       <div class="public-callout">
-        <strong>想总结新的直播？</strong>
-        <p>邀请账号每天可以提交 {{ daily_job_limit }} 个新任务，并可从时间线一键剪视频。</p>
-        <a class="button-link" href="/login">登录</a>
+        <strong data-i18n="summarizeNewReplay">想总结新的直播？</strong>
+        <p data-i18n="inviteQuota" data-i18n-param-count="{{ daily_job_limit }}">邀请账号每天可以提交 {{ daily_job_limit }} 个新任务，并可从时间线一键剪视频。</p>
+        <a class="button-link" href="/login" data-i18n="login">登录</a>
       </div>
     {% endif %}
   </section>
@@ -55,7 +55,7 @@
   <section class="section-heading">
     <div>
       <p class="eyebrow">History</p>
-      <h2>{% if current_user %}公开结果与我的任务{% else %}最近公开结果{% endif %}</h2>
+      <h2 data-i18n="{{ 'resultsAndMine' if current_user else 'recentResults' }}">{% if current_user %}公开结果与我的任务{% else %}最近公开结果{% endif %}</h2>
     </div>
   </section>
 
@@ -63,20 +63,20 @@
     {% for job in jobs %}
       <a class="job-card" href="/jobs/{{ job.id }}">
         <div class="job-card-top">
-          <span class="status status-{{ job.status }}">{{ job.status }}</span>
+          <span class="status status-{{ job.status }}" data-job-status="{{ job.status }}">{{ job.status }}</span>
           <time datetime="{{ job.replay_started_at or '' }}">
-            直播时间 · {{ format_china_datetime(job.replay_started_at) }}
+            <span data-i18n="liveTime">直播时间</span> · {{ format_china_datetime(job.replay_started_at) }}
           </time>
         </div>
-        <h3>{{ job.title or "等待解析回放" }}</h3>
-        <p>{{ job.member_name or "未知主播" }} · {{ job.live_id }}</p>
+        <h3>{% if job.title %}{{ job.title }}{% else %}<span data-i18n="waitingReplay">等待解析回放</span>{% endif %}</h3>
+        <p>{% if job.member_name %}{{ job.member_name }}{% else %}<span data-i18n="unknownMember">未知主播</span>{% endif %} · {{ job.live_id }}</p>
         <div class="progress-track"><span style="width: {{ job.progress_percent }}%"></span></div>
-        <small>{{ job.progress_message }}</small>
+        <small data-operational-message="{{ job.progress_message }}">{{ job.progress_message }}</small>
       </a>
     {% else %}
       <div class="empty-state">
-        <strong>还没有公开结果</strong>
-        <p>完成后的直播总结会显示在这里。</p>
+        <strong data-i18n="noPublicResults">还没有公开结果</strong>
+        <p data-i18n="resultsAppearHere">完成后的直播总结会显示在这里。</p>
       </div>
     {% endfor %}
   </section>

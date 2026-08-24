@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}口袋48直播总结{% endblock %}</title>
     {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260825-1">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260825-2">
     {% block head_scripts %}{% endblock %}
-    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260825-1"></script>
+    <script defer src="{{ url_for('static', path='/i18n.js') }}?v=20260825-1"></script>
+    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260825-2"></script>
   </head>
   <body>
     <header class="site-header">
@@ -15,7 +16,7 @@
         <span class="brand-mark">48</span>
         <span>
           <strong>Replay Summarizer</strong>
-          <small>公开回放字幕与总结</small>
+          <small data-i18n="brandSubtitle">公开回放字幕与总结</small>
         </span>
       </a>
       {% if current_user %}
@@ -24,12 +25,26 @@
           {% if csrf_token %}
             <form action="/logout" method="post">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button class="logout-button" type="submit">退出</button>
+              <button class="logout-button" type="submit" data-i18n="logout">退出</button>
             </form>
           {% endif %}
+          <button
+            id="language-toggle"
+            class="language-toggle"
+            type="button"
+            aria-label="切换为英文"
+          >EN</button>
         </div>
       {% else %}
-        <a class="login-link" href="/login">登录后提交或剪辑</a>
+        <div class="account-actions">
+          <a class="login-link" href="/login" data-i18n="login">登录</a>
+          <button
+            id="language-toggle"
+            class="language-toggle"
+            type="button"
+            aria-label="切换为英文"
+          >EN</button>
+        </div>
       {% endif %}
     </header>
     <main class="page-shell">

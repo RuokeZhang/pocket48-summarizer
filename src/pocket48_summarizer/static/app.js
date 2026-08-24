@@ -1,4 +1,19 @@
 const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
+const i18n = window.P48I18n;
+const t = (key, params = {}) => i18n?.t(key, params) || key;
+const setLocalizedText = (element, key, params = {}) => {
+  if (i18n) {
+    i18n.setText(element, key, params);
+  } else if (element) {
+    element.textContent = key;
+  }
+};
+const apiErrorMessage = (payload, fallbackKey) => {
+  const message = payload.error?.message;
+  return message
+    ? (i18n?.translateServerMessage(message) || message)
+    : t(fallbackKey);
+};
 
 function apiFetch(url, options = {}) {
   const method = (options.method || "GET").toUpperCase();
@@ -32,11 +47,13 @@ if (createForm) {
       });
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload.error?.message || "创建任务失败");
+        throw new Error(apiErrorMessage(payload, "createJobFailed"));
       }
       window.location.assign(`/jobs/${encodeURIComponent(payload.id)}`);
     } catch (requestError) {
-      error.textContent = requestError instanceof Error ? requestError.message : "创建任务失败";
+      error.textContent = requestError instanceof Error
+        ? requestError.message
+        : t("createJobFailed");
       button.disabled = false;
     }
   });
@@ -52,17 +69,25 @@ if (jobHero) {
     try {
       const response = await apiFetch(`/api/jobs/${encodeURIComponent(jobID)}/status`);
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error?.message || "读取任务状态失败");
+      if (!response.ok) {
+        throw new Error(apiErrorMessage(payload, "readJobFailed"));
+      }
       const status = document.querySelector("#job-status");
       const bar = document.querySelector("#job-progress-bar");
       const message = document.querySelector("#job-progress-message");
       const percent = document.querySelector("#job-progress-percent");
       if (status) {
-        status.textContent = payload.status;
+        status.dataset.jobStatus = payload.status;
+        status.textContent = i18n?.translateStatus(payload.status) || payload.status;
         status.className = `status status-${payload.status}`;
       }
       if (bar) bar.style.width = `${payload.progress_percent}%`;
-      if (message) message.textContent = payload.progress_message;
+      if (message) {
+        message.dataset.operationalMessage = payload.progress_message;
+        message.textContent = i18n?.translateOperationalMessage(
+          payload.progress_message
+        ) || payload.progress_message;
+      }
       if (percent) percent.textContent = `${payload.progress_percent}%`;
       active = payload.status === "queued" || payload.status === "running";
       if (!active || payload.status !== previousStatus && payload.status === "completed") {
@@ -81,7 +106,6 @@ if (jobHero) {
 const replayPlayer = document.querySelector("#replay-player");
 const replayPlayerPanel = document.querySelector("#replay-player-panel");
 const replayPlayerMessage = document.querySelector("#replay-player-message");
-const replayHelpText = "点击时间线、高光或字幕中的时间，即可跳转到对应位置。";
 let pendingSeekSeconds = null;
 let replayUsesNativeHls = false;
 let hlsPlayer = null;
@@ -97,25 +121,26 @@ const applyPendingSeek = () => {
   pendingSeekSeconds = null;
   void replayPlayer.play().catch(() => {
     if (replayPlayerMessage) {
-      replayPlayerMessage.textContent = "已跳转到目标时间，点击播放键开始播放。";
+      setLocalizedText(replayPlayerMessage, "jumpedToTarget");
     }
   });
 };
 
 if (replayPlayer) {
   replayPlayer.addEventListener("loadedmetadata", () => {
-    if (replayPlayerMessage) replayPlayerMessage.textContent = replayHelpText;
+    if (replayPlayerMessage) setLocalizedText(replayPlayerMessage, "replayHelp");
     applyPendingSeek();
   });
   replayPlayer.addEventListener("canplay", () => {
-    if (replayPlayerMessage) replayPlayerMessage.textContent = replayHelpText;
+    if (replayPlayerMessage) setLocalizedText(replayPlayerMessage, "replayHelp");
   });
   replayPlayer.addEventListener("error", () => {
     if (hlsPlayer) return;
     if (replayPlayerMessage) {
       const code = replayPlayer.error?.code;
-      replayPlayerMessage.textContent =
-        `回放加载失败${code ? `（媒体错误 ${code}）` : ""}，请刷新重试。`;
+      setLocalizedText(replayPlayerMessage, "mediaError", {
+        detail: code ? t("mediaErrorCode", { code }) : ""
+      });
     }
   });
   const replaySource = replayPlayer.dataset.hlsSrc || "";
@@ -131,7 +156,7 @@ if (replayPlayer) {
         && hlsNetworkRetries < 2
       ) {
         hlsNetworkRetries += 1;
-        replayPlayerMessage.textContent = "回放网络波动，正在重试…";
+        setLocalizedText(replayPlayerMessage, "networkRetry");
         hlsPlayer.startLoad();
         return;
       }
@@ -140,19 +165,22 @@ if (replayPlayer) {
         && hlsMediaRetries < 2
       ) {
         hlsMediaRetries += 1;
-        replayPlayerMessage.textContent = "视频解码异常，正在恢复…";
+        setLocalizedText(replayPlayerMessage, "mediaRecover");
         hlsPlayer.recoverMediaError();
         return;
       }
-      replayPlayerMessage.textContent =
-        `回放加载失败（${data.details || data.type}），请刷新重试。`;
+      setLocalizedText(replayPlayerMessage, "mediaError", {
+        detail: t("mediaErrorDetail", {
+          detail: data.details || data.type
+        })
+      });
     });
     hlsPlayer.attachMedia(replayPlayer);
   } else if (replayPlayer.canPlayType("application/vnd.apple.mpegurl")) {
     replayUsesNativeHls = true;
     replayPlayer.src = replaySource;
   } else if (replayPlayerMessage) {
-    replayPlayerMessage.textContent = "当前浏览器不支持 HLS 回放。";
+    setLocalizedText(replayPlayerMessage, "unsupportedHls");
   }
 }
 
@@ -166,13 +194,14 @@ document.addEventListener("click", (event) => {
   } else if (replayUsesNativeHls) {
     replayPlayer.load();
   } else if (replayPlayerMessage) {
-    replayPlayerMessage.textContent = "正在加载回放，请稍候…";
+    setLocalizedText(replayPlayerMessage, "loadingReplay");
   }
 });
 
 const clipRows = document.querySelectorAll(".timeline > li[data-clip-index]");
 
 const renderClipState = (row, payload) => {
+  row._clipPayload = payload;
   const button = row.querySelector(".clip-button");
   const status = row.querySelector(".clip-status");
   if (!status) return;
@@ -180,37 +209,39 @@ const renderClipState = (row, payload) => {
   if (payload.status === "running") {
     if (button) {
       button.disabled = true;
-      button.textContent = "剪辑中…";
+      button.textContent = t("clipping");
     }
     status.hidden = false;
-    status.textContent = "FFmpeg 正在后台生成视频。";
+    status.textContent = t("ffmpegClipping");
     return;
   }
   if (payload.status === "completed") {
     if (button) {
       button.disabled = true;
-      button.textContent = "已剪好";
+      button.textContent = t("clipped");
     }
     status.hidden = false;
-    status.append(document.createTextNode(`${payload.filename} 已生成 · `));
+    status.append(document.createTextNode(
+      t("generatedFile", { filename: payload.filename })
+    ));
     const link = document.createElement("a");
     link.href = payload.download_url;
-    link.textContent = "下载 MP4";
+    link.textContent = t("downloadMp4");
     status.append(link);
     return;
   }
   if (payload.status === "failed") {
     if (button) {
       button.disabled = false;
-      button.textContent = "重试剪视频";
+      button.textContent = t("retryClip");
     }
     status.hidden = false;
-    status.textContent = payload.error || "视频剪辑失败";
+    status.textContent = payload.error || t("clipFailed");
     return;
   }
   if (button) {
     button.disabled = false;
-    button.textContent = "剪视频";
+    button.textContent = t("clipVideo");
   }
   status.hidden = true;
 };
@@ -223,7 +254,9 @@ const pollClip = async (row) => {
       `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/clips/${encodeURIComponent(clipIndex)}`
     );
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error?.message || "读取剪辑状态失败");
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(payload, "readClipFailed"));
+    }
     renderClipState(row, payload);
     if (payload.status === "running") {
       window.setTimeout(() => void pollClip(row), 2000);
@@ -232,7 +265,9 @@ const pollClip = async (row) => {
     const status = row.querySelector(".clip-status");
     if (status) {
       status.hidden = false;
-      status.textContent = requestError instanceof Error ? requestError.message : "读取剪辑状态失败";
+      status.textContent = requestError instanceof Error
+        ? requestError.message
+        : t("readClipFailed");
     }
     window.setTimeout(() => void pollClip(row), 3000);
   }
@@ -243,14 +278,16 @@ for (const row of clipRows) {
   if (button) {
     button.addEventListener("click", async () => {
       button.disabled = true;
-      button.textContent = "正在启动…";
+      button.textContent = t("starting");
       try {
         const response = await apiFetch(
           `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/clips/${encodeURIComponent(row.dataset.clipIndex)}`,
           { method: "POST" }
         );
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error?.message || "启动视频剪辑失败");
+        if (!response.ok) {
+          throw new Error(apiErrorMessage(payload, "startClipFailed"));
+        }
         renderClipState(row, payload);
         if (payload.status === "running") {
           window.setTimeout(() => void pollClip(row), 1000);
@@ -258,7 +295,9 @@ for (const row of clipRows) {
       } catch (requestError) {
         renderClipState(row, {
           status: "failed",
-          error: requestError instanceof Error ? requestError.message : "启动视频剪辑失败"
+          error: requestError instanceof Error
+            ? requestError.message
+            : t("startClipFailed")
         });
       }
     });
@@ -275,10 +314,14 @@ if (retryButton && jobHero) {
         method: "POST"
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error?.message || "重试失败");
+      if (!response.ok) {
+        throw new Error(apiErrorMessage(payload, "retryFailed"));
+      }
       window.location.reload();
     } catch (requestError) {
-      window.alert(requestError instanceof Error ? requestError.message : "重试失败");
+      window.alert(
+        requestError instanceof Error ? requestError.message : t("retryFailed")
+      );
       retryButton.disabled = false;
     }
   });
@@ -298,7 +341,7 @@ const subtitleZh = document.querySelector("#subtitle-zh");
 const subtitleEn = document.querySelector("#subtitle-en");
 const danmakuEnabled = document.querySelector("#danmaku-enabled");
 const danmakuDensity = document.querySelector("#danmaku-density");
-const danmakuOpacity = document.querySelector("#danmaku-opacity");
+const playbackLayout = document.querySelector("#playback-layout");
 const liveDanmakuPanel = document.querySelector("#live-danmaku-panel");
 const liveDanmakuStream = document.querySelector("#live-danmaku-stream");
 const liveDanmakuEmpty = document.querySelector("#live-danmaku-empty");
@@ -318,6 +361,8 @@ const densityProfiles = {
 };
 
 let playbackTrack = null;
+let playbackSyncPayload = null;
+let lastTranslationPayload = null;
 let currentTranslationStatus = "not_requested";
 let translationPollTimer = null;
 let translationRequestStarted = false;
@@ -387,11 +432,17 @@ const updateDanmakuCount = () => {
   );
 };
 
-const clearDanmakuStream = (message = "") => {
+const clearDanmakuStream = (messageKey = "") => {
   if (!liveDanmakuStream || !liveDanmakuEmpty) return;
   liveDanmakuStream.querySelectorAll(".danmaku-bubble").forEach((bubble) => bubble.remove());
-  liveDanmakuEmpty.textContent = message;
-  liveDanmakuEmpty.hidden = !message;
+  if (messageKey) {
+    setLocalizedText(liveDanmakuEmpty, messageKey);
+  } else {
+    liveDanmakuEmpty.textContent = "";
+    delete liveDanmakuEmpty.dataset.i18nRuntime;
+    delete liveDanmakuEmpty.dataset.i18nRuntimeParams;
+  }
+  liveDanmakuEmpty.hidden = !messageKey;
   updateDanmakuCount();
 };
 
@@ -402,7 +453,8 @@ const appendDanmakuBubble = (entry, isContext = false) => {
   bubble.className = `danmaku-bubble${isContext ? " is-context" : ""}`;
   const header = document.createElement("header");
   const author = document.createElement("span");
-  author.textContent = entry.author || "匿名";
+  author.textContent = entry.author || t("anonymous");
+  if (!entry.author) author.dataset.i18n = "anonymous";
   const time = document.createElement("time");
   time.textContent = formatClock(entry.timestamp_ms);
   const text = document.createElement("p");
@@ -422,7 +474,7 @@ const rebuildDanmakuContext = (milliseconds) => {
   if (!liveDanmakuStream || !danmakuEnabled || !danmakuDensity) return;
   const entries = playbackTrack?.danmaku || [];
   if (!danmakuEnabled.checked) {
-    clearDanmakuStream("弹幕已关闭。");
+    clearDanmakuStream("danmakuDisabled");
     return;
   }
   const profile = densityProfiles[danmakuDensity.value] || densityProfiles.normal;
@@ -446,7 +498,7 @@ const rebuildDanmakuContext = (milliseconds) => {
     lastDisplayedDanmakuMs = entry.timestamp_ms;
   }
   if (!liveDanmakuStream.querySelector(".danmaku-bubble")) {
-    liveDanmakuEmpty.textContent = "当前时间附近没有弹幕。";
+    setLocalizedText(liveDanmakuEmpty, "noNearbyDanmaku");
     liveDanmakuEmpty.hidden = false;
   }
 };
@@ -541,32 +593,36 @@ const startPlaybackClock = () => {
 
 const renderTranslationState = (translation) => {
   if (!translationState || !translationRetry) return;
+  lastTranslationPayload = translation;
   currentTranslationStatus = translation?.status || "not_requested";
   translationRetry.hidden = true;
   if (currentTranslationStatus === "completed") {
-    translationState.textContent = "英文字幕已就绪";
+    setLocalizedText(translationState, "englishReady");
     return;
   }
   if (
     currentTranslationStatus === "queued"
     || currentTranslationStatus === "running"
   ) {
-    translationState.textContent = "英文字幕正在后台生成";
+    setLocalizedText(translationState, "englishGenerating");
     return;
   }
   if (currentTranslationStatus === "failed") {
-    translationState.textContent = translation?.error || "英文字幕生成失败";
+    translationState.textContent = translation?.error
+      ? (i18n?.translateServerMessage(translation.error) || translation.error)
+      : t("englishFailed");
     if (canRequestTranslation) {
-      translationRetry.textContent = "重试翻译";
+      setLocalizedText(translationRetry, "retryTranslation");
       translationRetry.hidden = false;
     }
     return;
   }
-  translationState.textContent = canRequestTranslation
-    ? "开始播放后自动生成英文字幕"
-    : "登录后可为历史直播生成英文字幕";
+  setLocalizedText(
+    translationState,
+    canRequestTranslation ? "autoEnglishOnPlay" : "loginForEnglish"
+  );
   if (canRequestTranslation) {
-    translationRetry.textContent = "现在生成";
+    setLocalizedText(translationRetry, "generateNow");
     translationRetry.hidden = false;
   }
 };
@@ -586,7 +642,7 @@ const scheduleTranslationPoll = () => {
       );
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload.error?.message || "读取英文字幕状态失败");
+        throw new Error(apiErrorMessage(payload, "readTranslationFailed"));
       }
       renderTranslationState(payload);
       if (payload.status === "completed") {
@@ -611,7 +667,7 @@ const requestEnglishTranslation = async () => {
     );
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload.error?.message || "启动英文字幕生成失败");
+      throw new Error(apiErrorMessage(payload, "startTranslationFailed"));
     }
     renderTranslationState(payload);
     scheduleTranslationPoll();
@@ -619,7 +675,7 @@ const requestEnglishTranslation = async () => {
     if (translationState) {
       translationState.textContent = requestError instanceof Error
         ? requestError.message
-        : "启动英文字幕生成失败";
+        : t("startTranslationFailed");
     }
     if (translationRetry) translationRetry.hidden = false;
   } finally {
@@ -635,26 +691,35 @@ async function loadPlaybackTrack() {
     );
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload.error?.message || "加载同步播放数据失败");
+      throw new Error(apiErrorMessage(payload, "loadPlaybackTrackFailed"));
     }
     playbackTrack = payload;
     activeSubtitleKey = "";
     lastMediaTimeMs = null;
     renderTranslationState(payload.translation);
     renderPlaybackAt(replayPlayer.currentTime * 1000, true);
-    const precision = "requestVideoFrameCallback" in replayPlayer
-      ? "逐视频帧同步"
-      : "媒体时钟同步";
-    playbackSyncState.textContent =
-      `${precision} · ${payload.subtitles.length} 条字幕 · ${payload.danmaku.length} 条弹幕`;
+    playbackSyncPayload = payload;
+    renderPlaybackSyncSummary();
     playbackSyncState.className = "sync-state ready";
     scheduleTranslationPoll();
   } catch (requestError) {
     playbackSyncState.textContent = requestError instanceof Error
       ? requestError.message
-      : "同步播放数据加载失败";
+      : t("playbackTrackFailed");
     playbackSyncState.className = "sync-state error";
   }
+}
+
+function renderPlaybackSyncSummary() {
+  if (!playbackSyncState || !playbackSyncPayload || !replayPlayer) return;
+  const precision = "requestVideoFrameCallback" in replayPlayer
+    ? t("frameSync")
+    : t("mediaClockSync");
+  setLocalizedText(playbackSyncState, "syncSummary", {
+    precision,
+    subtitles: playbackSyncPayload.subtitles.length,
+    danmaku: playbackSyncPayload.danmaku.length
+  });
 }
 
 if (replayPlayer && replayPlayerPanel) {
@@ -689,26 +754,26 @@ subtitleMode?.addEventListener("change", () => {
   renderSubtitle(playbackMediaTimeMs());
 });
 
+const updateDanmakuPanelVisibility = () => {
+  if (!danmakuEnabled || !liveDanmakuPanel || !playbackLayout) return;
+  const collapsed = !danmakuEnabled.checked;
+  liveDanmakuPanel.hidden = collapsed;
+  playbackLayout.classList.toggle("is-danmaku-collapsed", collapsed);
+};
+
 danmakuEnabled?.addEventListener("change", () => {
-  liveDanmakuPanel?.classList.toggle("is-disabled", !danmakuEnabled.checked);
+  updateDanmakuPanelVisibility();
   lastMediaTimeMs = null;
   if (danmakuEnabled.checked) {
     rebuildDanmakuContext(playbackMediaTimeMs());
   } else {
-    clearDanmakuStream("弹幕已关闭。");
+    clearDanmakuStream("danmakuDisabled");
   }
 });
 
 danmakuDensity?.addEventListener("change", () => {
   lastMediaTimeMs = null;
   rebuildDanmakuContext(playbackMediaTimeMs());
-});
-
-danmakuOpacity?.addEventListener("input", () => {
-  liveDanmakuStream?.style.setProperty(
-    "--danmaku-opacity",
-    String(Number(danmakuOpacity.value) / 100)
-  );
 });
 
 syncOffset?.addEventListener("input", () => {
@@ -726,12 +791,15 @@ translationRetry?.addEventListener("click", () => {
   void requestEnglishTranslation();
 });
 
+updateDanmakuPanelVisibility();
+
 const showLoadFailure = (countElement, count, retry) => {
-  countElement.textContent = `（已显示 ${count} 条，加载失败）`;
+  setLocalizedText(countElement, "displayedLoadFailed", { count });
   const button = document.createElement("button");
   button.type = "button";
   button.className = "load-retry";
-  button.textContent = "继续加载";
+  button.dataset.i18n = "continueLoading";
+  button.textContent = t("continueLoading");
   button.addEventListener("click", () => {
     button.remove();
     void retry();
@@ -747,17 +815,19 @@ const loadAllTranscript = async () => {
   let offset = Number(transcriptList.dataset.loaded || 0);
   let hasMore = transcriptList.dataset.hasMore === "true";
   if (!hasMore) {
-    transcriptCount.textContent = `（共 ${offset} 条）`;
+    setLocalizedText(transcriptCount, "totalCount", { count: offset });
     return;
   }
-  transcriptCount.textContent = `（已显示 ${offset} 条，正在加载全部…）`;
+  setLocalizedText(transcriptCount, "loadingAll", { count: offset });
   try {
     while (hasMore) {
       const response = await apiFetch(
         `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/transcript?offset=${offset}&limit=500`
       );
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error?.message || "加载字幕失败");
+      if (!response.ok) {
+        throw new Error(apiErrorMessage(payload, "loadTranscriptFailed"));
+      }
       const fragment = document.createDocumentFragment();
       for (const segment of payload.segments) {
         const article = document.createElement("article");
@@ -766,7 +836,11 @@ const loadAllTranscript = async () => {
         time.type = "button";
         time.className = "timestamp-link";
         time.dataset.seekMs = String(segment.start_ms);
-        time.title = `跳转到 ${formatClock(segment.start_ms)}`;
+        time.dataset.i18nTitle = "jumpTo";
+        time.dataset.i18nParamTime = formatClock(segment.start_ms);
+        time.title = t("jumpTo", {
+          time: formatClock(segment.start_ms)
+        });
         time.textContent = formatClock(segment.start_ms);
         const text = document.createElement("p");
         text.textContent = segment.text;
@@ -778,9 +852,11 @@ const loadAllTranscript = async () => {
       hasMore = payload.has_more;
       transcriptList.dataset.loaded = String(offset);
       transcriptList.dataset.hasMore = String(hasMore);
-      transcriptCount.textContent = hasMore
-        ? `（已显示 ${offset} 条，正在加载全部…）`
-        : `（共 ${offset} 条）`;
+      setLocalizedText(
+        transcriptCount,
+        hasMore ? "loadingAll" : "totalCount",
+        { count: offset }
+      );
     }
   } catch {
     showLoadFailure(transcriptCount, offset, loadAllTranscript);
@@ -806,21 +882,33 @@ const updateDanmakuAuthorFilter = () => {
   const hasMore = danmakuList.dataset.hasMore === "true";
   if (activeDanmakuAuthor === null) {
     danmakuAuthorFilter.hidden = true;
-    danmakuCount.textContent = hasMore
-      ? `（已显示 ${totalCount} 条，正在加载全部…）`
-      : `（共 ${totalCount} 条）`;
+    setLocalizedText(
+      danmakuCount,
+      hasMore ? "loadingAll" : "totalCount",
+      { count: totalCount }
+    );
     return;
   }
   danmakuAuthorFilter.hidden = false;
   const label = danmakuAuthorFilter.querySelector("span");
   if (label) {
-    label.textContent = hasMore
-      ? `正在加载粉丝 ${activeDanmakuAuthor} 的全部弹幕…`
-      : `粉丝 ${activeDanmakuAuthor} · 本场共 ${matchingCount} 条`;
+    setLocalizedText(
+      label,
+      hasMore ? "loadingFanDanmaku" : "fanDanmakuTotal",
+      {
+        author: activeDanmakuAuthor,
+        count: matchingCount
+      }
+    );
   }
-  danmakuCount.textContent = hasMore
-    ? `（已找到 ${matchingCount} 条，正在加载全部…）`
-    : `（已筛选 ${matchingCount} 条，本场共 ${totalCount} 条）`;
+  setLocalizedText(
+    danmakuCount,
+    hasMore ? "foundLoading" : "filteredTotal",
+    {
+      count: matchingCount,
+      total: totalCount
+    }
+  );
 };
 
 if (danmakuList) {
@@ -847,17 +935,19 @@ const loadAllDanmaku = async () => {
   let afterMs = Number(danmakuList.dataset.afterMs || -1);
   let hasMore = danmakuList.dataset.hasMore === "true";
   if (!hasMore) {
-    danmakuCount.textContent = `（共 ${count} 条）`;
+    setLocalizedText(danmakuCount, "totalCount", { count });
     return;
   }
-  danmakuCount.textContent = `（已显示 ${count} 条，正在加载全部…）`;
+  setLocalizedText(danmakuCount, "loadingAll", { count });
   try {
     while (hasMore) {
       const response = await apiFetch(
         `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/danmaku?after_ms=${afterMs}&limit=500`
       );
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error?.message || "加载弹幕失败");
+      if (!response.ok) {
+        throw new Error(apiErrorMessage(payload, "loadDanmakuFailed"));
+      }
       const fragment = document.createDocumentFragment();
       for (const entry of payload.entries) {
         const article = document.createElement("article");
@@ -893,3 +983,12 @@ const loadAllDanmaku = async () => {
 
 void loadAllTranscript();
 void loadAllDanmaku();
+
+document.addEventListener("p48:languagechange", () => {
+  if (lastTranslationPayload) renderTranslationState(lastTranslationPayload);
+  renderPlaybackSyncSummary();
+  for (const row of clipRows) {
+    if (row._clipPayload) renderClipState(row, row._clipPayload);
+  }
+  updateDanmakuAuthorFilter();
+});

@@ -9,18 +9,18 @@
     data-job-id="{{ job.id }}"
     data-job-active="{{ 'true' if job.status in ['queued', 'running'] else 'false' }}"
   >
-    <a class="back-link" href="/">← 返回任务列表</a>
+    <a class="back-link" href="/" data-i18n="backToJobs">← 返回任务列表</a>
     <div class="job-title-row">
       <div>
-        <p class="eyebrow">{{ job.member_name or "等待解析主播" }}</p>
-        <h1>{{ job.title or "正在解析回放" }}</h1>
-        <p class="job-meta">直播 ID：<code>{{ job.live_id }}</code>{% if job.replay_started_at %} · 中国时间 {{ format_china_datetime(job.replay_started_at) }}{% endif %}</p>
+        <p class="eyebrow">{% if job.member_name %}{{ job.member_name }}{% else %}<span data-i18n="waitingMember">等待解析主播</span>{% endif %}</p>
+        <h1>{% if job.title %}{{ job.title }}{% else %}<span data-i18n="parsingReplay">正在解析回放</span>{% endif %}</h1>
+        <p class="job-meta"><span data-i18n="liveId">直播 ID</span>：<code>{{ job.live_id }}</code>{% if job.replay_started_at %} · <span data-i18n="chinaTime">中国时间</span> {{ format_china_datetime(job.replay_started_at) }}{% endif %}</p>
       </div>
-      <span id="job-status" class="status status-{{ job.status }}">{{ job.status }}</span>
+      <span id="job-status" class="status status-{{ job.status }}" data-job-status="{{ job.status }}">{{ job.status }}</span>
     </div>
     <div class="progress-track large"><span id="job-progress-bar" style="width: {{ job.progress_percent }}%"></span></div>
     <div class="progress-copy">
-      <strong id="job-progress-message">{{ job.progress_message }}</strong>
+      <strong id="job-progress-message" data-operational-message="{{ job.progress_message }}">{{ job.progress_message }}</strong>
       <span id="job-progress-percent">{{ job.progress_percent }}%</span>
     </div>
   </section>
@@ -30,14 +30,14 @@
       <strong>{{ job.error_code }}</strong>
       <p>{{ job.error_message }}</p>
       {% if job.error_retryable and can_manage_job %}
-        <button id="retry-job" type="button">重试任务</button>
+        <button id="retry-job" type="button" data-i18n="retryJob">重试任务</button>
       {% endif %}
     </section>
   {% endif %}
 
   {% if job.cleanup_warning %}
     <section class="notice warning">
-      <strong>结果已保存，但临时文件清理需要注意</strong>
+      <strong data-i18n="cleanupWarning">结果已保存，但临时文件清理需要注意</strong>
       <p>{{ job.cleanup_warning }}</p>
     </section>
   {% endif %}
@@ -51,47 +51,36 @@
       <div class="replay-heading">
         <div>
           <p class="eyebrow">Synchronized replay</p>
-          <h2>同步回放</h2>
+          <h2 data-i18n="synchronizedReplay">同步回放</h2>
         </div>
-        <span id="playback-sync-state" class="sync-state">正在载入字幕与弹幕</span>
+        <span id="playback-sync-state" class="sync-state" data-i18n="loadingPlaybackData">正在载入字幕与弹幕</span>
       </div>
-      <div class="playback-toolbar" aria-label="播放显示设置">
+      <div class="playback-toolbar" aria-label="播放显示设置" data-i18n-aria-label="playbackSettings">
         <label>
-          <span>字幕</span>
+          <span data-i18n="subtitles">字幕</span>
           <select id="subtitle-mode">
-            <option value="zh">中文</option>
-            <option value="en">English</option>
-            <option value="bilingual">中英双语</option>
-            <option value="off">关闭</option>
+            <option value="zh" data-i18n="chinese">中文</option>
+            <option value="en" data-i18n="english">English</option>
+            <option value="bilingual" data-i18n="bilingual">中英双语</option>
+            <option value="off" data-i18n="off">关闭</option>
           </select>
         </label>
         <label class="toggle-control">
           <input id="danmaku-enabled" type="checkbox" checked>
-          <span>显示弹幕</span>
+          <span data-i18n="showDanmaku">显示弹幕</span>
         </label>
         <label>
-          <span>弹幕密度</span>
+          <span data-i18n="danmakuDensity">弹幕密度</span>
           <select id="danmaku-density">
-            <option value="low">清爽</option>
-            <option value="normal" selected>标准</option>
-            <option value="high">丰富</option>
+            <option value="low" data-i18n="densityLow">清爽</option>
+            <option value="normal" selected data-i18n="densityNormal">标准</option>
+            <option value="high" data-i18n="densityHigh">丰富</option>
           </select>
         </label>
-        <label class="opacity-control">
-          <span>透明度</span>
-          <input
-            id="danmaku-opacity"
-            type="range"
-            min="35"
-            max="100"
-            step="5"
-            value="82"
-          >
-        </label>
         <details class="sync-adjustment">
-          <summary>高级同步</summary>
+          <summary data-i18n="advancedSync">高级同步</summary>
           <label>
-            <span>偏移 <output id="sync-offset-value">0.0s</output></span>
+            <span><span data-i18n="offset">偏移</span> <output id="sync-offset-value">0.0s</output></span>
             <input
               id="sync-offset"
               type="range"
@@ -103,7 +92,7 @@
           </label>
         </details>
       </div>
-      <div class="playback-layout">
+      <div id="playback-layout" class="playback-layout">
         <div class="video-stage">
           <video
             id="replay-player"
@@ -119,27 +108,27 @@
         </div>
         <aside id="live-danmaku-panel" class="live-danmaku-panel">
           <div class="danmaku-panel-heading">
-            <span><i></i> 同步弹幕</span>
+            <span><i></i> <span data-i18n="synchronizedDanmaku">同步弹幕</span></span>
             <strong id="danmaku-live-count">0</strong>
           </div>
           <div id="live-danmaku-stream" class="live-danmaku-stream">
             <p id="live-danmaku-empty" class="danmaku-empty">
-              播放后，弹幕会在这里随视频出现。
+              <span data-i18n="danmakuStartsOnPlay">播放后，弹幕会在这里随视频出现。</span>
             </p>
           </div>
         </aside>
       </div>
       <div class="playback-status-row">
         <p id="replay-player-message" class="muted">
-          点击时间线、高光或字幕中的时间，即可跳转到对应位置。
+          <span data-i18n="replayHelp">点击时间线、高光或字幕中的时间，即可跳转到对应位置。</span>
         </p>
         <div class="translation-state">
           <span id="translation-state"></span>
-          <button id="translation-retry" type="button" hidden>生成英文字幕</button>
+          <button id="translation-retry" type="button" hidden data-i18n="generateEnglish">生成英文字幕</button>
         </div>
       </div>
       <noscript>
-        <p><a href="{{ job.media_url }}">打开原始 HLS 回放</a></p>
+        <p><a href="{{ job.media_url }}" data-i18n="openRawHls">打开原始 HLS 回放</a></p>
       </noscript>
     </section>
   {% endif %}
@@ -147,13 +136,13 @@
   {% if summary %}
     <section class="panel summary-panel">
       <p class="eyebrow">Overview</p>
-      <h2>摘要</h2>
+      <h2 data-i18n="overview">摘要</h2>
       <p class="summary-overview">{{ summary.overview }}</p>
     </section>
 
     <section class="panel">
       <p class="eyebrow">Timeline</p>
-      <h2>时间线</h2>
+      <h2 data-i18n="timeline">时间线</h2>
       <ol class="timeline">
         {% for item in summary.timeline %}
           <li data-clip-index="{{ loop.index0 }}">
@@ -162,6 +151,8 @@
               type="button"
               data-seek-ms="{{ item.start_ms }}"
               title="跳转到 {{ format_clock(item.start_ms) }}"
+              data-i18n-title="jumpTo"
+              data-i18n-param-time="{{ format_clock(item.start_ms) }}"
             >{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</button>
             <div class="timeline-title-row">
               <strong>{{ item.title }}</strong>
@@ -170,6 +161,7 @@
                   class="clip-button"
                   type="button"
                   data-clip-index="{{ loop.index0 }}"
+                  data-i18n="clipVideo"
                 >剪视频</button>
               {% endif %}
             </div>
@@ -182,7 +174,7 @@
 
     <section class="panel">
       <p class="eyebrow">Highlights</p>
-      <h2>高光</h2>
+      <h2 data-i18n="highlights">高光</h2>
       <div class="highlight-grid">
         {% for item in summary.highlights %}
           <article>
@@ -191,10 +183,12 @@
               type="button"
               data-seek-ms="{{ item.start_ms }}"
               title="跳转到 {{ format_clock(item.start_ms) }}"
+              data-i18n-title="jumpTo"
+              data-i18n-param-time="{{ format_clock(item.start_ms) }}"
             >{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</button>
             <h3>{{ item.title }}</h3>
             <p>{{ item.detail }}</p>
-            {% if item.danmaku_evidence %}<small>弹幕参考：{{ item.danmaku_evidence }}</small>{% endif %}
+            {% if item.danmaku_evidence %}<small><span data-i18n="danmakuReference">弹幕参考：</span>{{ item.danmaku_evidence }}</small>{% endif %}
           </article>
         {% endfor %}
       </div>
@@ -205,12 +199,12 @@
   {% if peaks %}
     <section class="panel">
       <p class="eyebrow">Danmaku signals</p>
-      <h2>弹幕活跃高峰</h2>
+      <h2 data-i18n="danmakuPeaks">弹幕活跃高峰</h2>
       <div class="peak-grid">
         {% for peak in peaks %}
           <article>
             <strong>#{{ peak.rank }} · {{ format_clock(peak.start_ms) }}–{{ format_clock(peak.end_ms) }}</strong>
-            <p>{{ peak.message_count }} 条弹幕 · 强度 {{ peak.score }}</p>
+            <p data-i18n="peakStats" data-i18n-param-count="{{ peak.message_count }}" data-i18n-param-score="{{ peak.score }}">{{ peak.message_count }} 条弹幕 · 强度 {{ peak.score }}</p>
             {% if peak.summary %}<p class="peak-summary">{{ peak.summary }}</p>{% endif %}
             <small>
               {% for sample in peak.samples[:3] %}
@@ -227,7 +221,7 @@
     <div class="panel">
       <p class="eyebrow">Transcript</p>
       <h2>
-        字幕
+        <span data-i18n="transcript">字幕</span>
         <span id="transcript-count" class="load-state">
           {% if transcript %}（已显示 {{ transcript | length }} 条）{% endif %}
         </span>
@@ -245,25 +239,27 @@
               type="button"
               data-seek-ms="{{ segment.start_ms }}"
               title="跳转到 {{ format_clock(segment.start_ms) }}"
+              data-i18n-title="jumpTo"
+              data-i18n-param-time="{{ format_clock(segment.start_ms) }}"
             >{{ format_clock(segment.start_ms) }}</button>
             <p>{{ segment.text }}</p>
           </article>
         {% else %}
-          <p class="muted">字幕尚未生成。</p>
+          <p class="muted" data-i18n="transcriptUnavailable">字幕尚未生成。</p>
         {% endfor %}
       </div>
     </div>
     <div class="panel">
       <p class="eyebrow">Danmaku</p>
       <h2>
-        弹幕
+        <span data-i18n="danmaku">弹幕</span>
         <span id="danmaku-count" class="load-state">
           {% if danmaku %}（已显示 {{ danmaku | length }} 条）{% endif %}
         </span>
       </h2>
       <div id="danmaku-author-filter" class="danmaku-author-filter" hidden>
         <span></span>
-        <button id="clear-danmaku-author" type="button">显示全部</button>
+        <button id="clear-danmaku-author" type="button" data-i18n="showAll">显示全部</button>
       </div>
       <div
         id="danmaku-list"
@@ -283,7 +279,7 @@
             </p>
           </article>
         {% else %}
-          <p class="muted">没有可用弹幕。</p>
+          <p class="muted" data-i18n="danmakuUnavailable">没有可用弹幕。</p>
         {% endfor %}
       </div>
     </div>
@@ -292,12 +288,12 @@
   {% if can_manage_job %}
     <section class="panel">
       <p class="eyebrow">Job events</p>
-      <h2>处理记录</h2>
+      <h2 data-i18n="jobEvents">处理记录</h2>
       <ol class="event-list">
         {% for event in events %}
           <li class="event-{{ event.level }}">
             <time>{{ event.created_at[:19].replace("T", " ") }}</time>
-            <span>{{ event.message }}</span>
+            <span data-operational-message="{{ event.message }}">{{ event.message }}</span>
           </li>
         {% endfor %}
       </ol>

@@ -402,7 +402,8 @@ def test_completed_result_is_public_but_raw_asr_requires_login(
         )
 
     assert "800010" in index.text
-    assert "直播时间 · 2026-08-22 18:57" in index.text
+    assert 'data-i18n="liveTime">直播时间</span>' in index.text
+    assert "2026-08-22 18:57" in index.text
     assert page.status_code == 200
     assert summary.status_code == 200
     assert raw_asr.status_code == 303
@@ -621,6 +622,10 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert page.status_code == 200
     assert 'id="subtitle-mode"' in page.text
     assert 'id="live-danmaku-panel"' in page.text
+    assert 'id="playback-layout"' in page.text
+    assert 'id="language-toggle"' in page.text
+    assert "i18n.js?v=20260825-1" in page.text
+    assert 'id="danmaku-opacity"' not in page.text
     assert track.status_code == 200
     assert track.json()["subtitles"][0] == {
         "sequence": 1,

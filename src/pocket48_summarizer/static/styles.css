@@ -57,6 +57,20 @@ button, input, select { font: inherit; }
   color: #bfc6d8;
   font-size: 12px;
 }
+.language-toggle {
+  display: grid;
+  min-width: 42px;
+  height: 34px;
+  place-items: center;
+  padding: 0 10px;
+  border: 1px solid #4b4564;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #29243e, #1c2130);
+  color: #ece8ff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
 .quota-copy { color: #9ea6b8; }
 .login-shell { display: grid; min-height: calc(100vh - 190px); place-items: center; }
 .login-panel { width: min(460px, 100%); }
@@ -125,11 +139,6 @@ button, input, select { font: inherit; }
   margin: 0;
   accent-color: #ff6d9d;
 }
-.opacity-control input {
-  width: 86px;
-  margin: 0;
-  accent-color: #8b75ff;
-}
 .sync-adjustment { position: relative; }
 .sync-adjustment summary {
   cursor: pointer;
@@ -166,6 +175,9 @@ button, input, select { font: inherit; }
   gap: 12px;
   align-items: stretch;
 }
+.playback-layout.is-danmaku-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
 .video-stage {
   position: relative;
   overflow: hidden;
@@ -197,7 +209,9 @@ button, input, select { font: inherit; }
   margin: 5px auto 0;
   padding: 5px 12px;
   border-radius: 9px;
-  background: rgba(4, 5, 9, .72);
+  border: 1px solid rgba(255, 255, 255, .08);
+  background: rgba(4, 5, 9, .42);
+  backdrop-filter: blur(6px);
   box-decoration-break: clone;
   color: #fff;
   font-weight: 800;
@@ -223,10 +237,7 @@ button, input, select { font: inherit; }
     radial-gradient(circle at 100% 0%, rgba(124, 100, 255, .18), transparent 55%),
     rgba(12, 15, 22, .96);
 }
-.live-danmaku-panel.is-disabled {
-  opacity: .45;
-  filter: saturate(.55);
-}
+.live-danmaku-panel[hidden] { display: none; }
 .danmaku-panel-heading {
   flex: none;
   padding: 13px 14px;
@@ -256,7 +267,6 @@ button, input, select { font: inherit; }
   text-align: center;
 }
 .live-danmaku-stream {
-  --danmaku-opacity: .82;
   overflow: hidden;
   display: flex;
   min-height: 0;
@@ -281,8 +291,8 @@ button, input, select { font: inherit; }
   border-radius: 13px 13px 13px 4px;
   background: linear-gradient(
     135deg,
-    rgba(60, 54, 82, var(--danmaku-opacity)),
-    rgba(29, 32, 44, var(--danmaku-opacity))
+    rgba(60, 54, 82, .82),
+    rgba(29, 32, 44, .82)
   );
   box-shadow: 0 8px 22px rgba(0, 0, 0, .2);
 }
@@ -515,6 +525,7 @@ code { color: #d4c8ff; }
 
 @media (max-width: 760px) {
   .site-header { padding: 0 18px; }
+  .brand small { display: none; }
   .local-pill { display: none; }
   .page-shell { width: min(100% - 24px, 1180px); padding-top: 34px; }
   .input-row, .job-title-row { flex-direction: column; }
