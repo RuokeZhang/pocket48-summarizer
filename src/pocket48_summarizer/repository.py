@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sqlite3
+import unicodedata
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Iterable
@@ -11,19 +14,42 @@ from .errors import AppError
 from .models import (
     DanmakuEntry,
     DanmakuPeak,
+    GlossaryAliasRecord,
+    GlossarySyncStateRecord,
+    GlossaryTermRecord,
+    GlossaryTermType,
     JobRecord,
     JobStage,
     JobStatus,
+    MemberCatalogEntry,
+    MemberCatalogRecord,
     ReplayMetadata,
     SubtitleTranslationRequestRecord,
     SubtitleTranslationStatus,
     TranscriptSegment,
     VideoClipRecord,
 )
+from .security import strip_control_chars
+
+GLOSSARY_TERM_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 
 
 def utcnow() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def normalize_glossary_text(value: str) -> tuple[str, str]:
+    cleaned = strip_control_chars(unicodedata.normalize("NFKC", value))
+    normalized = re.sub(r"\s+", "", cleaned).casefold()
+    if not cleaned or not normalized:
+        raise AppError("glossary_text_invalid", "词库文本不能为空", False)
+    if len(cleaned) > 160:
+        raise AppError(
+            "glossary_text_too_long",
+            "词库文本不能超过 160 个字符",
+            False,
+        )
+    return cleaned, normalized
 
 
 class JobRepository:
@@ -51,6 +77,538 @@ class JobRepository:
         if row is None:
             return None
         return SubtitleTranslationRequestRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _member_catalog(
+        row: sqlite3.Row | None,
+    ) -> MemberCatalogRecord | None:
+        if row is None:
+            return None
+        return MemberCatalogRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _glossary_term(
+        row: sqlite3.Row | None,
+    ) -> GlossaryTermRecord | None:
+        if row is None:
+            return None
+        return GlossaryTermRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _glossary_alias(
+        row: sqlite3.Row | None,
+    ) -> GlossaryAliasRecord | None:
+        if row is None:
+            return None
+        return GlossaryAliasRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _glossary_sync_state(
+        row: sqlite3.Row | None,
+    ) -> GlossarySyncStateRecord:
+        if row is None:
+            raise AppError(
+                "glossary_sync_state_missing",
+                "词库同步状态记录缺失",
+                False,
+            )
+        return GlossarySyncStateRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _calculate_glossary_fingerprint(
+        connection: sqlite3.Connection,
+    ) -> str:
+        members = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT member_id, canonical_name, pinyin,
+                       group_id, group_name, team_id, team_name
+                FROM member_catalog
+                WHERE active = 1 AND source_present = 1
+                ORDER BY member_id
+                """
+            ).fetchall()
+        ]
+        terms = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, canonical_text, term_type,
+                       description_zh, description_en
+                FROM glossary_terms
+                WHERE active = 1
+                ORDER BY id
+                """
+            ).fetchall()
+        ]
+        aliases = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT a.member_id, a.term_id, a.alias
+                FROM glossary_aliases a
+                LEFT JOIN member_catalog m ON m.member_id = a.member_id
+                LEFT JOIN glossary_terms t ON t.id = a.term_id
+                WHERE a.active = 1
+                  AND (
+                      (
+                          a.member_id IS NOT NULL
+                          AND m.active = 1
+                          AND m.source_present = 1
+                      )
+                      OR (
+                          a.term_id IS NOT NULL
+                          AND t.active = 1
+                      )
+                  )
+                ORDER BY a.alias_normalized
+                """
+            ).fetchall()
+        ]
+        encoded = json.dumps(
+            {
+                "members": members,
+                "terms": terms,
+                "aliases": aliases,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def get_glossary_sync_state(self) -> GlossarySyncStateRecord:
+        with self.database.connect() as connection:
+            return self._glossary_sync_state(
+                connection.execute(
+                    """
+                    SELECT source_url, sync_status, source_hash,
+                           catalog_version, glossary_fingerprint,
+                           member_count, active_member_count,
+                           last_attempt_at, last_success_at, last_error,
+                           active_vocabulary_id, vocabulary_fingerprint,
+                           vocabulary_updated_at, vocabulary_error
+                    FROM glossary_sync_state
+                    WHERE singleton = 1
+                    """
+                ).fetchone()
+            )
+
+    def replace_member_catalog(
+        self,
+        members: list[MemberCatalogEntry],
+        *,
+        source_url: str,
+        source_hash: str,
+    ) -> GlossarySyncStateRecord:
+        if not members or len({member.member_id for member in members}) != len(
+            members
+        ):
+            raise AppError(
+                "member_catalog_invalid",
+                "官方成员目录为空或包含重复成员",
+                False,
+            )
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE member_catalog
+                SET active = 0, source_present = 0
+                WHERE source = 'snh48_official'
+                """
+            )
+            connection.executemany(
+                """
+                INSERT INTO member_catalog (
+                    member_id, canonical_name, pinyin,
+                    group_id, group_name, team_id, team_name,
+                    status, ranking, active, source_present, source,
+                    first_seen_at, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
+                          'snh48_official', ?, ?)
+                ON CONFLICT(member_id) DO UPDATE SET
+                    canonical_name = excluded.canonical_name,
+                    pinyin = excluded.pinyin,
+                    group_id = excluded.group_id,
+                    group_name = excluded.group_name,
+                    team_id = excluded.team_id,
+                    team_name = excluded.team_name,
+                    status = excluded.status,
+                    ranking = excluded.ranking,
+                    active = excluded.active,
+                    source_present = 1,
+                    source = excluded.source,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                [
+                    (
+                        member.member_id,
+                        member.canonical_name,
+                        member.pinyin,
+                        member.group_id,
+                        member.group_name,
+                        member.team_id,
+                        member.team_name,
+                        member.status,
+                        member.ranking,
+                        int(member.active),
+                        now,
+                        now,
+                    )
+                    for member in members
+                ],
+            )
+            fingerprint = self._calculate_glossary_fingerprint(connection)
+            connection.execute(
+                """
+                UPDATE glossary_sync_state
+                SET source_url = ?,
+                    sync_status = 'success',
+                    source_hash = ?,
+                    catalog_version = ?,
+                    glossary_fingerprint = ?,
+                    member_count = ?,
+                    active_member_count = ?,
+                    last_attempt_at = ?,
+                    last_success_at = ?,
+                    last_error = NULL
+                WHERE singleton = 1
+                """,
+                (
+                    source_url,
+                    source_hash,
+                    source_hash[:16],
+                    fingerprint,
+                    len(members),
+                    sum(member.active for member in members),
+                    now,
+                    now,
+                ),
+            )
+        return self.get_glossary_sync_state()
+
+    def record_member_catalog_sync_failure(self, message: str) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE glossary_sync_state
+                SET sync_status = 'failed',
+                    last_attempt_at = ?,
+                    last_error = ?
+                WHERE singleton = 1
+                """,
+                (now, strip_control_chars(message)[:1000]),
+            )
+
+    def list_member_catalog(
+        self,
+        *,
+        active_only: bool = False,
+        limit: int = 1000,
+    ) -> list[MemberCatalogRecord]:
+        where = "WHERE active = 1 AND source_present = 1" if active_only else ""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM member_catalog
+                {where}
+                ORDER BY active DESC, group_name, team_name, canonical_name
+                LIMIT ?
+                """,
+                (max(1, min(limit, 2000)),),
+            ).fetchall()
+        return [
+            member
+            for row in rows
+            if (member := self._member_catalog(row)) is not None
+        ]
+
+    def get_member_catalog(
+        self, member_id: str
+    ) -> MemberCatalogRecord | None:
+        with self.database.connect() as connection:
+            return self._member_catalog(
+                connection.execute(
+                    "SELECT * FROM member_catalog WHERE member_id = ?",
+                    (member_id,),
+                ).fetchone()
+            )
+
+    def list_glossary_terms(self) -> list[GlossaryTermRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM glossary_terms
+                ORDER BY active DESC, term_type, canonical_text
+                """
+            ).fetchall()
+        return [
+            term
+            for row in rows
+            if (term := self._glossary_term(row)) is not None
+        ]
+
+    def list_glossary_aliases(self) -> list[GlossaryAliasRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT a.*,
+                       COALESCE(m.canonical_name, t.canonical_text)
+                           AS target_text,
+                       CASE
+                           WHEN a.member_id IS NOT NULL THEN 'member'
+                           ELSE t.term_type
+                       END AS target_type
+                FROM glossary_aliases a
+                LEFT JOIN member_catalog m ON m.member_id = a.member_id
+                LEFT JOIN glossary_terms t ON t.id = a.term_id
+                ORDER BY a.active DESC, target_text, a.alias
+                """
+            ).fetchall()
+        return [
+            alias
+            for row in rows
+            if (alias := self._glossary_alias(row)) is not None
+        ]
+
+    def create_glossary_term(
+        self,
+        *,
+        canonical_text: str,
+        term_type: str,
+        description_zh: str,
+        description_en: str,
+        user_id: str,
+    ) -> GlossaryTermRecord:
+        canonical_text, canonical_normalized = normalize_glossary_text(
+            canonical_text
+        )
+        valid_types = {item.value for item in GlossaryTermType}
+        if (
+            term_type not in valid_types
+            or not GLOSSARY_TERM_TYPE_RE.fullmatch(term_type)
+        ):
+            raise AppError(
+                "glossary_term_type_invalid",
+                "词库术语类型无效",
+                False,
+            )
+        description_zh = strip_control_chars(description_zh)[:1000]
+        description_en = strip_control_chars(description_en)[:1000]
+        term_id = str(uuid.uuid4())
+        now = utcnow()
+        try:
+            with self.database.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO glossary_terms (
+                        id, canonical_text, canonical_normalized,
+                        term_type, description_zh, description_en,
+                        source, active, created_by_user_id,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'admin', 1, ?, ?, ?)
+                    """,
+                    (
+                        term_id,
+                        canonical_text,
+                        canonical_normalized,
+                        term_type,
+                        description_zh,
+                        description_en,
+                        user_id,
+                        now,
+                        now,
+                    ),
+                )
+                self._update_glossary_fingerprint(connection)
+        except sqlite3.IntegrityError as exc:
+            raise AppError(
+                "glossary_term_exists",
+                "相同类型的规范术语已经存在",
+                False,
+            ) from exc
+        with self.database.connect() as connection:
+            term = self._glossary_term(
+                connection.execute(
+                    "SELECT * FROM glossary_terms WHERE id = ?",
+                    (term_id,),
+                ).fetchone()
+            )
+        if term is None:
+            raise AppError(
+                "glossary_term_create_failed",
+                "词库术语创建后无法读取",
+                False,
+            )
+        return term
+
+    def create_glossary_alias(
+        self,
+        *,
+        alias: str,
+        user_id: str,
+        member_id: str | None = None,
+        term_id: str | None = None,
+    ) -> GlossaryAliasRecord:
+        if (member_id is None) == (term_id is None):
+            raise AppError(
+                "glossary_alias_target_invalid",
+                "别名必须关联一个成员或术语",
+                False,
+            )
+        alias, alias_normalized = normalize_glossary_text(alias)
+        alias_id = str(uuid.uuid4())
+        now = utcnow()
+        try:
+            with self.database.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                if member_id is not None:
+                    target = connection.execute(
+                        """
+                        SELECT canonical_name AS target_text
+                        FROM member_catalog
+                        WHERE member_id = ?
+                        """,
+                        (member_id,),
+                    ).fetchone()
+                else:
+                    target = connection.execute(
+                        """
+                        SELECT canonical_text AS target_text
+                        FROM glossary_terms
+                        WHERE id = ?
+                        """,
+                        (term_id,),
+                    ).fetchone()
+                if target is None:
+                    raise AppError(
+                        "glossary_alias_target_missing",
+                        "别名关联的成员或术语不存在",
+                        False,
+                    )
+                _, target_normalized = normalize_glossary_text(
+                    target["target_text"]
+                )
+                if alias_normalized == target_normalized:
+                    raise AppError(
+                        "glossary_alias_redundant",
+                        "别名不能与规范名称相同",
+                        False,
+                    )
+                canonical_rows = connection.execute(
+                    """
+                    SELECT canonical_name AS canonical_text
+                    FROM member_catalog
+                    UNION ALL
+                    SELECT canonical_text
+                    FROM glossary_terms
+                    """
+                ).fetchall()
+                if any(
+                    normalize_glossary_text(row["canonical_text"])[1]
+                    == alias_normalized
+                    for row in canonical_rows
+                ):
+                    raise AppError(
+                        "glossary_alias_conflicts_with_canonical",
+                        "别名与已有规范成员名或术语冲突",
+                        False,
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO glossary_aliases (
+                        id, member_id, term_id, alias, alias_normalized,
+                        active, created_by_user_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    """,
+                    (
+                        alias_id,
+                        member_id,
+                        term_id,
+                        alias,
+                        alias_normalized,
+                        user_id,
+                        now,
+                        now,
+                    ),
+                )
+                self._update_glossary_fingerprint(connection)
+        except sqlite3.IntegrityError as exc:
+            raise AppError(
+                "glossary_alias_exists",
+                "这个别名已经关联到其他成员或术语",
+                False,
+            ) from exc
+        created = next(
+            (
+                item
+                for item in self.list_glossary_aliases()
+                if item.id == alias_id
+            ),
+            None,
+        )
+        if created is None:
+            raise AppError(
+                "glossary_alias_create_failed",
+                "词库别名创建后无法读取",
+                False,
+            )
+        return created
+
+    def set_glossary_term_active(
+        self, term_id: str, *, active: bool
+    ) -> None:
+        self._set_glossary_record_active(
+            "glossary_terms", term_id, active=active
+        )
+
+    def set_glossary_alias_active(
+        self, alias_id: str, *, active: bool
+    ) -> None:
+        self._set_glossary_record_active(
+            "glossary_aliases", alias_id, active=active
+        )
+
+    def _set_glossary_record_active(
+        self, table: str, record_id: str, *, active: bool
+    ) -> None:
+        if table not in {"glossary_terms", "glossary_aliases"}:
+            raise ValueError("unsupported glossary table")
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                f"""
+                UPDATE {table}
+                SET active = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (int(active), now, record_id),
+            )
+            if cursor.rowcount != 1:
+                raise AppError(
+                    "glossary_record_not_found",
+                    "词库记录不存在",
+                    False,
+                )
+            self._update_glossary_fingerprint(connection)
+
+    def _update_glossary_fingerprint(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE glossary_sync_state
+            SET glossary_fingerprint = ?
+            WHERE singleton = 1
+            """,
+            (self._calculate_glossary_fingerprint(connection),),
+        )
 
     def create_or_get_job(
         self,

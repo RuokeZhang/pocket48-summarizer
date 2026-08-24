@@ -42,6 +42,18 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
     external_retry_attempts: int = Field(default=3, ge=1, le=8)
     max_api_response_bytes: int = Field(default=2 * 1024 * 1024, ge=1024)
+    member_catalog_url: str = (
+        "https://h5.48.cn/resource/jsonp/"
+        "allmembers_simple.php?gid=00"
+    )
+    member_catalog_sync_interval_seconds: int = Field(
+        default=86400, ge=300
+    )
+    member_catalog_timeout_seconds: float = Field(default=20.0, gt=0)
+    member_catalog_retry_attempts: int = Field(default=3, ge=1, le=5)
+    member_catalog_max_response_bytes: int = Field(
+        default=2 * 1024 * 1024, ge=1024
+    )
     max_manifest_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)
     max_danmaku_bytes: int = Field(default=20 * 1024 * 1024, ge=1024)
     max_hls_segments: int = Field(default=20_000, ge=1)

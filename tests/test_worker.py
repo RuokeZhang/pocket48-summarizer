@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.models import TranscriptSegment
 from pocket48_summarizer.worker import DurableWorker
 
@@ -64,6 +65,43 @@ class CompletingTranslator:
             {1: "Automatic translation."},
         )
         return 1
+
+
+class RecordingMemberCatalog:
+    def __init__(self, *, fail=False):
+        self.calls = 0
+        self.fail = fail
+
+    async def sync_if_due(self):
+        self.calls += 1
+        if self.fail:
+            raise AppError(
+                "member_catalog_transport_error",
+                "catalog unavailable",
+                True,
+            )
+
+
+@pytest.mark.asyncio
+async def test_worker_refreshes_catalog_without_blocking_job_claims(settings):
+    worker_settings = settings.model_copy(
+        update={"worker_poll_seconds": 0.05}
+    )
+    repository = IdleRepository()
+    member_catalog = RecordingMemberCatalog(fail=True)
+    worker = DurableWorker(
+        worker_settings,
+        repository,
+        IdlePipeline(),
+        member_catalog=member_catalog,
+    )
+
+    await worker.start()
+    await asyncio.sleep(0.15)
+    await worker.stop()
+
+    assert member_catalog.calls == 1
+    assert repository.claims > 0
 
 
 @pytest.mark.asyncio

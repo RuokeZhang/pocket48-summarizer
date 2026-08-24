@@ -34,6 +34,82 @@ class SubtitleTranslationStatus(StrEnum):
     FAILED = "failed"
 
 
+class GlossaryTermType(StrEnum):
+    CP_NAME = "cp_name"
+    TEAM_ABBREVIATION = "team_abbreviation"
+    STAGE = "stage"
+    SONG = "song"
+    UNIT = "unit"
+    EVENT = "event"
+    FANDOM = "fandom"
+    OTHER = "other"
+
+
+class MemberCatalogEntry(BaseModel):
+    member_id: str
+    canonical_name: str
+    pinyin: str = ""
+    group_id: str = ""
+    group_name: str = ""
+    team_id: str = ""
+    team_name: str = ""
+    status: str
+    ranking: int = 0
+    active: bool
+
+
+class MemberCatalogRecord(MemberCatalogEntry):
+    source_present: bool
+    source: str
+    first_seen_at: str
+    last_seen_at: str
+
+
+class GlossaryTermRecord(BaseModel):
+    id: str
+    canonical_text: str
+    canonical_normalized: str
+    term_type: str
+    description_zh: str
+    description_en: str
+    source: str
+    active: bool
+    created_by_user_id: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class GlossaryAliasRecord(BaseModel):
+    id: str
+    member_id: str | None = None
+    term_id: str | None = None
+    alias: str
+    alias_normalized: str
+    active: bool
+    created_by_user_id: str | None = None
+    created_at: str
+    updated_at: str
+    target_text: str
+    target_type: str
+
+
+class GlossarySyncStateRecord(BaseModel):
+    source_url: str
+    sync_status: str
+    source_hash: str | None = None
+    catalog_version: str | None = None
+    glossary_fingerprint: str | None = None
+    member_count: int
+    active_member_count: int
+    last_attempt_at: str | None = None
+    last_success_at: str | None = None
+    last_error: str | None = None
+    active_vocabulary_id: str | None = None
+    vocabulary_fingerprint: str | None = None
+    vocabulary_updated_at: str | None = None
+    vocabulary_error: str | None = None
+
+
 class ReplayMetadata(BaseModel):
     live_id: str
     member_id: str

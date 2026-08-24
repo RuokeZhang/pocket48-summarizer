@@ -19,6 +19,7 @@ from .errors import AppError
 from .media.clips import ClipState
 from .models import (
     FinalSummary,
+    GlossaryTermType,
     JobRecord,
     JobStatus,
     SubtitleTranslationRequestRecord,
@@ -55,6 +56,13 @@ def require_auth(request: Request) -> AuthContext:
 
 def optional_auth(request: Request) -> AuthContext | None:
     return request.app.state.auth.optional_context(request)
+
+
+def require_admin(request: Request) -> AuthContext:
+    context = require_auth(request)
+    if not context.user.is_admin:
+        raise AppError("admin_required", "仅管理员可以访问词库管理", False)
+    return context
 
 
 def require_owned_job(
@@ -246,6 +254,152 @@ def translation_payload(
         "retry_count": translation.retry_count,
         "completed_at": translation.completed_at,
     }
+
+
+@router.get("/admin/glossary", response_class=HTMLResponse)
+async def glossary_admin_page(request: Request) -> Response:
+    context = require_admin(request)
+    repository = request.app.state.services.repository
+    terms = repository.list_glossary_terms()
+    return request.app.state.templates.TemplateResponse(
+        request=request,
+        name="glossary_admin.html",
+        context={
+            "current_user": context.user,
+            "csrf_token": context.csrf_token,
+            "sync_state": repository.get_glossary_sync_state(),
+            "members": repository.list_member_catalog(limit=2000),
+            "active_members": repository.list_member_catalog(
+                active_only=True, limit=2000
+            ),
+            "terms": terms,
+            "aliases": repository.list_glossary_aliases(),
+            "term_types": [
+                GlossaryTermType.CP_NAME,
+                GlossaryTermType.TEAM_ABBREVIATION,
+                GlossaryTermType.STAGE,
+                GlossaryTermType.SONG,
+                GlossaryTermType.UNIT,
+                GlossaryTermType.EVENT,
+                GlossaryTermType.FANDOM,
+                GlossaryTermType.OTHER,
+            ],
+            "saved": request.query_params.get("saved"),
+        },
+    )
+
+
+@router.post("/admin/glossary/sync")
+async def sync_member_catalog(request: Request) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    service = request.app.state.services.member_catalog
+    if service is None:
+        raise AppError(
+            "member_catalog_unavailable",
+            "官方成员目录同步服务不可用",
+            True,
+        )
+    await service.sync_if_due(force=True)
+    return RedirectResponse(
+        "/admin/glossary?saved=sync", status_code=303
+    )
+
+
+@router.post("/admin/glossary/terms")
+async def create_glossary_term(request: Request) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    request.app.state.services.repository.create_glossary_term(
+        canonical_text=form.get("canonical_text", ""),
+        term_type=form.get("term_type", ""),
+        description_zh=form.get("description_zh", ""),
+        description_en=form.get("description_en", ""),
+        user_id=context.user.id,
+    )
+    return RedirectResponse(
+        "/admin/glossary?saved=term", status_code=303
+    )
+
+
+@router.post("/admin/glossary/aliases")
+async def create_glossary_alias(request: Request) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    target_kind = form.get("target_kind")
+    target_id = form.get("target_id", "").strip()
+    if target_kind not in {"member", "term"} or not target_id:
+        raise AppError(
+            "glossary_alias_target_invalid",
+            "请选择别名关联的成员或术语",
+            False,
+        )
+    request.app.state.services.repository.create_glossary_alias(
+        alias=form.get("alias", ""),
+        user_id=context.user.id,
+        member_id=target_id if target_kind == "member" else None,
+        term_id=target_id if target_kind == "term" else None,
+    )
+    return RedirectResponse(
+        "/admin/glossary?saved=alias", status_code=303
+    )
+
+
+@router.post("/admin/glossary/terms/{term_id}/active")
+async def set_glossary_term_active(
+    request: Request, term_id: str
+) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    active = form.get("active")
+    if active not in {"0", "1"}:
+        raise AppError(
+            "glossary_active_state_invalid",
+            "词库启用状态无效",
+            False,
+        )
+    request.app.state.services.repository.set_glossary_term_active(
+        term_id, active=active == "1"
+    )
+    return RedirectResponse(
+        "/admin/glossary?saved=term-state", status_code=303
+    )
+
+
+@router.post("/admin/glossary/aliases/{alias_id}/active")
+async def set_glossary_alias_active(
+    request: Request, alias_id: str
+) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    active = form.get("active")
+    if active not in {"0", "1"}:
+        raise AppError(
+            "glossary_active_state_invalid",
+            "词库启用状态无效",
+            False,
+        )
+    request.app.state.services.repository.set_glossary_alias_active(
+        alias_id, active=active == "1"
+    )
+    return RedirectResponse(
+        "/admin/glossary?saved=alias-state", status_code=303
+    )
 
 
 @router.get("/", response_class=HTMLResponse)

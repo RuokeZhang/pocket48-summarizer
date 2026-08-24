@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from .config import Settings
 from .errors import AppError
+from .glossary import MemberCatalogService
 from .models import JobRecord, SubtitleTranslationRequestRecord
 from .pipeline import ReplayPipeline
 from .repository import JobRepository
@@ -22,17 +23,20 @@ class DurableWorker:
         repository: JobRepository,
         pipeline: ReplayPipeline,
         translator: SubtitleTranslationService | None = None,
+        member_catalog: MemberCatalogService | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
         self.pipeline = pipeline
         self.translator = translator
+        self.member_catalog = member_catalog
         self.worker_id = str(uuid.uuid4())
         self.logger = logging.getLogger(__name__)
         self._wake = asyncio.Event()
         self._stopping = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._last_cleanup = 0.0
+        self._last_member_catalog_check = 0.0
 
     async def start(self) -> None:
         if self._task is not None:
@@ -69,6 +73,7 @@ class DurableWorker:
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
+            await self._sync_member_catalog_if_due()
             await self._cleanup_expired_artifacts_if_due()
             maintenance_active = False
             translation = None
@@ -114,6 +119,22 @@ class DurableWorker:
                 )
             except TimeoutError:
                 pass
+
+    async def _sync_member_catalog_if_due(self) -> None:
+        if self.member_catalog is None:
+            return
+        now = time.monotonic()
+        if now - self._last_member_catalog_check < 60:
+            return
+        self._last_member_catalog_check = now
+        try:
+            await self.member_catalog.sync_if_due()
+        except AppError as exc:
+            self.logger.warning(
+                "Official member catalog sync failed: %s (%s)",
+                exc.message,
+                exc.code,
+            )
 
     async def _process_job(self, job: JobRecord) -> None:
         heartbeat = asyncio.create_task(

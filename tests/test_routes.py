@@ -8,6 +8,7 @@ from pocket48_summarizer.models import (
     DanmakuPeak,
     DanmakuPeakSummary,
     FinalSummary,
+    MemberCatalogEntry,
     TimelineItem,
     TranscriptSegment,
 )
@@ -48,6 +49,15 @@ class DummyClipper:
         return f"https://oss.example/{state.oss_object_key}?signed=1"
 
     async def close(self):
+        return None
+
+
+class DummyMemberCatalog:
+    def __init__(self):
+        self.force = None
+
+    async def sync_if_due(self, *, force=False):
+        self.force = force
         return None
 
 
@@ -262,6 +272,7 @@ def auth_app(
     *,
     daily_limit=3,
     clipper=None,
+    member_catalog=None,
 ):
     auth_settings = settings.model_copy(
         update={
@@ -289,6 +300,7 @@ def auth_app(
             repository=repository,
             worker=DummyWorker(),
             clipper=clipper,
+            member_catalog=member_catalog,
         ),
     )
     return app
@@ -305,6 +317,98 @@ def login(client: TestClient, username: str, password: str):
 
 def csrf_headers(client: TestClient) -> dict[str, str]:
     return {"X-CSRF-Token": client.cookies.get("p48_csrf")}
+
+
+def test_glossary_admin_requires_admin_and_manages_entries(
+    settings, repository
+):
+    repository.replace_member_catalog(
+        [
+            MemberCatalogEntry(
+                member_id="10337",
+                canonical_name="曹可甜",
+                pinyin="Cao KeTian",
+                group_id="10",
+                group_name="SNH",
+                team_id="101",
+                team_name="SII",
+                status="99",
+                active=True,
+            )
+        ],
+        source_url=settings.member_catalog_url,
+        source_hash="e" * 64,
+    )
+    member_catalog = DummyMemberCatalog()
+    app = auth_app(
+        settings,
+        repository,
+        member_catalog=member_catalog,
+    )
+
+    with TestClient(app) as anonymous:
+        response = anonymous.get(
+            "/admin/glossary", follow_redirects=False
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/login"
+
+    with TestClient(app) as bob:
+        login(bob, "bob", "bob also has secure password")
+        response = bob.get("/admin/glossary")
+        assert response.status_code == 403
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        page = alice.get("/admin/glossary")
+        assert page.status_code == 200
+        assert "成员与术语词库" in page.text
+        assert "曹可甜" in page.text
+
+        csrf = alice.cookies.get("p48_csrf")
+        created_term = alice.post(
+            "/admin/glossary/terms",
+            data={
+                "_csrf": csrf,
+                "canonical_text": "春晚",
+                "term_type": "event",
+                "description_zh": "SNH48 GROUP 年度活动",
+                "description_en": "Annual group event",
+            },
+            follow_redirects=False,
+        )
+        assert created_term.status_code == 303
+        term = repository.list_glossary_terms()[0]
+
+        created_alias = alice.post(
+            "/admin/glossary/aliases",
+            data={
+                "_csrf": csrf,
+                "target_kind": "member",
+                "target_id": "10337",
+                "alias": "甜甜",
+            },
+            follow_redirects=False,
+        )
+        assert created_alias.status_code == 303
+        alias = repository.list_glossary_aliases()[0]
+        assert alias.target_text == "曹可甜"
+
+        deactivated = alice.post(
+            f"/admin/glossary/terms/{term.id}/active",
+            data={"_csrf": csrf, "active": "0"},
+            follow_redirects=False,
+        )
+        assert deactivated.status_code == 303
+        assert repository.list_glossary_terms()[0].active is False
+
+        sync = alice.post(
+            "/admin/glossary/sync",
+            data={"_csrf": csrf},
+            follow_redirects=False,
+        )
+        assert sync.status_code == 303
+        assert member_catalog.force is True
 
 
 def test_authentication_and_csrf(settings, repository):
@@ -627,8 +731,8 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'class="live-danmaku-panel mobile-danmaku-overlay"' in page.text
     assert 'id="playback-layout"' in page.text
     assert 'id="language-toggle"' in page.text
-    assert "i18n.js?v=20260825-1" in page.text
-    assert "styles.css?v=20260825-4" in page.text
+    assert "i18n.js?v=20260825-2" in page.text
+    assert "styles.css?v=20260825-5" in page.text
     assert "app.js?v=20260825-3" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

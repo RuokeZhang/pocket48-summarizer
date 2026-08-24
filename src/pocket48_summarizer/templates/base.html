@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}口袋48直播总结{% endblock %}</title>
     {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260825-4">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260825-5">
     {% block head_scripts %}{% endblock %}
-    <script defer src="{{ url_for('static', path='/i18n.js') }}?v=20260825-1"></script>
+    <script defer src="{{ url_for('static', path='/i18n.js') }}?v=20260825-2"></script>
     <script defer src="{{ url_for('static', path='/app.js') }}?v=20260825-3"></script>
   </head>
   <body>
@@ -22,6 +22,9 @@
       {% if current_user %}
         <div class="account-actions">
           <span class="local-pill">{{ current_user.username }}</span>
+          {% if current_user.is_admin %}
+            <a class="login-link" href="/admin/glossary" data-i18n="glossaryNav">词库</a>
+          {% endif %}
           {% if csrf_token %}
             <form action="/logout" method="post">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">

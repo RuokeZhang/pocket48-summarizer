@@ -9,11 +9,13 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .clients.member_catalog import MemberCatalogClient
 from .clients.oss_store import OSSStore
 from .config import Settings
 from .auth import AuthRepository, AuthService
 from .db import Database
 from .errors import AppError
+from .glossary import MemberCatalogService
 from .media.clips import VideoClipService
 from .repository import JobRepository
 from .routes import router
@@ -40,6 +42,13 @@ def create_app(
             services = ApplicationServices(repository=repository)
     if services.auth is None:
         services.auth = AuthService(settings, AuthRepository(database))
+    if services.member_catalog is None:
+        services.member_catalog_client = MemberCatalogClient(settings)
+        services.member_catalog = MemberCatalogService(
+            settings,
+            repository,
+            services.member_catalog_client,
+        )
     if (
         settings.enable_clipper
         and services.clipper is None
@@ -88,6 +97,8 @@ def create_app(
             status = 401
         if exc.code == "csrf_failed":
             status = 403
+        if exc.code == "admin_required":
+            status = 403
         if exc.code == "daily_quota_exceeded":
             status = 429
         if exc.retryable and exc.code.endswith("_not_ready"):
@@ -95,6 +106,7 @@ def create_app(
         if exc.code in {
             "clipper_maintenance",
             "configuration_error",
+            "member_catalog_unavailable",
             "worker_unavailable",
         }:
             status = 503

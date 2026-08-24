@@ -15,6 +15,7 @@ SUPPORTED_SHARE_PATHS = {
 POCKET_API_HOSTS = {"pocketapi.48.cn"}
 MEDIA_HOSTS = {"idol-vod.48.cn"}
 SOURCE_HOSTS = {"source.48.cn", "source3.48.cn"}
+MEMBER_CATALOG_HOSTS = {"h5.48.cn"}
 LIVE_ID_RE = re.compile(r"^[0-9]{6,30}$")
 CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 

@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% block title %}成员与术语词库 · 口袋48直播总结{% endblock %}
+{% block content %}
+  <a class="back-link" href="/" data-i18n="backHome">返回首页</a>
+
+  <section class="hero compact-hero">
+    <div>
+      <p class="eyebrow">Official catalog + reviewed glossary</p>
+      <h1 data-i18n="glossaryAdminTitle">成员与术语词库</h1>
+      <p class="lede" data-i18n="glossaryAdminLede">官方成员资料只读同步；管理员可以补充昵称、CP 名、歌曲、公演和团内术语。新词库只用于之后创建的任务。</p>
+    </div>
+  </section>
+
+  {% if saved %}
+    <section class="notice">
+      <strong data-i18n="glossarySaved">词库更改已保存。</strong>
+    </section>
+  {% endif %}
+
+  {% if sync_state.last_error %}
+    <section class="notice error">
+      <strong data-i18n="catalogLastSyncFailed">最近一次官方目录同步失败</strong>
+      <p>{{ sync_state.last_error }}</p>
+    </section>
+  {% endif %}
+
+  <section class="admin-stat-grid">
+    <article class="admin-stat">
+      <span data-i18n="catalogMembers">目录成员</span>
+      <strong>{{ sync_state.member_count }}</strong>
+    </article>
+    <article class="admin-stat">
+      <span data-i18n="catalogActiveMembers">当前状态成员</span>
+      <strong>{{ sync_state.active_member_count }}</strong>
+    </article>
+    <article class="admin-stat">
+      <span data-i18n="catalogVersion">目录版本</span>
+      <strong>{{ sync_state.catalog_version or "—" }}</strong>
+    </article>
+    <article class="admin-stat">
+      <span data-i18n="catalogLastSuccess">上次成功同步</span>
+      <strong>{{ sync_state.last_success_at or "—" }}</strong>
+    </article>
+  </section>
+
+  <section class="panel admin-section-heading">
+    <div>
+      <p class="eyebrow">Official source</p>
+      <h2 data-i18n="officialMemberCatalog">官方成员目录</h2>
+      <p class="muted">{{ sync_state.source_url }}</p>
+    </div>
+    <form action="/admin/glossary/sync" method="post">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" data-i18n="syncNow">立即同步</button>
+    </form>
+  </section>
+
+  <section class="admin-form-grid">
+    <form class="panel admin-form" action="/admin/glossary/aliases" method="post">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="target_kind" value="member">
+      <div>
+        <p class="eyebrow">Member alias</p>
+        <h2 data-i18n="addMemberAlias">添加成员昵称</h2>
+      </div>
+      <label for="member-alias-target" data-i18n="canonicalMember">规范成员</label>
+      <select id="member-alias-target" name="target_id" required>
+        <option value="" data-i18n="selectMember">选择成员</option>
+        {% for member in active_members %}
+          <option value="{{ member.member_id }}">{{ member.canonical_name }} · {{ member.group_name }} {{ member.team_name }}</option>
+        {% endfor %}
+      </select>
+      <label for="member-alias" data-i18n="aliasLabel">昵称或别名</label>
+      <input id="member-alias" name="alias" maxlength="160" required>
+      <button type="submit" data-i18n="addAlias">添加别名</button>
+    </form>
+
+    <form class="panel admin-form" action="/admin/glossary/terms" method="post">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div>
+        <p class="eyebrow">Domain term</p>
+        <h2 data-i18n="addDomainTerm">添加团内术语</h2>
+      </div>
+      <label for="term-canonical" data-i18n="canonicalText">规范写法</label>
+      <input id="term-canonical" name="canonical_text" maxlength="160" required>
+      <label for="term-type" data-i18n="termType">术语类型</label>
+      <select id="term-type" name="term_type" required>
+        {% for term_type in term_types %}
+          <option value="{{ term_type.value }}" data-i18n="termType{{ term_type.value | replace('_', ' ') | title | replace(' ', '') }}">{{ term_type.value }}</option>
+        {% endfor %}
+      </select>
+      <label for="term-description-zh" data-i18n="descriptionZh">中文解释</label>
+      <textarea id="term-description-zh" name="description_zh" maxlength="1000" rows="3"></textarea>
+      <label for="term-description-en" data-i18n="descriptionEn">英文解释（可选）</label>
+      <textarea id="term-description-en" name="description_en" maxlength="1000" rows="3"></textarea>
+      <button type="submit" data-i18n="addTerm">添加术语</button>
+    </form>
+
+    <form class="panel admin-form" action="/admin/glossary/aliases" method="post">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="target_kind" value="term">
+      <div>
+        <p class="eyebrow">Term alias</p>
+        <h2 data-i18n="addTermAlias">添加术语别名</h2>
+      </div>
+      <label for="term-alias-target" data-i18n="canonicalTerm">规范术语</label>
+      <select id="term-alias-target" name="target_id" required>
+        <option value="" data-i18n="selectTerm">选择术语</option>
+        {% for term in terms if term.active %}
+          <option value="{{ term.id }}">{{ term.canonical_text }} · {{ term.term_type }}</option>
+        {% endfor %}
+      </select>
+      <label for="term-alias" data-i18n="aliasLabel">昵称或别名</label>
+      <input id="term-alias" name="alias" maxlength="160" required>
+      <button type="submit" data-i18n="addAlias">添加别名</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Reviewed entries</p>
+        <h2 data-i18n="managedGlossary">管理员词库</h2>
+      </div>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th data-i18n="canonicalText">规范写法</th>
+            <th data-i18n="termType">术语类型</th>
+            <th data-i18n="descriptionZh">中文解释</th>
+            <th data-i18n="state">状态</th>
+            <th data-i18n="actions">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for term in terms %}
+            <tr>
+              <td>{{ term.canonical_text }}</td>
+              <td><span data-i18n="termType{{ term.term_type | replace('_', ' ') | title | replace(' ', '') }}">{{ term.term_type }}</span></td>
+              <td>{{ term.description_zh or "—" }}</td>
+              <td><span data-i18n="{{ 'activeState' if term.active else 'inactiveState' }}">{{ "active" if term.active else "inactive" }}</span></td>
+              <td>
+                <form action="/admin/glossary/terms/{{ term.id }}/active" method="post">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <input type="hidden" name="active" value="{{ 0 if term.active else 1 }}">
+                  <button class="small-button" type="submit" data-i18n="{{ 'deactivate' if term.active else 'activate' }}">{{ "停用" if term.active else "启用" }}</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" data-i18n="noManagedTerms">还没有管理员术语。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Aliases</p>
+        <h2 data-i18n="managedAliases">成员与术语别名</h2>
+      </div>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th data-i18n="aliasLabel">昵称或别名</th>
+            <th data-i18n="aliasTarget">关联规范词</th>
+            <th data-i18n="termType">术语类型</th>
+            <th data-i18n="state">状态</th>
+            <th data-i18n="actions">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for alias in aliases %}
+            <tr>
+              <td>{{ alias.alias }}</td>
+              <td>{{ alias.target_text }}</td>
+              <td>
+                {% if alias.target_type == "member" %}
+                  <span data-i18n="memberType">member</span>
+                {% else %}
+                  <span data-i18n="termType{{ alias.target_type | replace('_', ' ') | title | replace(' ', '') }}">{{ alias.target_type }}</span>
+                {% endif %}
+              </td>
+              <td><span data-i18n="{{ 'activeState' if alias.active else 'inactiveState' }}">{{ "active" if alias.active else "inactive" }}</span></td>
+              <td>
+                <form action="/admin/glossary/aliases/{{ alias.id }}/active" method="post">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <input type="hidden" name="active" value="{{ 0 if alias.active else 1 }}">
+                  <button class="small-button" type="submit" data-i18n="{{ 'deactivate' if alias.active else 'activate' }}">{{ "停用" if alias.active else "启用" }}</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" data-i18n="noManagedAliases">还没有成员或术语别名。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <details class="panel catalog-details">
+    <summary data-i18n="browseOfficialMembers">查看官方成员资料</summary>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th data-i18n="canonicalMember">规范成员</th>
+            <th data-i18n="group">团体</th>
+            <th data-i18n="team">队伍</th>
+            <th data-i18n="state">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for member in members %}
+            <tr>
+              <td>{{ member.member_id }}</td>
+              <td>{{ member.canonical_name }}<small>{{ member.pinyin }}</small></td>
+              <td>{{ member.group_name }}</td>
+              <td>{{ member.team_name }}</td>
+              <td>{{ member.status }} · <span data-i18n="{{ 'activeState' if member.active else 'inactiveState' }}">{{ "active" if member.active else "inactive" }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" data-i18n="catalogNotSynced">官方成员目录尚未同步。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+{% endblock %}

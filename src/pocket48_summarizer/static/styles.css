@@ -9,7 +9,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 15% 0%, #25203c 0, transparent 30rem), #090b11; }
 a { color: inherit; }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 
 .site-header {
   position: sticky;
@@ -87,6 +87,72 @@ button, input, select { font: inherit; }
   background: #e8ebf5;
   color: #171923;
   font-weight: 800;
+}
+
+.compact-hero { padding-bottom: 24px; }
+.admin-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.admin-stat {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid #2b2f3b;
+  border-radius: 16px;
+  background: #11141d;
+}
+.admin-stat span { color: #9299aa; font-size: 13px; }
+.admin-stat strong { overflow-wrap: anywhere; font-size: 19px; }
+.admin-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.admin-section-heading h2 { margin-bottom: 4px; }
+.admin-section-heading p { margin-bottom: 0; }
+.admin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.admin-form { display: grid; align-content: start; gap: 10px; }
+.admin-form h2 { margin-bottom: 4px; }
+.admin-form label { margin-top: 5px; font-size: 13px; font-weight: 800; }
+.admin-form input,
+.admin-form select,
+.admin-form textarea {
+  width: 100%;
+  border: 1px solid #383d4b;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #0d1017;
+  color: #eff2f8;
+}
+.admin-form textarea { resize: vertical; }
+.admin-form button { margin-top: 8px; }
+.admin-table-wrap { overflow-x: auto; }
+.admin-table { width: 100%; border-collapse: collapse; }
+.admin-table th,
+.admin-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #292d38;
+  text-align: left;
+  vertical-align: top;
+}
+.admin-table th { color: #9299aa; font-size: 12px; letter-spacing: .04em; }
+.admin-table td small { display: block; margin-top: 4px; color: #9299aa; }
+.admin-table form { margin: 0; }
+.small-button { padding: 7px 10px; font-size: 12px; }
+.catalog-details summary { cursor: pointer; font-size: 18px; font-weight: 800; }
+.catalog-details[open] summary { margin-bottom: 18px; }
+
+@media (max-width: 900px) {
+  .admin-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-form-grid { grid-template-columns: 1fr; }
 }
 .replay-heading,
 .playback-status-row,
