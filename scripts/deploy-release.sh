@@ -124,7 +124,8 @@ if [[ -f "$standby_env" ]]; then
   standby_env_backup="$(mktemp)"
   cp "$standby_env" "$standby_env_backup"
 fi
-printf 'APP_PORT=%s\nAPP_RELEASE=%s\n' \
+printf \
+  'APP_PORT=%s\nAPP_RELEASE=%s\nENABLE_WORKER=false\nENABLE_CLIPPER=true\n' \
   "$(slot_port "$standby_slot")" "$commit" > "$standby_env.next"
 chown root:pocket48 "$standby_env.next"
 chmod 0640 "$standby_env.next"

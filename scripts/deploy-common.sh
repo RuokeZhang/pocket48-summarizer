@@ -163,7 +163,8 @@ health_check_slot() {
     return 1
   fi
   if [[ -n "$expected_release" ]]; then
-    [[ "$response" == *"\"release\":\"$expected_release\""* ]]
+    [[ "$response" == *"\"release\":\"$expected_release\""* \
+      && "$response" == *"\"worker_enabled\":false"* ]]
   fi
 }
 
@@ -177,7 +178,8 @@ public_health_check() {
   )"; then
     return 1
   fi
-  [[ "$response" == *"\"release\":\"$expected_release\""* ]]
+  [[ "$response" == *"\"release\":\"$expected_release\""* \
+    && "$response" == *"\"worker_enabled\":false"* ]]
 }
 
 switch_caddy_to_slot() {
