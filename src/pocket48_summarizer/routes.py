@@ -293,7 +293,10 @@ async def job_page(request: Request, job_id: str) -> Response:
             "current_user": context.user if context else None,
             "csrf_token": context.csrf_token if context else "",
             "can_manage_job": can_manage_job,
-            "can_create_clips": context is not None,
+            "can_create_clips": (
+                context is not None
+                and request.app.state.services.clipper is not None
+            ),
         },
     )
 
@@ -464,6 +467,17 @@ async def download_timeline_clip(
         raise AppError(
             "video_clip_not_ready",
             "视频片段尚未生成完成",
+            True,
+        )
+    if state.oss_object_key:
+        return RedirectResponse(
+            await clipper.signed_download_url(state),
+            status_code=303,
+        )
+    if not state.output_path.is_file():
+        raise AppError(
+            "video_clip_not_ready",
+            "视频片段文件不存在，请重新剪辑",
             True,
         )
     return FileResponse(

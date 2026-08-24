@@ -39,6 +39,10 @@ class OSSStore:
         prefix = self.settings.aliyun_oss_prefix.strip("/")
         return f"{prefix}/{job_id}/audio.mp3"
 
+    def clip_object_key(self, job_id: str, filename: str) -> str:
+        prefix = self.settings.aliyun_oss_clip_prefix.strip("/")
+        return f"{prefix}/{job_id}/{filename}"
+
     async def upload(self, path: Path, key: str) -> None:
         try:
             await asyncio.to_thread(
@@ -64,6 +68,44 @@ class OSSStore:
             raise ExternalServiceError(
                 "oss_sign_failed",
                 "生成 OSS 临时访问地址失败",
+                True,
+            ) from exc
+
+    async def upload_clip(
+        self, path: Path, key: str, filename: str
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                self.bucket.put_object_from_file,
+                key,
+                str(path),
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Disposition": (
+                        f'attachment; filename="{filename}"'
+                    ),
+                },
+            )
+        except oss2.exceptions.OssError as exc:
+            raise ExternalServiceError(
+                "oss_clip_upload_failed",
+                "上传视频片段到 OSS 失败",
+                True,
+            ) from exc
+
+    async def signed_clip_url(self, key: str) -> str:
+        try:
+            return await asyncio.to_thread(
+                self.signing_bucket.sign_url,
+                "GET",
+                key,
+                self.settings.aliyun_oss_clip_signed_url_seconds,
+                slash_safe=True,
+            )
+        except oss2.exceptions.OssError as exc:
+            raise ExternalServiceError(
+                "oss_clip_sign_failed",
+                "生成视频片段下载地址失败",
                 True,
             ) from exc
 

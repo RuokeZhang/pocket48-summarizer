@@ -62,7 +62,7 @@ def build_services(
     return ApplicationServices(
         repository=repository,
         worker=worker,
-        clipper=VideoClipService(settings),
+        clipper=VideoClipService(settings, repository, oss),
         pocket48=pocket48,
         hls=hls,
         dashscope=dashscope,

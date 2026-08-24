@@ -81,7 +81,12 @@ if (jobHero) {
 const replayPlayer = document.querySelector("#replay-player");
 const replayPlayerPanel = document.querySelector("#replay-player-panel");
 const replayPlayerMessage = document.querySelector("#replay-player-message");
+const replayHelpText = "点击时间线、高光或字幕中的时间，即可跳转到对应位置。";
 let pendingSeekSeconds = null;
+let replayUsesNativeHls = false;
+let hlsPlayer = null;
+let hlsNetworkRetries = 0;
+let hlsMediaRetries = 0;
 
 const applyPendingSeek = () => {
   if (!replayPlayer || pendingSeekSeconds === null) return;
@@ -98,13 +103,57 @@ const applyPendingSeek = () => {
 };
 
 if (replayPlayer) {
-  replayPlayer.addEventListener("loadedmetadata", applyPendingSeek);
+  replayPlayer.addEventListener("loadedmetadata", () => {
+    if (replayPlayerMessage) replayPlayerMessage.textContent = replayHelpText;
+    applyPendingSeek();
+  });
+  replayPlayer.addEventListener("canplay", () => {
+    if (replayPlayerMessage) replayPlayerMessage.textContent = replayHelpText;
+  });
   replayPlayer.addEventListener("error", () => {
+    if (hlsPlayer) return;
     if (replayPlayerMessage) {
+      const code = replayPlayer.error?.code;
       replayPlayerMessage.textContent =
-        "当前浏览器无法直接播放此 HLS 回放；可尝试 iPhone、iPad 或 Safari。";
+        `回放加载失败${code ? `（媒体错误 ${code}）` : ""}，请刷新重试。`;
     }
   });
+  const replaySource = replayPlayer.dataset.hlsSrc || "";
+  if (window.Hls?.isSupported()) {
+    hlsPlayer = new window.Hls({ enableWorker: true });
+    hlsPlayer.on(window.Hls.Events.MEDIA_ATTACHED, () => {
+      hlsPlayer.loadSource(replaySource);
+    });
+    hlsPlayer.on(window.Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal || !replayPlayerMessage) return;
+      if (
+        data.type === window.Hls.ErrorTypes.NETWORK_ERROR
+        && hlsNetworkRetries < 2
+      ) {
+        hlsNetworkRetries += 1;
+        replayPlayerMessage.textContent = "回放网络波动，正在重试…";
+        hlsPlayer.startLoad();
+        return;
+      }
+      if (
+        data.type === window.Hls.ErrorTypes.MEDIA_ERROR
+        && hlsMediaRetries < 2
+      ) {
+        hlsMediaRetries += 1;
+        replayPlayerMessage.textContent = "视频解码异常，正在恢复…";
+        hlsPlayer.recoverMediaError();
+        return;
+      }
+      replayPlayerMessage.textContent =
+        `回放加载失败（${data.details || data.type}），请刷新重试。`;
+    });
+    hlsPlayer.attachMedia(replayPlayer);
+  } else if (replayPlayer.canPlayType("application/vnd.apple.mpegurl")) {
+    replayUsesNativeHls = true;
+    replayPlayer.src = replaySource;
+  } else if (replayPlayerMessage) {
+    replayPlayerMessage.textContent = "当前浏览器不支持 HLS 回放。";
+  }
 }
 
 document.addEventListener("click", (event) => {
@@ -114,8 +163,10 @@ document.addEventListener("click", (event) => {
   replayPlayerPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
   if (replayPlayer.readyState >= 1) {
     applyPendingSeek();
-  } else {
+  } else if (replayUsesNativeHls) {
     replayPlayer.load();
+  } else if (replayPlayerMessage) {
+    replayPlayerMessage.textContent = "正在加载回放，请稍候…";
   }
 });
 

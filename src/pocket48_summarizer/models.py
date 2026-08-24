@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -163,6 +163,20 @@ class JobRecord(BaseModel):
     created_at: str
     updated_at: str
     started_at: str | None = None
+    completed_at: str | None = None
+
+
+class VideoClipRecord(BaseModel):
+    job_id: str
+    timeline_index: int
+    start_ms: int
+    end_ms: int
+    filename: str
+    status: Literal["running", "completed", "failed"]
+    oss_object_key: str | None = None
+    error_message: str | None = None
+    created_at: str
+    updated_at: str
     completed_at: str | None = None
 
 

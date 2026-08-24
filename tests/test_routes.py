@@ -40,6 +40,12 @@ class DummyClipper:
     def get(self, **kwargs):
         return self.state
 
+    async def startup(self):
+        return None
+
+    async def signed_download_url(self, state):
+        return f"https://oss.example/{state.oss_object_key}?signed=1"
+
     async def close(self):
         return None
 
@@ -204,6 +210,12 @@ def test_timeline_clip_can_be_created_and_downloaded(
         page = client.get(f"/jobs/{job.id}")
         response = client.post(f"/api/jobs/{job.id}/clips/0")
         download = client.get(f"/jobs/{job.id}/clips/0/download")
+        clipper.state.oss_object_key = "clips/job/timeline.mp4"
+        output_path.unlink()
+        redirect = client.get(
+            f"/jobs/{job.id}/clips/0/download",
+            follow_redirects=False,
+        )
 
     assert 'class="clip-button"' in page.text
     assert response.status_code == 200
@@ -213,6 +225,8 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert clipper.started_with["end_ms"] == 125_750
     assert download.status_code == 200
     assert download.content == b"fake mp4"
+    assert redirect.status_code == 303
+    assert redirect.headers["location"].startswith("https://oss.example/")
 
 
 def auth_app(
@@ -480,6 +494,11 @@ def test_any_invited_user_can_clip_a_public_result(
     assert clipper.started_with["job_id"] == job_id
     assert 'class="clip-button"' not in page.text
     assert 'id="replay-player"' in page.text
+    assert "hls-1.7.1.min.js" in page.text
+    assert (
+        'data-hls-src="https://idol-vod.48.cn/path/public-replay.m3u8"'
+        in page.text
+    )
     assert 'data-seek-ms="30000"' in page.text
     assert download.status_code == 200
     assert download.content == b"public clip"

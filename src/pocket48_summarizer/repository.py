@@ -16,6 +16,7 @@ from .models import (
     JobStatus,
     ReplayMetadata,
     TranscriptSegment,
+    VideoClipRecord,
 )
 
 
@@ -32,6 +33,14 @@ class JobRepository:
         if row is None:
             return None
         return JobRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _video_clip(
+        row: sqlite3.Row | None,
+    ) -> VideoClipRecord | None:
+        if row is None:
+            return None
+        return VideoClipRecord.model_validate(dict(row))
 
     def create_or_get_job(
         self,
@@ -212,6 +221,108 @@ class JobRepository:
     def require_job_access(self, job_id: str, user_id: str) -> None:
         if self.get_job_for_user(job_id, user_id) is None:
             raise AppError("job_not_found", "任务不存在", False)
+
+    def get_video_clip(
+        self, job_id: str, timeline_index: int
+    ) -> VideoClipRecord | None:
+        with self.database.connect() as connection:
+            return self._video_clip(
+                connection.execute(
+                    """
+                    SELECT * FROM video_clips
+                    WHERE job_id = ? AND timeline_index = ?
+                    """,
+                    (job_id, timeline_index),
+                ).fetchone()
+            )
+
+    def begin_video_clip(
+        self,
+        job_id: str,
+        timeline_index: int,
+        start_ms: int,
+        end_ms: int,
+        filename: str,
+    ) -> VideoClipRecord:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO video_clips (
+                    job_id, timeline_index, start_ms, end_ms, filename,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)
+                ON CONFLICT(job_id, timeline_index) DO UPDATE SET
+                    start_ms = excluded.start_ms,
+                    end_ms = excluded.end_ms,
+                    filename = excluded.filename,
+                    status = 'running',
+                    oss_object_key = NULL,
+                    error_message = NULL,
+                    updated_at = excluded.updated_at,
+                    completed_at = NULL
+                """,
+                (
+                    job_id,
+                    timeline_index,
+                    start_ms,
+                    end_ms,
+                    filename,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM video_clips
+                WHERE job_id = ? AND timeline_index = ?
+                """,
+                (job_id, timeline_index),
+            ).fetchone()
+        clip = self._video_clip(row)
+        assert clip is not None
+        return clip
+
+    def complete_video_clip(
+        self, job_id: str, timeline_index: int, object_key: str
+    ) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE video_clips
+                SET status = 'completed', oss_object_key = ?,
+                    error_message = NULL, updated_at = ?, completed_at = ?
+                WHERE job_id = ? AND timeline_index = ?
+                """,
+                (object_key, now, now, job_id, timeline_index),
+            )
+
+    def fail_video_clip(
+        self, job_id: str, timeline_index: int, error_message: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE video_clips
+                SET status = 'failed', error_message = ?, updated_at = ?
+                WHERE job_id = ? AND timeline_index = ?
+                """,
+                (error_message, utcnow(), job_id, timeline_index),
+            )
+
+    def recover_running_video_clips(self) -> int:
+        with self.database.connect() as connection:
+            return connection.execute(
+                """
+                UPDATE video_clips
+                SET status = 'failed',
+                    error_message = '服务曾重启，请重试剪辑',
+                    updated_at = ?
+                WHERE status = 'running'
+                """,
+                (utcnow(),),
+            ).rowcount
 
     def recover_expired_jobs(self) -> int:
         now = utcnow()

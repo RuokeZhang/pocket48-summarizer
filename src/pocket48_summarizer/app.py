@@ -9,6 +9,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .clients.oss_store import OSSStore
 from .config import Settings
 from .auth import AuthRepository, AuthService
 from .db import Database
@@ -35,11 +36,18 @@ def create_app(
             services = ApplicationServices(repository=repository)
     if services.auth is None:
         services.auth = AuthService(settings, AuthRepository(database))
-    if services.clipper is None:
-        services.clipper = VideoClipService(settings)
+    if (
+        services.clipper is None
+        and not settings.missing_clip_configuration()
+    ):
+        services.clipper = VideoClipService(
+            settings, repository, OSSStore(settings)
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if services.clipper:
+            await services.clipper.startup()
         if services.worker:
             await services.worker.start()
         yield

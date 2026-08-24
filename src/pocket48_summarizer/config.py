@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     aliyun_oss_bucket: str | None = None
     aliyun_oss_prefix: str = "pocket48-summarizer"
     aliyun_oss_signed_url_seconds: int = Field(default=7200, ge=300, le=86_400)
+    aliyun_oss_clip_prefix: str = "pocket48-clips"
+    aliyun_oss_clip_signed_url_seconds: int = Field(
+        default=3600, ge=300, le=86_400
+    )
 
     dashscope_api_key: SecretStr | None = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com"
@@ -128,6 +132,19 @@ class Settings(BaseSettings):
         if candidate.parent != Path("."):
             return str(candidate) if candidate.is_file() else None
         return shutil.which(self.ffmpeg_path)
+
+    def missing_clip_configuration(self) -> list[str]:
+        missing: list[str] = []
+        if not self.ffmpeg_executable():
+            missing.append("FFMPEG_PATH")
+        required: dict[str, Any] = {
+            "ALIYUN_ACCESS_KEY_ID": self.aliyun_access_key_id,
+            "ALIYUN_ACCESS_KEY_SECRET": self.aliyun_access_key_secret,
+            "ALIYUN_OSS_ENDPOINT": self.aliyun_oss_endpoint,
+            "ALIYUN_OSS_BUCKET": self.aliyun_oss_bucket,
+        }
+        missing.extend(name for name, value in required.items() if not value)
+        return missing
 
     def missing_processing_configuration(self) -> list[str]:
         missing: list[str] = []

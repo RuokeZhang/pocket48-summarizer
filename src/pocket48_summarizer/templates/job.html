@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ job.title or "处理回放" }}{% endblock %}
+{% block head_scripts %}
+  <script defer src="{{ url_for('static', path='/hls-1.7.1.min.js') }}"></script>
+{% endblock %}
 {% block content %}
   <section
     class="job-hero"
@@ -39,14 +42,6 @@
     </section>
   {% endif %}
 
-  {% if job.status == "completed" %}
-    <nav class="download-row">
-      <a href="/jobs/{{ job.id }}/transcript.srt">下载 SRT</a>
-      {% if current_user %}<a href="/jobs/{{ job.id }}/asr.json">下载 ASR JSON</a>{% endif %}
-      <a href="/jobs/{{ job.id }}/summary.md">下载 Markdown</a>
-    </nav>
-  {% endif %}
-
   {% if job.status == "completed" and job.media_url %}
     <section class="panel replay-player-panel" id="replay-player-panel">
       <p class="eyebrow">Replay</p>
@@ -56,7 +51,7 @@
         controls
         playsinline
         preload="metadata"
-        src="{{ job.media_url }}"
+        data-hls-src="{{ job.media_url }}"
       ></video>
       <p id="replay-player-message" class="muted">
         点击时间线、高光或字幕中的时间，即可跳转到对应位置。
@@ -123,15 +118,6 @@
       </div>
     </section>
 
-    <section class="panel">
-      <p class="eyebrow">Verification</p>
-      <h2>待核实项</h2>
-      {% if summary.verification_needed %}
-        <ul>{% for item in summary.verification_needed %}<li>{{ item }}</li>{% endfor %}</ul>
-      {% else %}
-        <p>无。</p>
-      {% endif %}
-    </section>
   {% endif %}
 
   {% if peaks %}
