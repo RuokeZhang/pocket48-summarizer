@@ -14,6 +14,7 @@ fi
 release_ref="${1:-origin/main}"
 clip_drain_seconds="${CLIP_DRAIN_SECONDS:-600}"
 temporary_release=""
+release_building=false
 active_slot=""
 standby_slot=""
 standby_link_changed=false
@@ -55,6 +56,9 @@ cleanup() {
   if [[ -n "$temporary_release" && -d "$temporary_release" ]]; then
     rm -rf -- "$temporary_release"
   fi
+  if [[ "$release_building" == true && -d "${release_dir:-}" ]]; then
+    rm -rf -- "$release_dir"
+  fi
 }
 trap cleanup EXIT
 
@@ -72,20 +76,32 @@ short_commit="${commit:0:12}"
 install -d -m 0755 "$RELEASES_DIR" "$SLOTS_DIR"
 install -d -m 0750 -o pocket48 -g pocket48 "$DEPLOY_STATE_DIR"
 
-if [[ ! -x "$release_dir/.venv/bin/pocket48-summarizer" ]]; then
+release_valid=false
+if [[ -x "$release_dir/.venv/bin/pocket48-summarizer" ]]; then
+  shebang=""
+  IFS= read -r shebang \
+    < "$release_dir/.venv/bin/pocket48-summarizer" || true
+  if [[ "$shebang" == "#!$release_dir/.venv/bin/python" ]]; then
+    release_valid=true
+  fi
+fi
+if [[ "$release_valid" != true ]]; then
+  rm -rf -- "$release_dir"
   temporary_release="$(mktemp -d "$RELEASES_DIR/.release-$short_commit.XXXXXX")"
   git -C "$REPOSITORY_DIR" archive "$commit" \
     | tar -x -C "$temporary_release"
-  python3 -m venv "$temporary_release/.venv"
-  "$temporary_release/.venv/bin/python" -m pip install --upgrade pip
-  "$temporary_release/.venv/bin/python" -m pip install \
-    -r "$temporary_release/requirements.lock"
-  "$temporary_release/.venv/bin/python" -m pip install \
-    --no-deps "$temporary_release"
-  chown root:pocket48 "$temporary_release"
-  chmod 0750 "$temporary_release"
+  release_building=true
   mv "$temporary_release" "$release_dir"
   temporary_release=""
+  python3 -m venv "$release_dir/.venv"
+  "$release_dir/.venv/bin/python" -m pip install --upgrade pip
+  "$release_dir/.venv/bin/python" -m pip install \
+    -r "$release_dir/requirements.lock"
+  "$release_dir/.venv/bin/python" -m pip install \
+    --no-deps "$release_dir"
+  chown root:pocket48 "$release_dir"
+  chmod 0750 "$release_dir"
+  release_building=false
 fi
 chown root:pocket48 "$release_dir"
 chmod 0750 "$release_dir"
