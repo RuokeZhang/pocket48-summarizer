@@ -218,10 +218,10 @@ button, input, select { font: inherit; }
   line-height: 1.45;
   text-shadow: 0 2px 5px #000;
 }
-.subtitle-zh { font-size: clamp(16px, 2vw, 24px); }
+.subtitle-zh { font-size: clamp(14px, 1.7vw, 21px); }
 .subtitle-en {
   color: #e3e5ee !important;
-  font-size: clamp(13px, 1.45vw, 18px);
+  font-size: clamp(12px, 1.2vw, 16px);
   font-weight: 650 !important;
 }
 .live-danmaku-panel {
