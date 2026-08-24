@@ -10,7 +10,7 @@ p48.ruokezhang.com {
 
 	header {
 		-Server
-		Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' https: data:; media-src 'self' https://idol-vod.48.cn; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self' https://idol-vod.48.cn; form-action 'self'; frame-ancestors 'none'; img-src 'self' https: data:; media-src 'self' blob: https://idol-vod.48.cn; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
