@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     max_manifest_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)
     max_danmaku_bytes: int = Field(default=20 * 1024 * 1024, ge=1024)
     max_hls_segments: int = Field(default=20_000, ge=1)
+    hls_concurrent_fragments: int = Field(default=8, ge=1, le=32)
     max_replay_hours: float = Field(default=12.0, gt=0, le=12)
     max_audio_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1024)
     failed_audio_retention_hours: int = Field(default=24, ge=1, le=168)

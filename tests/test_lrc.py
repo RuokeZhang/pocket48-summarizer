@@ -37,3 +37,24 @@ def test_detects_bounded_danmaku_peak():
     assert peaks
     assert peaks[0].message_count >= 40
     assert len(peaks[0].samples) <= 8
+
+
+def test_splits_long_continuous_peak_without_losing_late_window():
+    lines = []
+    for bucket in range(24):
+        total_seconds = bucket * 30
+        minutes, seconds = divmod(total_seconds, 60)
+        for index in range(12):
+            lines.append(
+                f"[00:{minutes:02d}:{seconds:02d}.{index:03d}]fan"
+                f"\tactive-{bucket}-{index}"
+            )
+
+    peaks = detect_danmaku_peaks(parse_lrc("\n".join(lines)))
+
+    assert len(peaks) >= 3
+    assert all(0 < peak.end_ms - peak.start_ms <= 300_000 for peak in peaks)
+    assert any(
+        peak.start_ms <= 660_000 < peak.end_ms
+        for peak in peaks
+    )

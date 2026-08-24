@@ -54,33 +54,26 @@
       <p class="summary-overview">{{ summary.overview }}</p>
     </section>
 
-    <section class="two-column">
-      <div class="panel">
-        <p class="eyebrow">Timeline</p>
-        <h2>时间线</h2>
-        <ol class="timeline">
-          {% for item in summary.timeline %}
-            <li>
-              <time>{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</time>
+    <section class="panel">
+      <p class="eyebrow">Timeline</p>
+      <h2>时间线</h2>
+      <ol class="timeline">
+        {% for item in summary.timeline %}
+          <li data-clip-index="{{ loop.index0 }}">
+            <time>{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</time>
+            <div class="timeline-title-row">
               <strong>{{ item.title }}</strong>
-              <p>{{ item.detail }}</p>
-              <small>字幕证据：{{ item.evidence_segment_ids | join(", ") }}</small>
-            </li>
-          {% endfor %}
-        </ol>
-      </div>
-      <div class="panel">
-        <p class="eyebrow">Topics</p>
-        <h2>主要话题</h2>
-        <div class="topic-list">
-          {% for topic in summary.topics %}
-            <article>
-              <strong>{{ topic.name }}</strong>
-              <p>{{ topic.detail }}</p>
-            </article>
-          {% endfor %}
-        </div>
-      </div>
+              <button
+                class="clip-button"
+                type="button"
+                data-clip-index="{{ loop.index0 }}"
+              >剪视频</button>
+            </div>
+            <p>{{ item.detail }}</p>
+            <p class="clip-status" aria-live="polite" hidden></p>
+          </li>
+        {% endfor %}
+      </ol>
     </section>
 
     <section class="panel">
@@ -118,6 +111,7 @@
           <article>
             <strong>#{{ peak.rank }} · {{ format_clock(peak.start_ms) }}–{{ format_clock(peak.end_ms) }}</strong>
             <p>{{ peak.message_count }} 条弹幕 · 强度 {{ peak.score }}</p>
+            {% if peak.summary %}<p class="peak-summary">{{ peak.summary }}</p>{% endif %}
             <small>
               {% for sample in peak.samples[:3] %}
                 {{ sample.text }}{% if not loop.last %} / {% endif %}
@@ -132,8 +126,18 @@
   <section class="two-column">
     <div class="panel">
       <p class="eyebrow">Transcript</p>
-      <h2>字幕{% if transcript %}（前 {{ transcript | length }} 条）{% endif %}</h2>
-      <div class="scroll-list">
+      <h2>
+        字幕
+        <span id="transcript-count" class="load-state">
+          {% if transcript %}（已显示 {{ transcript | length }} 条）{% endif %}
+        </span>
+      </h2>
+      <div
+        id="transcript-list"
+        class="scroll-list"
+        data-loaded="{{ transcript | length }}"
+        data-has-more="{{ 'true' if transcript | length == 200 else 'false' }}"
+      >
         {% for segment in transcript %}
           <article id="segment-{{ segment.sequence }}">
             <time>{{ format_clock(segment.start_ms) }}</time>
@@ -146,12 +150,32 @@
     </div>
     <div class="panel">
       <p class="eyebrow">Danmaku</p>
-      <h2>弹幕{% if danmaku %}（前 {{ danmaku | length }} 条）{% endif %}</h2>
-      <div class="scroll-list">
+      <h2>
+        弹幕
+        <span id="danmaku-count" class="load-state">
+          {% if danmaku %}（已显示 {{ danmaku | length }} 条）{% endif %}
+        </span>
+      </h2>
+      <div id="danmaku-author-filter" class="danmaku-author-filter" hidden>
+        <span></span>
+        <button id="clear-danmaku-author" type="button">显示全部</button>
+      </div>
+      <div
+        id="danmaku-list"
+        class="scroll-list"
+        data-loaded="{{ danmaku | length }}"
+        data-after-ms="{{ danmaku[-1].timestamp_ms if danmaku else -1 }}"
+        data-has-more="{{ 'true' if danmaku | length == 200 else 'false' }}"
+      >
         {% for entry in danmaku %}
-          <article>
+          <article data-author="{{ entry.author }}">
             <time>{{ format_clock(entry.timestamp_ms) }}</time>
-            <p><strong>{{ entry.author }}</strong> {{ entry.text }}</p>
+            <p>
+              {% if entry.author %}
+                <button class="danmaku-author" type="button" data-danmaku-author="{{ entry.author }}">{{ entry.author }}</button>
+              {% endif %}
+              {{ entry.text }}
+            </p>
           </article>
         {% else %}
           <p class="muted">没有可用弹幕。</p>

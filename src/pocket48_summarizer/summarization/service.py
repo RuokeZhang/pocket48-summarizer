@@ -143,6 +143,26 @@ class SummarizationService:
                         self._validate_evidence(
                             item.evidence_segment_ids, valid_ids, "话题"
                         )
+                expected_peak_windows = sorted(
+                    (peak.start_ms, peak.end_ms) for peak in peaks
+                )
+                actual_peak_windows = sorted(
+                    (item.start_ms, item.end_ms)
+                    for item in summary.danmaku_peak_summaries
+                )
+                if actual_peak_windows != expected_peak_windows:
+                    raise ExternalServiceError(
+                        "llm_invalid_peak_summaries",
+                        "模型弹幕高峰总结与输入时间窗口不一致",
+                        True,
+                    )
+                for item in summary.danmaku_peak_summaries:
+                    if item.evidence_segment_ids:
+                        self._validate_evidence(
+                            item.evidence_segment_ids,
+                            valid_ids,
+                            "弹幕高峰总结",
+                        )
                 return summary
             except (ValidationError, ExternalServiceError) as exc:
                 last_error = exc

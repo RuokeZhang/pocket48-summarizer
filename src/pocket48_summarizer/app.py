@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 from .config import Settings
 from .db import Database
 from .errors import AppError
+from .media.clips import VideoClipService
 from .repository import JobRepository
 from .routes import router
 from .services import ApplicationServices, build_services
@@ -31,6 +32,8 @@ def create_app(
             services = build_services(settings, repository)
         else:
             services = ApplicationServices(repository=repository)
+    if services.clipper is None:
+        services.clipper = VideoClipService(settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

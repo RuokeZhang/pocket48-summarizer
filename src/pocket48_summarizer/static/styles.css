@@ -122,6 +122,26 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .timeline li { padding: 0 0 22px 12px; border-left: 1px solid #393e4b; }
 .timeline time, .highlight-grid time, .scroll-list time { color: #ff8bad; font-size: 12px; }
 .timeline strong { display: block; margin-top: 6px; }
+.timeline-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.clip-button {
+  flex: none;
+  padding: 7px 11px;
+  border: 1px solid #4c4667;
+  border-radius: 9px;
+  background: #25203c;
+  font-size: 12px;
+}
+.clip-status {
+  margin: 8px 0 0;
+  color: #9ea6b7 !important;
+  font-size: 12px;
+}
+.clip-status a { color: #cabdff; font-weight: 700; }
 .timeline p, .topic-list p, .highlight-grid p { color: #b5bccb; line-height: 1.55; }
 .timeline small, .peak-grid small { color: #858d9e; }
 .topic-list, .highlight-grid, .peak-grid { display: grid; gap: 12px; }
@@ -133,10 +153,49 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .highlight-grid { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 .peak-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.peak-summary { color: #c8cedc; line-height: 1.6; }
 
 .scroll-list { max-height: 580px; overflow: auto; padding-right: 5px; }
 .scroll-list article { display: grid; grid-template-columns: 78px 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid #292d37; }
+.scroll-list article[hidden] { display: none; }
 .scroll-list p { margin: 0; line-height: 1.55; }
+.danmaku-author {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: #cabdff;
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-color: #625b82;
+  text-underline-offset: 3px;
+}
+.danmaku-author:hover { color: #ff9eba; }
+.danmaku-author-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #4b446c;
+  border-radius: 10px;
+  background: #181529;
+  color: #d9d2ff;
+  font-size: 13px;
+}
+.danmaku-author-filter[hidden] { display: none; }
+.danmaku-author-filter button {
+  flex: none;
+  padding: 6px 10px;
+  border: 1px solid #625b82;
+  border-radius: 8px;
+  background: #25203c;
+  font-size: 12px;
+}
+.load-state { color: #858d9e; font-size: 13px; font-weight: 500; }
+.load-retry { margin-left: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; }
 .event-list li { display: grid; grid-template-columns: 180px 1fr; gap: 14px; padding: 9px 0; color: #afb6c5; }
 .event-error { color: #ff8aaa !important; }
 .event-warning { color: #f2c46f !important; }

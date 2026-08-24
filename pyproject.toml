@@ -17,6 +17,7 @@ dependencies = [
   "oss2==2.19.1",
   "pydantic-settings==2.15.0",
   "uvicorn==0.52.4",
+  "yt-dlp==2026.8.19",
 ]
 
 [project.optional-dependencies]

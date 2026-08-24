@@ -7,6 +7,7 @@ from .clients.llm import OpenAICompatibleClient
 from .clients.oss_store import OSSStore
 from .clients.pocket48 import Pocket48Client
 from .config import Settings
+from .media.clips import VideoClipService
 from .media.ffmpeg import FFmpegRunner
 from .media.hls import HLSInspector
 from .pipeline import ReplayPipeline
@@ -19,6 +20,7 @@ from .worker import DurableWorker
 class ApplicationServices:
     repository: JobRepository
     worker: DurableWorker | None = None
+    clipper: VideoClipService | None = None
     pocket48: Pocket48Client | None = None
     hls: HLSInspector | None = None
     dashscope: DashScopeClient | None = None
@@ -27,6 +29,8 @@ class ApplicationServices:
     async def close(self) -> None:
         if self.worker:
             await self.worker.stop()
+        if self.clipper:
+            await self.clipper.close()
         for client in (self.pocket48, self.hls, self.dashscope, self.llm):
             if client is not None:
                 await client.close()
@@ -56,6 +60,7 @@ def build_services(
     return ApplicationServices(
         repository=repository,
         worker=worker,
+        clipper=VideoClipService(settings),
         pocket48=pocket48,
         hls=hls,
         dashscope=dashscope,

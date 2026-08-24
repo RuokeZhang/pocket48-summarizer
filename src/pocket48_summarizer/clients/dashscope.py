@@ -82,7 +82,7 @@ class DashScopeClient:
         )
         deadline = time.monotonic() + self.settings.dashscope_timeout_seconds
         while True:
-            payload = await self._post(endpoint)
+            payload = await self._get_task(endpoint)
             output = payload.get("output", {})
             status = str(output.get("task_status", "UNKNOWN")).upper()
             if on_status:
@@ -119,6 +119,57 @@ class DashScopeClient:
                     True,
                 )
             await asyncio.sleep(self.settings.dashscope_poll_seconds)
+
+    async def _get_task(self, url: str) -> dict[str, Any]:
+        headers = {
+            "Authorization": (
+                "Bearer " + self.settings.dashscope_api_key.get_secret_value()
+            )
+        }
+        try:
+            response = await self.client.get(url, headers=headers)
+        except httpx.RequestError as exc:
+            raise ExternalServiceError(
+                "dashscope_request_failed",
+                "连接 DashScope 失败",
+                True,
+            ) from exc
+        if response.is_redirect:
+            raise AppError(
+                "unexpected_redirect",
+                "DashScope 返回了未允许的重定向",
+                False,
+            )
+        if response.status_code != 200:
+            detail = ""
+            try:
+                payload = response.json()
+                detail = str(
+                    payload.get("message") or payload.get("code") or ""
+                )
+            except ValueError:
+                pass
+            raise ExternalServiceError(
+                "dashscope_request_failed",
+                f"DashScope 请求失败（HTTP {response.status_code}）"
+                + (f"：{detail}" if detail else ""),
+                response.status_code == 429 or response.status_code >= 500,
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ExternalServiceError(
+                "dashscope_invalid_response",
+                f"DashScope 返回无效 JSON：{redact_url(url)}",
+                True,
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ExternalServiceError(
+                "dashscope_invalid_response",
+                "DashScope 返回未知数据格式",
+                True,
+            )
+        return payload
 
     async def fetch_result(self, url: str) -> dict[str, Any]:
         try:

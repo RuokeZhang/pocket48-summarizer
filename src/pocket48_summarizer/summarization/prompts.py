@@ -82,22 +82,48 @@ def final_prompt(
                 "danmaku_evidence": "可选的观众反应说明",
             }
         ],
+        "danmaku_peak_summaries": [
+            {
+                "start_ms": 0,
+                "end_ms": 1000,
+                "summary": "该时段字幕显示发生了什么，以及弹幕样本反映的主要观众反应",
+                "evidence_segment_ids": [1],
+            }
+        ],
         "verification_needed": ["需要人工确认的名字、术语或事实"],
     }
     chunk_payload = [chunk.model_dump() for chunk in chunks]
     peak_payload = [
         {
+            "rank": peak.rank,
             "start_ms": peak.start_ms,
             "end_ms": peak.end_ms,
             "message_count": peak.message_count,
             "score": peak.score,
             "samples": peak.samples,
+            "transcript_context": [
+                {
+                    "start_ms": chunk.start_ms,
+                    "end_ms": chunk.end_ms,
+                    "summary": chunk.summary,
+                    "topics": chunk.topics,
+                    "evidence_segment_ids": chunk.evidence_segment_ids,
+                }
+                for chunk in chunks
+                if chunk.end_ms > peak.start_ms
+                and chunk.start_ms < peak.end_ms
+            ],
         }
         for peak in peaks
     ]
     return (
         "根据分段总结生成整场直播的中文结构化总结。弹幕只能证明观众在某个时段活跃，"
         "不能替代主播字幕成为事实来源。所有时间线和高光必须引用真实 segment id。\n"
+        "请为每个输入弹幕高峰输出且只输出一条 danmaku_peak_summaries，start_ms 和 "
+        "end_ms 必须原样对应输入窗口。summary 应结合该窗口的 transcript_context "
+        "说明当时发生的内容，并把 samples 仅表述为观众的主要反应；若字幕无法确认，"
+        "应明确说这是观众反应而不是事实。evidence_segment_ids 只能使用对应 "
+        "transcript_context 中的 id；没有对应字幕时可为空。\n"
         "输出必须符合这个 JSON 结构：\n"
         f"{json.dumps(schema, ensure_ascii=False)}\n"
         "<trusted_chunk_summaries>\n"

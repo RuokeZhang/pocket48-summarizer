@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from .errors import AppError
-from .models import JobRecord, JobStatus
+from .media.clips import ClipState
+from .models import FinalSummary, JobRecord, JobStatus
 from .parsing.transcript import transcript_to_srt
 from .security import parse_share_url
 from .summarization.chunking import format_clock
@@ -44,6 +43,38 @@ def public_job_payload(job: JobRecord) -> dict:
     }
 
 
+def timeline_clip_context(
+    request: Request, job_id: str, timeline_index: int
+) -> tuple[JobRecord, object]:
+    job = request.app.state.services.repository.get_job(job_id)
+    if job is None:
+        raise AppError("job_not_found", "任务不存在", False)
+    if not job.summary_json:
+        raise AppError("summary_not_ready", "总结尚未生成", True)
+    summary = FinalSummary.model_validate_json(job.summary_json)
+    if timeline_index < 0 or timeline_index >= len(summary.timeline):
+        raise AppError("timeline_item_not_found", "时间线话题不存在", False)
+    if not job.media_url:
+        raise AppError("media_not_ready", "回放媒体地址尚未生成", True)
+    return job, summary.timeline[timeline_index]
+
+
+def clip_payload(
+    job_id: str, timeline_index: int, state: ClipState
+) -> dict:
+    payload = {
+        "status": state.status,
+        "error": state.error,
+        "filename": state.output_path.name,
+        "saved_path": f"data/clips/{job_id}/{state.output_path.name}",
+    }
+    if state.status == "completed":
+        payload["download_url"] = (
+            f"/jobs/{job_id}/clips/{timeline_index}/download"
+        )
+    return payload
+
+
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> Response:
     services = request.app.state.services
@@ -64,7 +95,27 @@ async def job_page(request: Request, job_id: str) -> Response:
     job = repository.get_job(job_id)
     if job is None:
         raise AppError("job_not_found", "任务不存在", False)
-    summary = json.loads(job.summary_json) if job.summary_json else None
+    summary = (
+        FinalSummary.model_validate_json(job.summary_json)
+        if job.summary_json
+        else None
+    )
+    peaks = repository.get_danmaku_peaks(job_id)
+    if summary:
+        summaries_by_window = {
+            (item.start_ms, item.end_ms): item.summary
+            for item in summary.danmaku_peak_summaries
+        }
+        peaks = [
+            peak.model_copy(
+                update={
+                    "summary": summaries_by_window.get(
+                        (peak.start_ms, peak.end_ms), ""
+                    )
+                }
+            )
+            for peak in peaks
+        ]
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="job.html",
@@ -73,7 +124,7 @@ async def job_page(request: Request, job_id: str) -> Response:
             "summary": summary,
             "transcript": repository.get_transcript(job_id, limit=200),
             "danmaku": repository.get_danmaku(job_id, limit=200),
-            "peaks": repository.get_danmaku_peaks(job_id),
+            "peaks": peaks,
             "events": repository.list_events(job_id),
             "format_clock": format_clock,
         },
@@ -159,6 +210,85 @@ async def retry_job(request: Request, job_id: str) -> dict:
     job = services.repository.retry_job(job_id)
     services.worker.notify()
     return public_job_payload(job)
+
+
+@router.post("/api/jobs/{job_id}/clips/{timeline_index}")
+async def create_timeline_clip(
+    request: Request, job_id: str, timeline_index: int
+) -> Response:
+    job, item = timeline_clip_context(request, job_id, timeline_index)
+    clipper = request.app.state.services.clipper
+    if clipper is None:
+        raise AppError(
+            "clipper_unavailable",
+            "视频剪辑服务未启动",
+            True,
+        )
+    state = clipper.start(
+        job_id=job.id,
+        timeline_index=timeline_index,
+        manifest_url=job.media_url,
+        start_ms=item.start_ms,
+        end_ms=item.end_ms,
+    )
+    return JSONResponse(
+        clip_payload(job.id, timeline_index, state),
+        status_code=200 if state.status == "completed" else 202,
+    )
+
+
+@router.get("/api/jobs/{job_id}/clips/{timeline_index}")
+async def timeline_clip_status(
+    request: Request, job_id: str, timeline_index: int
+) -> dict:
+    job, item = timeline_clip_context(request, job_id, timeline_index)
+    clipper = request.app.state.services.clipper
+    if clipper is None:
+        raise AppError(
+            "clipper_unavailable",
+            "视频剪辑服务未启动",
+            True,
+        )
+    state = clipper.get(
+        job_id=job.id,
+        timeline_index=timeline_index,
+        start_ms=item.start_ms,
+        end_ms=item.end_ms,
+    )
+    if state is None:
+        return {"status": "not_started", "error": None}
+    return clip_payload(job.id, timeline_index, state)
+
+
+@router.get("/jobs/{job_id}/clips/{timeline_index}/download")
+async def download_timeline_clip(
+    request: Request, job_id: str, timeline_index: int
+) -> Response:
+    job, item = timeline_clip_context(request, job_id, timeline_index)
+    clipper = request.app.state.services.clipper
+    if clipper is None:
+        raise AppError(
+            "clipper_unavailable",
+            "视频剪辑服务未启动",
+            True,
+        )
+    state = clipper.get(
+        job_id=job.id,
+        timeline_index=timeline_index,
+        start_ms=item.start_ms,
+        end_ms=item.end_ms,
+    )
+    if state is None or state.status != "completed":
+        raise AppError(
+            "video_clip_not_ready",
+            "视频片段尚未生成完成",
+            True,
+        )
+    return FileResponse(
+        state.output_path,
+        media_type="video/mp4",
+        filename=state.output_path.name,
+    )
 
 
 @router.get("/jobs/{job_id}/transcript.srt")

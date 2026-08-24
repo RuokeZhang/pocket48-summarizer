@@ -1,7 +1,13 @@
 import pytest
 
 from pocket48_summarizer.errors import ExternalServiceError
-from pocket48_summarizer.models import DanmakuPeak, TranscriptSegment
+from pocket48_summarizer.models import (
+    ChunkSummary,
+    DanmakuPeak,
+    FinalSummary,
+    TranscriptSegment,
+)
+from pocket48_summarizer.summarization.prompts import final_prompt
 from pocket48_summarizer.summarization.service import SummarizationService
 
 
@@ -51,8 +57,59 @@ class FakeLLM:
                     "danmaku_evidence": "弹幕活跃",
                 }
             ],
+            "danmaku_peak_summaries": [
+                {
+                    "start_ms": 0,
+                    "end_ms": 30_000,
+                    "summary": (
+                        "主播正在向观众问好，弹幕样本显示观众积极回应。"
+                    ),
+                    "evidence_segment_ids": [1],
+                }
+            ],
             "verification_needed": [],
         }
+
+
+def test_old_final_summary_defaults_peak_summaries():
+    summary = FinalSummary.model_validate(
+        {
+            "overview": "旧总结",
+            "timeline": [],
+            "topics": [],
+            "highlights": [],
+        }
+    )
+
+    assert summary.danmaku_peak_summaries == []
+
+
+def test_final_prompt_reuses_window_transcript_and_keeps_danmaku_untrusted():
+    prompt = final_prompt(
+        [
+            ChunkSummary(
+                start_ms=0,
+                end_ms=5000,
+                summary="主播向观众问好。",
+                evidence_segment_ids=[1],
+            )
+        ],
+        [
+            DanmakuPeak(
+                rank=1,
+                start_ms=0,
+                end_ms=30_000,
+                message_count=12,
+                score=4,
+                samples=[{"text": "晚上好"}],
+            )
+        ],
+    )
+
+    assert '"transcript_context":' in prompt
+    assert "主播向观众问好。" in prompt
+    assert "弹幕只能证明观众在某个时段活跃" in prompt
+    assert "观众反应而不是事实" in prompt
 
 
 @pytest.mark.asyncio
@@ -87,6 +144,7 @@ async def test_summarizes_with_evidence(settings, repository):
         ],
     )
     assert summary.timeline[0].evidence_segment_ids == [1]
+    assert "观众积极回应" in summary.danmaku_peak_summaries[0].summary
     assert "# 测试直播" in markdown
     assert repository.get_summary_chunks(job.id, "v1")
 

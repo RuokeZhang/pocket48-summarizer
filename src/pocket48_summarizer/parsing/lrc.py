@@ -66,10 +66,13 @@ def detect_danmaku_peaks(
     *,
     bucket_ms: int = 30_000,
     merge_distance_ms: int = 90_000,
+    max_peak_duration_ms: int = 300_000,
     max_peaks: int = 10,
 ) -> list[DanmakuPeak]:
     if not entries:
         return []
+    if bucket_ms <= 0 or max_peak_duration_ms <= 0:
+        raise ValueError("bucket_ms and max_peak_duration_ms must be positive")
     counts = Counter(entry.timestamp_ms // bucket_ms for entry in entries)
     max_bucket = max(counts)
     series = [counts.get(index, 0) for index in range(max_bucket + 1)]
@@ -99,8 +102,15 @@ def detect_danmaku_peaks(
             merged[-1] = (merged[-1][0], end)
         else:
             merged.append((start, end))
-    scored: list[tuple[float, int, int, list[DanmakuEntry]]] = []
+    bounded: list[tuple[int, int]] = []
     for start, end in merged:
+        while end - start > max_peak_duration_ms:
+            bounded.append((start, start + max_peak_duration_ms))
+            start += max_peak_duration_ms
+        if start < end:
+            bounded.append((start, end))
+    scored: list[tuple[float, int, int, list[DanmakuEntry]]] = []
+    for start, end in bounded:
         window_entries = [
             entry for entry in entries if start <= entry.timestamp_ms < end
         ]
@@ -116,13 +126,22 @@ def detect_danmaku_peaks(
     for rank, (score, start, end, window_entries) in enumerate(
         scored[:max_peaks], start=1
     ):
+        sample_count = min(8, len(window_entries))
+        sample_indexes = (
+            [0]
+            if sample_count == 1
+            else [
+                round(index * (len(window_entries) - 1) / (sample_count - 1))
+                for index in range(sample_count)
+            ]
+        )
         samples = [
             {
                 "timestamp_ms": entry.timestamp_ms,
                 "author": entry.author,
                 "text": entry.text,
             }
-            for entry in window_entries[:8]
+            for entry in (window_entries[index] for index in sample_indexes)
         ]
         peaks.append(
             DanmakuPeak(

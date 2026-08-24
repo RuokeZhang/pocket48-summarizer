@@ -61,6 +61,7 @@ class DanmakuPeak(BaseModel):
     message_count: int = Field(ge=0)
     score: float = Field(ge=0)
     samples: list[dict[str, Any]] = Field(default_factory=list)
+    summary: str = ""
 
 
 class SummaryCandidate(BaseModel):
@@ -105,11 +106,21 @@ class HighlightItem(BaseModel):
     danmaku_evidence: str | None = None
 
 
+class DanmakuPeakSummary(BaseModel):
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=0)
+    summary: str = Field(min_length=1)
+    evidence_segment_ids: list[int] = Field(default_factory=list)
+
+
 class FinalSummary(BaseModel):
     overview: str
     timeline: list[TimelineItem]
     topics: list[TopicItem]
     highlights: list[HighlightItem]
+    danmaku_peak_summaries: list[DanmakuPeakSummary] = Field(
+        default_factory=list
+    )
     verification_needed: list[str] = Field(default_factory=list)
 
 
