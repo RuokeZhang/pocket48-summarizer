@@ -9,6 +9,7 @@ from pocket48_summarizer.models import (
     DanmakuPeakSummary,
     FinalSummary,
     TimelineItem,
+    TranscriptSegment,
 )
 from pocket48_summarizer.routes import format_china_datetime
 from pocket48_summarizer.services import ApplicationServices
@@ -558,3 +559,85 @@ def test_any_invited_user_can_clip_a_public_result(
     assert clip_status.json()["download_url"].endswith("/clips/0/download")
     assert download.status_code == 200
     assert download.content == b"public clip"
+
+
+def test_playback_track_is_public_and_user_can_request_translation(
+    settings, repository
+):
+    app = auth_app(settings, repository)
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        created = alice.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800030"
+                )
+            },
+            headers=csrf_headers(alice),
+        )
+        job_id = created.json()["id"]
+
+    claimed = repository.claim_next_job("main-worker", 120)
+    assert claimed and claimed.id == job_id
+    repository.set_media_details(
+        job_id,
+        "https://idol-vod.48.cn/path/synchronized.m3u8",
+        120_000,
+    )
+    repository.replace_transcript(
+        job_id,
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=5597,
+                end_ms=8000,
+                text="同步字幕",
+            )
+        ],
+    )
+    repository.replace_danmaku(
+        job_id,
+        [
+            DanmakuEntry(
+                sequence=1,
+                timestamp_ms=13491,
+                author="fan",
+                text="同步弹幕",
+            )
+        ],
+    )
+    repository.mark_completed(job_id)
+
+    with TestClient(app) as anonymous:
+        page = anonymous.get(f"/jobs/{job_id}")
+        track = anonymous.get(f"/api/jobs/{job_id}/playback-track")
+        denied = anonymous.post(
+            f"/api/jobs/{job_id}/translations/en",
+            follow_redirects=False,
+        )
+
+    assert page.status_code == 200
+    assert 'id="subtitle-mode"' in page.text
+    assert 'id="live-danmaku-panel"' in page.text
+    assert track.status_code == 200
+    assert track.json()["subtitles"][0] == {
+        "sequence": 1,
+        "start_ms": 5597,
+        "end_ms": 8000,
+        "zh": "同步字幕",
+        "en": None,
+    }
+    assert track.json()["danmaku"][0]["timestamp_ms"] == 13491
+    assert denied.status_code == 401
+
+    with TestClient(app) as bob:
+        login(bob, "bob", "bob also has secure password")
+        requested = bob.post(
+            f"/api/jobs/{job_id}/translations/en",
+            headers=csrf_headers(bob),
+        )
+
+    assert requested.status_code == 202
+    assert requested.json()["status"] == "queued"

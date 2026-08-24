@@ -15,6 +15,8 @@ from .models import (
     JobStage,
     JobStatus,
     ReplayMetadata,
+    SubtitleTranslationRequestRecord,
+    SubtitleTranslationStatus,
     TranscriptSegment,
     VideoClipRecord,
 )
@@ -41,6 +43,14 @@ class JobRepository:
         if row is None:
             return None
         return VideoClipRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _subtitle_translation(
+        row: sqlite3.Row | None,
+    ) -> SubtitleTranslationRequestRecord | None:
+        if row is None:
+            return None
+        return SubtitleTranslationRequestRecord.model_validate(dict(row))
 
     def create_or_get_job(
         self,
@@ -642,6 +652,19 @@ class JobRepository:
             ).fetchall()
             return [DanmakuEntry.model_validate(dict(row)) for row in rows]
 
+    def get_all_danmaku(self, job_id: str) -> list[DanmakuEntry]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT sequence, timestamp_ms, author, text
+                FROM danmaku_entries
+                WHERE job_id = ?
+                ORDER BY timestamp_ms, sequence
+                """,
+                (job_id,),
+            ).fetchall()
+            return [DanmakuEntry.model_validate(dict(row)) for row in rows]
+
     def get_danmaku_peaks(self, job_id: str) -> list[DanmakuPeak]:
         with self.database.connect() as connection:
             rows = connection.execute(
@@ -799,6 +822,365 @@ class JobRepository:
                     """,
                     (job_id,),
                 ).fetchone()["count"]
+            )
+
+    def request_subtitle_translation(
+        self, job_id: str, language: str = "en"
+    ) -> SubtitleTranslationRequestRecord:
+        if language != "en":
+            raise AppError(
+                "unsupported_translation_language",
+                "当前仅支持英文字幕",
+                False,
+            )
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            job = connection.execute(
+                "SELECT status FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise AppError("job_not_found", "任务不存在", False)
+            if job["status"] != JobStatus.COMPLETED:
+                raise AppError(
+                    "translation_not_ready",
+                    "直播处理完成后才能生成英文字幕",
+                    True,
+                )
+            transcript_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) AS count FROM transcript_segments
+                    WHERE job_id = ?
+                    """,
+                    (job_id,),
+                ).fetchone()["count"]
+            )
+            if transcript_count == 0:
+                raise AppError(
+                    "transcript_not_ready",
+                    "字幕尚未生成，无法翻译",
+                    True,
+                )
+            row = connection.execute(
+                """
+                SELECT * FROM subtitle_translation_requests
+                WHERE job_id = ? AND language = ?
+                """,
+                (job_id, language),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO subtitle_translation_requests (
+                        job_id, language, status, retry_count,
+                        requested_at, updated_at
+                    ) VALUES (?, ?, ?, 0, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        language,
+                        SubtitleTranslationStatus.QUEUED,
+                        now,
+                        now,
+                    ),
+                )
+            elif row["status"] == SubtitleTranslationStatus.FAILED:
+                connection.execute(
+                    """
+                    UPDATE subtitle_translation_requests
+                    SET status = ?, error_message = NULL, worker_id = NULL,
+                        lease_expires_at = NULL, requested_at = ?,
+                        updated_at = ?, completed_at = NULL
+                    WHERE job_id = ? AND language = ?
+                    """,
+                    (
+                        SubtitleTranslationStatus.QUEUED,
+                        now,
+                        now,
+                        job_id,
+                        language,
+                    ),
+                )
+            updated = connection.execute(
+                """
+                SELECT * FROM subtitle_translation_requests
+                WHERE job_id = ? AND language = ?
+                """,
+                (job_id, language),
+            ).fetchone()
+            translation = self._subtitle_translation(updated)
+            if translation is None:
+                raise RuntimeError(
+                    "Subtitle translation request disappeared"
+                )
+            return translation
+
+    def get_subtitle_translation_request(
+        self, job_id: str, language: str = "en"
+    ) -> SubtitleTranslationRequestRecord | None:
+        with self.database.connect() as connection:
+            return self._subtitle_translation(
+                connection.execute(
+                    """
+                    SELECT * FROM subtitle_translation_requests
+                    WHERE job_id = ? AND language = ?
+                    """,
+                    (job_id, language),
+                ).fetchone()
+            )
+
+    def claim_next_subtitle_translation(
+        self, worker_id: str, lease_seconds: int
+    ) -> SubtitleTranslationRequestRecord | None:
+        now = datetime.now(UTC)
+        now_text = now.isoformat()
+        lease = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM subtitle_translation_requests
+                WHERE status = ?
+                   OR (
+                       status = ?
+                       AND lease_expires_at IS NOT NULL
+                       AND lease_expires_at <= ?
+                   )
+                ORDER BY requested_at
+                LIMIT 1
+                """,
+                (
+                    SubtitleTranslationStatus.QUEUED,
+                    SubtitleTranslationStatus.RUNNING,
+                    now_text,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                """
+                UPDATE subtitle_translation_requests
+                SET status = ?, worker_id = ?, lease_expires_at = ?,
+                    retry_count = retry_count + 1,
+                    started_at = COALESCE(started_at, ?), updated_at = ?
+                WHERE job_id = ? AND language = ?
+                """,
+                (
+                    SubtitleTranslationStatus.RUNNING,
+                    worker_id,
+                    lease,
+                    now_text,
+                    now_text,
+                    row["job_id"],
+                    row["language"],
+                ),
+            )
+            claimed = connection.execute(
+                """
+                SELECT * FROM subtitle_translation_requests
+                WHERE job_id = ? AND language = ?
+                """,
+                (row["job_id"], row["language"]),
+            ).fetchone()
+            return self._subtitle_translation(claimed)
+
+    def touch_subtitle_translation_lease(
+        self,
+        job_id: str,
+        language: str,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> None:
+        lease = (
+            datetime.now(UTC) + timedelta(seconds=lease_seconds)
+        ).isoformat()
+        with self.database.connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE subtitle_translation_requests
+                SET lease_expires_at = ?, updated_at = ?
+                WHERE job_id = ? AND language = ? AND worker_id = ?
+                  AND status = ?
+                """,
+                (
+                    lease,
+                    utcnow(),
+                    job_id,
+                    language,
+                    worker_id,
+                    SubtitleTranslationStatus.RUNNING,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise AppError(
+                    "translation_lease_lost",
+                    "英文字幕任务租约已失效",
+                    True,
+                )
+
+    def recover_expired_subtitle_translations(self) -> int:
+        now = utcnow()
+        with self.database.connect() as connection:
+            return connection.execute(
+                """
+                UPDATE subtitle_translation_requests
+                SET status = ?, worker_id = NULL, lease_expires_at = NULL,
+                    updated_at = ?
+                WHERE status = ? AND lease_expires_at <= ?
+                """,
+                (
+                    SubtitleTranslationStatus.QUEUED,
+                    now,
+                    SubtitleTranslationStatus.RUNNING,
+                    now,
+                ),
+            ).rowcount
+
+    def release_owned_subtitle_translation(
+        self, job_id: str, language: str, worker_id: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE subtitle_translation_requests
+                SET status = ?, worker_id = NULL, lease_expires_at = NULL,
+                    updated_at = ?
+                WHERE job_id = ? AND language = ? AND worker_id = ?
+                  AND status = ?
+                """,
+                (
+                    SubtitleTranslationStatus.QUEUED,
+                    utcnow(),
+                    job_id,
+                    language,
+                    worker_id,
+                    SubtitleTranslationStatus.RUNNING,
+                ),
+            )
+
+    def save_transcript_translations(
+        self, job_id: str, language: str, translations: dict[int, str]
+    ) -> None:
+        if not translations:
+            return
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO transcript_translations (
+                    job_id, sequence, language, text, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(job_id, sequence, language) DO UPDATE SET
+                    text = excluded.text,
+                    created_at = excluded.created_at
+                """,
+                [
+                    (job_id, sequence, language, text, now)
+                    for sequence, text in translations.items()
+                ],
+            )
+
+    def get_transcript_translations(
+        self, job_id: str, language: str = "en"
+    ) -> dict[int, str]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT sequence, text FROM transcript_translations
+                WHERE job_id = ? AND language = ?
+                ORDER BY sequence
+                """,
+                (job_id, language),
+            ).fetchall()
+            return {int(row["sequence"]): str(row["text"]) for row in rows}
+
+    def mark_subtitle_translation_completed(
+        self, job_id: str, language: str, worker_id: str
+    ) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            source_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) AS count FROM transcript_segments
+                    WHERE job_id = ?
+                    """,
+                    (job_id,),
+                ).fetchone()["count"]
+            )
+            translation_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) AS count FROM transcript_translations
+                    WHERE job_id = ? AND language = ?
+                    """,
+                    (job_id, language),
+                ).fetchone()["count"]
+            )
+            if source_count == 0 or source_count != translation_count:
+                raise AppError(
+                    "translation_incomplete",
+                    "英文字幕尚未完整生成",
+                    True,
+                )
+            updated = connection.execute(
+                """
+                UPDATE subtitle_translation_requests
+                SET status = ?, error_message = NULL, worker_id = NULL,
+                    lease_expires_at = NULL, completed_at = ?, updated_at = ?
+                WHERE job_id = ? AND language = ? AND worker_id = ?
+                  AND status = ?
+                """,
+                (
+                    SubtitleTranslationStatus.COMPLETED,
+                    now,
+                    now,
+                    job_id,
+                    language,
+                    worker_id,
+                    SubtitleTranslationStatus.RUNNING,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise AppError(
+                    "translation_lease_lost",
+                    "英文字幕任务租约已失效",
+                    True,
+                )
+
+    def mark_subtitle_translation_failed(
+        self,
+        job_id: str,
+        language: str,
+        worker_id: str,
+        message: str,
+        *,
+        retry: bool,
+    ) -> None:
+        status = (
+            SubtitleTranslationStatus.QUEUED
+            if retry
+            else SubtitleTranslationStatus.FAILED
+        )
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE subtitle_translation_requests
+                SET status = ?, error_message = ?, worker_id = NULL,
+                    lease_expires_at = NULL, updated_at = ?
+                WHERE job_id = ? AND language = ? AND worker_id = ?
+                  AND status = ?
+                """,
+                (
+                    status,
+                    message,
+                    utcnow(),
+                    job_id,
+                    language,
+                    worker_id,
+                    SubtitleTranslationStatus.RUNNING,
+                ),
             )
 
     def save_summary_chunk(

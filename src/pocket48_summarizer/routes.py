@@ -17,7 +17,12 @@ from pydantic import BaseModel
 from .auth import AuthContext
 from .errors import AppError
 from .media.clips import ClipState
-from .models import FinalSummary, JobRecord, JobStatus
+from .models import (
+    FinalSummary,
+    JobRecord,
+    JobStatus,
+    SubtitleTranslationRequestRecord,
+)
 from .parsing.transcript import transcript_to_srt
 from .runtime_lock import shared_runtime_lock
 from .security import parse_share_url
@@ -221,6 +226,28 @@ def clip_payload(
     return payload
 
 
+def translation_payload(
+    translation: SubtitleTranslationRequestRecord | None,
+) -> dict:
+    if translation is None:
+        return {
+            "language": "en",
+            "status": "not_requested",
+            "error": None,
+        }
+    return {
+        "language": translation.language,
+        "status": translation.status,
+        "error": (
+            "英文字幕生成失败，请登录后重试"
+            if translation.status == "failed"
+            else None
+        ),
+        "retry_count": translation.retry_count,
+        "completed_at": translation.completed_at,
+    }
+
+
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> Response:
     context = optional_auth(request)
@@ -304,6 +331,7 @@ async def job_page(request: Request, job_id: str) -> Response:
                 and request.app.state.services.clipper is not None
                 and not request.app.state.settings.clip_maintenance_path.exists()
             ),
+            "can_request_translation": context is not None,
         },
     )
 
@@ -378,6 +406,73 @@ async def danmaku_page(
         "next_after_ms": entries[-1].timestamp_ms if entries else after_ms,
         "has_more": len(entries) == limit,
     }
+
+
+@router.get("/api/jobs/{job_id}/playback-track")
+async def playback_track(request: Request, job_id: str) -> dict:
+    require_readable_job(request, job_id)
+    repository = request.app.state.services.repository
+    translation = repository.get_subtitle_translation_request(job_id, "en")
+    translations = repository.get_transcript_translations(job_id, "en")
+    return {
+        "translation": translation_payload(translation),
+        "subtitles": [
+            {
+                "sequence": segment.sequence,
+                "start_ms": segment.start_ms,
+                "end_ms": segment.end_ms,
+                "zh": segment.text,
+                "en": translations.get(segment.sequence),
+            }
+            for segment in repository.get_all_transcript(job_id)
+        ],
+        "danmaku": [
+            {
+                "sequence": entry.sequence,
+                "timestamp_ms": entry.timestamp_ms,
+                "author": entry.author,
+                "text": entry.text,
+            }
+            for entry in repository.get_all_danmaku(job_id)
+        ],
+    }
+
+
+@router.get("/api/jobs/{job_id}/translations/en")
+async def subtitle_translation_status(
+    request: Request, job_id: str
+) -> dict:
+    require_readable_job(request, job_id)
+    translation = (
+        request.app.state.services.repository
+        .get_subtitle_translation_request(job_id, "en")
+    )
+    return translation_payload(translation)
+
+
+@router.post("/api/jobs/{job_id}/translations/en")
+async def request_subtitle_translation(
+    request: Request, job_id: str
+) -> Response:
+    context = require_auth(request)
+    request.app.state.auth.require_csrf(request, context)
+    _, job = require_readable_job(request, job_id)
+    if job.status != JobStatus.COMPLETED:
+        raise AppError(
+            "translation_not_ready",
+            "直播处理完成后才能生成英文字幕",
+            True,
+        )
+    services = request.app.state.services
+    translation = services.repository.request_subtitle_translation(
+        job_id, "en"
+    )
+    if services.worker is not None:
+        services.worker.notify()
+    return JSONResponse(
+        translation_payload(translation),
+        status_code=200 if translation.status == "completed" else 202,
+    )
 
 
 @router.post("/api/jobs/{job_id}/retry")

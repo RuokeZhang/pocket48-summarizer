@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     llm_chunk_overlap_segments: int = Field(default=3, ge=0, le=20)
     llm_temperature: float = Field(default=0.1, ge=0, le=2)
     llm_extra_headers_json: str = "{}"
+    translation_max_input_chars: int = Field(
+        default=10_000, ge=2_000, le=50_000
+    )
+    translation_retry_attempts: int = Field(default=3, ge=1, le=8)
 
     worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=30)
     worker_lease_seconds: int = Field(default=120, ge=30, le=900)

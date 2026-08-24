@@ -43,19 +43,101 @@
   {% endif %}
 
   {% if job.status == "completed" and job.media_url %}
-    <section class="panel replay-player-panel" id="replay-player-panel">
-      <p class="eyebrow">Replay</p>
-      <h2>直播回放</h2>
-      <video
-        id="replay-player"
-        controls
-        playsinline
-        preload="metadata"
-        data-hls-src="{{ job.media_url }}"
-      ></video>
-      <p id="replay-player-message" class="muted">
-        点击时间线、高光或字幕中的时间，即可跳转到对应位置。
-      </p>
+    <section
+      class="panel replay-player-panel"
+      id="replay-player-panel"
+      data-can-request-translation="{{ 'true' if can_request_translation else 'false' }}"
+    >
+      <div class="replay-heading">
+        <div>
+          <p class="eyebrow">Synchronized replay</p>
+          <h2>同步回放</h2>
+        </div>
+        <span id="playback-sync-state" class="sync-state">正在载入字幕与弹幕</span>
+      </div>
+      <div class="playback-toolbar" aria-label="播放显示设置">
+        <label>
+          <span>字幕</span>
+          <select id="subtitle-mode">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+            <option value="bilingual">中英双语</option>
+            <option value="off">关闭</option>
+          </select>
+        </label>
+        <label class="toggle-control">
+          <input id="danmaku-enabled" type="checkbox" checked>
+          <span>显示弹幕</span>
+        </label>
+        <label>
+          <span>弹幕密度</span>
+          <select id="danmaku-density">
+            <option value="low">清爽</option>
+            <option value="normal" selected>标准</option>
+            <option value="high">丰富</option>
+          </select>
+        </label>
+        <label class="opacity-control">
+          <span>透明度</span>
+          <input
+            id="danmaku-opacity"
+            type="range"
+            min="35"
+            max="100"
+            step="5"
+            value="82"
+          >
+        </label>
+        <details class="sync-adjustment">
+          <summary>高级同步</summary>
+          <label>
+            <span>偏移 <output id="sync-offset-value">0.0s</output></span>
+            <input
+              id="sync-offset"
+              type="range"
+              min="-3000"
+              max="3000"
+              step="100"
+              value="0"
+            >
+          </label>
+        </details>
+      </div>
+      <div class="playback-layout">
+        <div class="video-stage">
+          <video
+            id="replay-player"
+            controls
+            playsinline
+            preload="metadata"
+            data-hls-src="{{ job.media_url }}"
+          ></video>
+          <div id="subtitle-overlay" class="subtitle-overlay" hidden>
+            <p id="subtitle-zh" class="subtitle-zh"></p>
+            <p id="subtitle-en" class="subtitle-en"></p>
+          </div>
+        </div>
+        <aside id="live-danmaku-panel" class="live-danmaku-panel">
+          <div class="danmaku-panel-heading">
+            <span><i></i> 同步弹幕</span>
+            <strong id="danmaku-live-count">0</strong>
+          </div>
+          <div id="live-danmaku-stream" class="live-danmaku-stream">
+            <p id="live-danmaku-empty" class="danmaku-empty">
+              播放后，弹幕会在这里随视频出现。
+            </p>
+          </div>
+        </aside>
+      </div>
+      <div class="playback-status-row">
+        <p id="replay-player-message" class="muted">
+          点击时间线、高光或字幕中的时间，即可跳转到对应位置。
+        </p>
+        <div class="translation-state">
+          <span id="translation-state"></span>
+          <button id="translation-retry" type="button" hidden>生成英文字幕</button>
+        </div>
+      </div>
       <noscript>
         <p><a href="{{ job.media_url }}">打开原始 HLS 回放</a></p>
       </noscript>

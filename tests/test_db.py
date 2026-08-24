@@ -23,4 +23,5 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "001_initial.sql",
         "002_auth_and_access.sql",
         "003_video_clips.sql",
+        "004_subtitle_translations.sql",
     ]

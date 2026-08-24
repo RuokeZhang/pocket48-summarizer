@@ -27,6 +27,13 @@ class JobStage(StrEnum):
     COMPLETED = "completed"
 
 
+class SubtitleTranslationStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ReplayMetadata(BaseModel):
     live_id: str
     member_id: str
@@ -177,6 +184,20 @@ class VideoClipRecord(BaseModel):
     error_message: str | None = None
     created_at: str
     updated_at: str
+    completed_at: str | None = None
+
+
+class SubtitleTranslationRequestRecord(BaseModel):
+    job_id: str
+    language: Literal["en"]
+    status: SubtitleTranslationStatus
+    retry_count: int
+    error_message: str | None = None
+    worker_id: str | None = None
+    lease_expires_at: str | None = None
+    requested_at: str
+    updated_at: str
+    started_at: str | None = None
     completed_at: str | None = None
 
 

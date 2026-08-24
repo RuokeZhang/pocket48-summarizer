@@ -223,7 +223,9 @@ switch_worker_release() {
   if ! activate_worker_maintenance; then
     return 1
   fi
-  if ! wait_for_status_zero jobs "$drain_seconds"; then
+  if ! wait_for_status_zero jobs "$drain_seconds" \
+    || ! wait_for_status_zero \
+      subtitle_translation_requests "$drain_seconds"; then
     rm -f "$WORKER_MAINTENANCE_FILE"
     return 2
   fi

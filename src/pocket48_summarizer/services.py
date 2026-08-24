@@ -14,6 +14,7 @@ from .media.hls import HLSInspector
 from .pipeline import ReplayPipeline
 from .repository import JobRepository
 from .summarization.service import SummarizationService
+from .translation import SubtitleTranslationService
 from .worker import DurableWorker
 
 
@@ -27,6 +28,7 @@ class ApplicationServices:
     hls: HLSInspector | None = None
     dashscope: DashScopeClient | None = None
     llm: OpenAICompatibleClient | None = None
+    translator: SubtitleTranslationService | None = None
 
     async def close(self) -> None:
         if self.worker:
@@ -51,6 +53,11 @@ def build_services(
     llm = OpenAICompatibleClient(settings)
     oss = OSSStore(settings)
     summarizer = SummarizationService(settings, repository, llm)
+    translator = SubtitleTranslationService(
+        repository,
+        llm,
+        max_input_chars=settings.translation_max_input_chars,
+    )
     pipeline = ReplayPipeline(
         settings=settings,
         repository=repository,
@@ -61,7 +68,7 @@ def build_services(
         dashscope=dashscope,
         summarizer=summarizer,
     )
-    worker = DurableWorker(settings, repository, pipeline)
+    worker = DurableWorker(settings, repository, pipeline, translator)
     return ApplicationServices(
         repository=repository,
         worker=worker,
@@ -74,4 +81,5 @@ def build_services(
         hls=hls,
         dashscope=dashscope,
         llm=llm,
+        translator=translator,
     )

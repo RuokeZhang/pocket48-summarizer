@@ -1,6 +1,6 @@
 # 阿里云香港 ECS 蓝绿部署
 
-目标架构：香港地域 ECS、私有 OSS、Caddy HTTPS、蓝绿 Web 槽位、独立单 Worker、SQLite 每日备份。已完成的直播结果和剪辑下载公开可见；提交任务和新建剪辑需要邀请账号。生产模板把剪辑限制为单并发、每段最长 10 分钟，临时 HLS、FFmpeg 或 OSS 错误自动重试 3 次。
+目标架构：香港地域 ECS、私有 OSS、Caddy HTTPS、蓝绿 Web 槽位、独立单 Worker、SQLite 每日备份。已完成的直播结果、同步中英文字幕、弹幕和剪辑下载公开可见；提交任务、新建剪辑和为历史直播触发英文翻译需要邀请账号。生产模板把剪辑限制为单并发、每段最长 10 分钟，临时 HLS、FFmpeg 或 OSS 错误自动重试 3 次。
 
 ## 1. 云资源
 
@@ -88,7 +88,7 @@ curl --fail https://p48.ruokezhang.com/healthz
 
 ## 6. 蓝绿发布与回滚
 
-发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑会短暂返回维护提示。独立 Worker 会在当前任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务并重新排队；任务已持久化的 DashScope ID 和总结分块会继续复用，不会从头重复提交。
+发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑会短暂返回维护提示。独立 Worker 会在当前直播任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务和翻译任务并重新排队；任务已持久化的 DashScope ID、总结分块和英文字幕片段会继续复用，不会从头重复提交。
 
 ```bash
 cd /opt/pocket48-summarizer
