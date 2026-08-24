@@ -21,6 +21,7 @@ KillSignal=SIGINT
 UMask=0077
 RuntimeDirectory=pocket48-summarizer
 RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 
 NoNewPrivileges=true
 PrivateDevices=true
