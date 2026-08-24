@@ -117,6 +117,7 @@ class SubtitleTranslationService:
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
+            response_model=TranslationBatch,
         )
         try:
             parsed = TranslationBatch.model_validate(payload)

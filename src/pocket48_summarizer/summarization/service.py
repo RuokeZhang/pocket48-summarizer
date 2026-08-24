@@ -96,10 +96,12 @@ class SummarizationService:
         self, prompt: str, valid_ids: set[int]
     ) -> ChunkSummary:
         last_error: Exception | None = None
-        for _ in range(2):
+        request_prompt = prompt
+        for attempt in range(self.settings.llm_schema_retry_attempts):
             payload = await self.client.chat_json(
                 system_prompt=SYSTEM_PROMPT,
-                user_prompt=prompt,
+                user_prompt=request_prompt,
+                response_model=ChunkSummary,
             )
             try:
                 summary = ChunkSummary.model_validate(payload)
@@ -107,6 +109,8 @@ class SummarizationService:
                 return summary
             except (ValidationError, ExternalServiceError) as exc:
                 last_error = exc
+                if attempt + 1 < self.settings.llm_schema_retry_attempts:
+                    request_prompt = self._schema_retry_prompt(prompt, exc)
         if isinstance(last_error, ExternalServiceError):
             raise last_error
         raise ExternalServiceError(
@@ -123,10 +127,12 @@ class SummarizationService:
     ) -> FinalSummary:
         prompt = final_prompt(chunks, peaks)
         last_error: Exception | None = None
-        for _ in range(2):
+        request_prompt = prompt
+        for attempt in range(self.settings.llm_schema_retry_attempts):
             payload = await self.client.chat_json(
                 system_prompt=SYSTEM_PROMPT,
-                user_prompt=prompt,
+                user_prompt=request_prompt,
+                response_model=FinalSummary,
             )
             try:
                 summary = FinalSummary.model_validate(payload)
@@ -166,6 +172,8 @@ class SummarizationService:
                 return summary
             except (ValidationError, ExternalServiceError) as exc:
                 last_error = exc
+                if attempt + 1 < self.settings.llm_schema_retry_attempts:
+                    request_prompt = self._schema_retry_prompt(prompt, exc)
         if isinstance(last_error, ExternalServiceError):
             raise last_error
         raise ExternalServiceError(
@@ -173,6 +181,28 @@ class SummarizationService:
             "模型最终总结不符合要求的 JSON 结构",
             True,
         ) from last_error
+
+    @staticmethod
+    def _schema_retry_prompt(
+        prompt: str,
+        error: ValidationError | ExternalServiceError,
+    ) -> str:
+        if isinstance(error, ValidationError):
+            details = []
+            for item in error.errors(include_url=False)[:8]:
+                location = ".".join(str(part) for part in item["loc"])
+                details.append(f"{location or '<root>'}: {item['msg']}")
+            error_detail = "；".join(details)
+        else:
+            error_detail = error.message
+        return (
+            prompt
+            + "\n\n<previous_response_validation_error>\n"
+            + error_detail[:1200]
+            + "\n上一次响应未通过验证。请重新生成完整 JSON，不要省略任何顶层键，"
+            "并严格遵守字段类型、时间窗口和字幕证据约束。\n"
+            "</previous_response_validation_error>"
+        )
 
     @staticmethod
     def _validate_evidence(

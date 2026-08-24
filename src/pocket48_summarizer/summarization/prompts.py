@@ -119,6 +119,10 @@ def final_prompt(
     return (
         "根据分段总结生成整场直播的中文结构化总结。弹幕只能证明观众在某个时段活跃，"
         "不能替代主播字幕成为事实来源。所有时间线和高光必须引用真实 segment id。\n"
+        "必须输出完整 JSON 对象，并包含 overview、timeline、topics、highlights、"
+        "danmaku_peak_summaries、verification_needed 六个顶层键；没有内容的数组也"
+        "必须输出空数组。overview 保持精炼；timeline 最多 18 条，topics 最多 10 条，"
+        "highlights 最多 10 条，verification_needed 最多 20 条，避免重复内容。\n"
         "请为每个输入弹幕高峰输出且只输出一条 danmaku_peak_summaries，start_ms 和 "
         "end_ms 必须原样对应输入窗口。summary 应结合该窗口的 transcript_context "
         "说明当时发生的内容，并把 samples 仅表述为观众的主要反应；若字幕无法确认，"

@@ -70,7 +70,13 @@ DASHSCOPE_API_KEY=...
 LLM_BASE_URL=https://your-provider.example/v1
 LLM_API_KEY=...
 LLM_MODEL=...
+LLM_RESPONSE_FORMAT=json_object
 ```
+
+支持 JSON Schema 的模型可设置
+`LLM_RESPONSE_FORMAT=json_schema`，应用会把 Pydantic 响应结构发送给模型并严格校验；
+生产使用的 `qwen3.7-plus` 支持该模式。`LLM_MAX_OUTPUT_TOKENS` 控制结构化输出上限，
+`LLM_SCHEMA_RETRY_ATTEMPTS` 控制校验失败后的带反馈重试次数。
 
 确认 FFmpeg 已可用：
 

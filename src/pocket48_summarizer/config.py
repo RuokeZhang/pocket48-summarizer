@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -78,8 +78,13 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     llm_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
     llm_max_input_chars: int = Field(default=12_000, ge=2_000, le=100_000)
+    llm_max_output_tokens: int = Field(default=16_384, ge=512, le=65_536)
     llm_chunk_overlap_segments: int = Field(default=3, ge=0, le=20)
     llm_temperature: float = Field(default=0.1, ge=0, le=2)
+    llm_response_format: Literal[
+        "none", "json_object", "json_schema"
+    ] = "json_object"
+    llm_schema_retry_attempts: int = Field(default=3, ge=1, le=5)
     llm_extra_headers_json: str = "{}"
     translation_max_input_chars: int = Field(
         default=10_000, ge=2_000, le=50_000

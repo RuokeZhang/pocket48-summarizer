@@ -71,6 +71,43 @@ class FakeLLM:
         }
 
 
+class RepairingFinalLLM(FakeLLM):
+    def __init__(self):
+        super().__init__()
+        self.prompts = []
+
+    async def chat_json(self, **kwargs):
+        self.prompts.append(kwargs)
+        self.calls += 1
+        if self.calls == 1:
+            return await self._chunk()
+        if self.calls == 2:
+            return {"overview": "字段不完整"}
+        return await self._final()
+
+    async def _chunk(self):
+        return {
+            "start_ms": 0,
+            "end_ms": 5000,
+            "summary": "主播问候观众。",
+            "topics": [],
+            "timeline_candidates": [],
+            "highlight_candidates": [],
+            "verification_needed": [],
+            "evidence_segment_ids": [1],
+        }
+
+    async def _final(self):
+        return {
+            "overview": "主播向观众问好。",
+            "timeline": [],
+            "topics": [],
+            "highlights": [],
+            "danmaku_peak_summaries": [],
+            "verification_needed": [],
+        }
+
+
 def test_old_final_summary_defaults_peak_summaries():
     summary = FinalSummary.model_validate(
         {
@@ -174,3 +211,38 @@ async def test_rejects_invented_evidence(settings, repository):
             ],
             peaks=[],
         )
+
+
+@pytest.mark.asyncio
+async def test_final_summary_retries_with_schema_feedback(
+    settings, repository
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=123458",
+        "123458",
+    )
+    llm = RepairingFinalLLM()
+    service = SummarizationService(settings, repository, llm)
+
+    summary, _ = await service.summarize(
+        job_id=job.id,
+        live_id=job.live_id,
+        title="测试直播",
+        member_name="成员",
+        segments=[
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=5000,
+                text="大家好。",
+            )
+        ],
+        peaks=[],
+    )
+
+    assert summary.overview == "主播向观众问好。"
+    assert llm.prompts[0]["response_model"] is ChunkSummary
+    assert llm.prompts[1]["response_model"] is FinalSummary
+    assert "previous_response_validation_error" in llm.prompts[2][
+        "user_prompt"
+    ]

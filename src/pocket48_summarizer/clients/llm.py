@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 import httpx
+from pydantic import BaseModel
 
 from ..config import Settings
 from ..errors import AppError, ConfigurationError, ExternalServiceError
@@ -52,6 +53,7 @@ class OpenAICompatibleClient:
         *,
         system_prompt: str,
         user_prompt: str,
+        response_model: type[BaseModel] | None = None,
     ) -> dict[str, Any]:
         endpoint = (
             self.settings.llm_base_url.rstrip("/") + "/chat/completions"
@@ -67,11 +69,27 @@ class OpenAICompatibleClient:
             "model": self.settings.llm_model,
             "stream": False,
             "temperature": self.settings.llm_temperature,
+            "max_tokens": self.settings.llm_max_output_tokens,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if self.settings.llm_response_format == "json_object":
+            body["response_format"] = {"type": "json_object"}
+        elif self.settings.llm_response_format == "json_schema":
+            if response_model is None:
+                raise ConfigurationError(
+                    "LLM_RESPONSE_FORMAT=json_schema 需要响应模型"
+                )
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_model.__name__,
+                    "strict": True,
+                    "schema": self._strict_json_schema(response_model),
+                },
+            }
         last_error: Exception | None = None
         for attempt in range(self.settings.external_retry_attempts):
             try:
@@ -112,16 +130,53 @@ class OpenAICompatibleClient:
         ) from last_error
 
     @staticmethod
+    def _strict_json_schema(
+        response_model: type[BaseModel],
+    ) -> dict[str, Any]:
+        schema = response_model.model_json_schema()
+
+        def require_defined_fields(node: Any) -> None:
+            if isinstance(node, dict):
+                properties = node.get("properties")
+                if node.get("type") == "object" and isinstance(
+                    properties, dict
+                ):
+                    node["additionalProperties"] = False
+                    node["required"] = list(properties)
+                for value in node.values():
+                    require_defined_fields(value)
+            elif isinstance(node, list):
+                for value in node:
+                    require_defined_fields(value)
+
+        require_defined_fields(schema)
+        return schema
+
+    @staticmethod
     def _parse_response(response: httpx.Response) -> dict[str, Any]:
         try:
             payload = response.json()
-            content = payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            content = choice["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise ExternalServiceError(
                 "llm_invalid_response",
                 "模型 API 返回了无法识别的数据",
                 True,
             ) from exc
+        if finish_reason == "length":
+            raise ExternalServiceError(
+                "llm_output_truncated",
+                "模型输出达到长度限制，请提高 LLM_MAX_OUTPUT_TOKENS",
+                True,
+            )
+        if finish_reason == "content_filter":
+            raise ExternalServiceError(
+                "llm_output_filtered",
+                "模型输出被内容安全策略拦截",
+                False,
+            )
         if isinstance(content, list):
             content = "".join(
                 str(part.get("text", ""))

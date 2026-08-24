@@ -10,8 +10,10 @@ class FakeLLM:
         self.responses = list(responses)
         self.prompts = []
 
-    async def chat_json(self, *, system_prompt, user_prompt):
-        self.prompts.append((system_prompt, user_prompt))
+    async def chat_json(
+        self, *, system_prompt, user_prompt, response_model=None
+    ):
+        self.prompts.append((system_prompt, user_prompt, response_model))
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -121,6 +123,7 @@ async def test_translation_resumes_from_persisted_segments(repository):
         3: "Third sentence.",
     }
     assert '"sequence": 1' not in llm.prompts[0][1]
+    assert llm.prompts[0][2].__name__ == "TranslationBatch"
 
 
 @pytest.mark.asyncio

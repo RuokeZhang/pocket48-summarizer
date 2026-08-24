@@ -71,7 +71,11 @@ class DanmakuPeak(BaseModel):
     summary: str = ""
 
 
-class SummaryCandidate(BaseModel):
+class StrictSummaryModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class SummaryCandidate(StrictSummaryModel):
     start_ms: int
     end_ms: int
     title: str
@@ -79,7 +83,7 @@ class SummaryCandidate(BaseModel):
     evidence_segment_ids: list[int] = Field(min_length=1)
 
 
-class ChunkSummary(BaseModel):
+class ChunkSummary(StrictSummaryModel):
     start_ms: int
     end_ms: int
     summary: str
@@ -90,7 +94,7 @@ class ChunkSummary(BaseModel):
     evidence_segment_ids: list[int] = Field(default_factory=list)
 
 
-class TimelineItem(BaseModel):
+class TimelineItem(StrictSummaryModel):
     start_ms: int
     end_ms: int
     title: str
@@ -98,13 +102,13 @@ class TimelineItem(BaseModel):
     evidence_segment_ids: list[int] = Field(min_length=1)
 
 
-class TopicItem(BaseModel):
+class TopicItem(StrictSummaryModel):
     name: str
     detail: str
     evidence_segment_ids: list[int] = Field(default_factory=list)
 
 
-class HighlightItem(BaseModel):
+class HighlightItem(StrictSummaryModel):
     start_ms: int
     end_ms: int
     title: str
@@ -113,14 +117,14 @@ class HighlightItem(BaseModel):
     danmaku_evidence: str | None = None
 
 
-class DanmakuPeakSummary(BaseModel):
+class DanmakuPeakSummary(StrictSummaryModel):
     start_ms: int = Field(ge=0)
     end_ms: int = Field(ge=0)
     summary: str = Field(min_length=1)
     evidence_segment_ids: list[int] = Field(default_factory=list)
 
 
-class FinalSummary(BaseModel):
+class FinalSummary(StrictSummaryModel):
     overview: str
     timeline: list[TimelineItem]
     topics: list[TopicItem]
