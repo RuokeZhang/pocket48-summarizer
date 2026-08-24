@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from pydantic import BaseModel
 
+from .auth import AuthContext
 from .errors import AppError
 from .media.clips import ClipState
 from .models import FinalSummary, JobRecord, JobStatus
@@ -16,6 +27,72 @@ router = APIRouter()
 
 class CreateJobRequest(BaseModel):
     url: str
+
+
+def format_china_datetime(value: str | None) -> str:
+    if not value:
+        return "时间未知"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return "时间未知"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(ZoneInfo("Asia/Shanghai")).strftime(
+        "%Y-%m-%d %H:%M"
+    )
+
+
+def require_auth(request: Request) -> AuthContext:
+    return request.app.state.auth.authenticate(request)
+
+
+def optional_auth(request: Request) -> AuthContext | None:
+    return request.app.state.auth.optional_context(request)
+
+
+def require_owned_job(
+    request: Request, job_id: str
+) -> tuple[AuthContext, JobRecord]:
+    context = require_auth(request)
+    repository = request.app.state.services.repository
+    job = (
+        repository.get_job(job_id)
+        if context.user.is_admin
+        else repository.get_job_for_user(job_id, context.user.id)
+    )
+    if job is None:
+        raise AppError("job_not_found", "任务不存在", False)
+    return context, job
+
+
+def require_readable_job(
+    request: Request, job_id: str
+) -> tuple[AuthContext | None, JobRecord]:
+    repository = request.app.state.services.repository
+    job = repository.get_job(job_id)
+    if job is None:
+        raise AppError("job_not_found", "任务不存在", False)
+    context = optional_auth(request)
+    if (
+        not request.app.state.settings.auth_required
+        or job.status == JobStatus.COMPLETED
+    ):
+        return context, job
+    if context and (
+        context.user.is_admin
+        or repository.get_job_for_user(job_id, context.user.id) is not None
+    ):
+        return context, job
+    raise AppError("job_not_found", "任务不存在", False)
+
+
+async def parse_form(request: Request) -> dict[str, str]:
+    body = await request.body()
+    if len(body) > 8192:
+        raise AppError("form_too_large", "表单内容过大", False)
+    values = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    return {key: items[-1] for key, items in values.items() if items}
 
 
 def public_job_payload(job: JobRecord) -> dict:
@@ -46,9 +123,7 @@ def public_job_payload(job: JobRecord) -> dict:
 def timeline_clip_context(
     request: Request, job_id: str, timeline_index: int
 ) -> tuple[JobRecord, object]:
-    job = request.app.state.services.repository.get_job(job_id)
-    if job is None:
-        raise AppError("job_not_found", "任务不存在", False)
+    _, job = require_readable_job(request, job_id)
     if not job.summary_json:
         raise AppError("summary_not_ready", "总结尚未生成", True)
     summary = FinalSummary.model_validate_json(job.summary_json)
@@ -59,6 +134,77 @@ def timeline_clip_context(
     return job, summary.timeline[timeline_index]
 
 
+@router.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request) -> Response:
+    if not request.app.state.settings.auth_required:
+        return RedirectResponse("/", status_code=303)
+    try:
+        require_auth(request)
+    except AppError:
+        pass
+    else:
+        return RedirectResponse("/", status_code=303)
+    return request.app.state.templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={"login_error": None},
+    )
+
+
+@router.post("/login")
+async def login(request: Request) -> Response:
+    if not request.app.state.settings.auth_required:
+        return RedirectResponse("/", status_code=303)
+    form = await parse_form(request)
+    try:
+        _, session_token, csrf_token = request.app.state.auth.login(
+            form.get("username", ""), form.get("password", "")
+        )
+    except AppError as exc:
+        return request.app.state.templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={"login_error": exc.message},
+            status_code=401,
+        )
+    settings = request.app.state.settings
+    max_age = settings.session_ttl_days * 24 * 60 * 60
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(
+        settings.session_cookie_name,
+        session_token,
+        max_age=max_age,
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        settings.csrf_cookie_name,
+        csrf_token,
+        max_age=max_age,
+        secure=settings.session_cookie_secure,
+        httponly=False,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@router.post("/logout")
+async def logout(request: Request) -> Response:
+    context = require_auth(request)
+    form = await parse_form(request)
+    request.app.state.auth.logout(
+        request, context, form.get("_csrf")
+    )
+    settings = request.app.state.settings
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(settings.session_cookie_name, path="/")
+    response.delete_cookie(settings.csrf_cookie_name, path="/")
+    return response
+
+
 def clip_payload(
     job_id: str, timeline_index: int, state: ClipState
 ) -> dict:
@@ -66,7 +212,6 @@ def clip_payload(
         "status": state.status,
         "error": state.error,
         "filename": state.output_path.name,
-        "saved_path": f"data/clips/{job_id}/{state.output_path.name}",
     }
     if state.status == "completed":
         payload["download_url"] = (
@@ -77,24 +222,39 @@ def clip_payload(
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> Response:
+    context = optional_auth(request)
     services = request.app.state.services
     settings = request.app.state.settings
+    missing_configuration = settings.missing_processing_configuration()
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
-            "jobs": services.repository.list_jobs(),
-            "missing_configuration": settings.missing_processing_configuration(),
+            "jobs": services.repository.list_visible_jobs(
+                context.user.id if context else None
+            ),
+            "missing_configuration": missing_configuration,
+            "processing_ready": not missing_configuration,
+            "current_user": context.user if context else None,
+            "csrf_token": context.csrf_token if context else "",
+            "daily_job_limit": settings.daily_job_limit,
+            "format_china_datetime": format_china_datetime,
         },
     )
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_page(request: Request, job_id: str) -> Response:
+    context, job = require_readable_job(request, job_id)
     repository = request.app.state.services.repository
-    job = repository.get_job(job_id)
-    if job is None:
-        raise AppError("job_not_found", "任务不存在", False)
+    can_manage_job = bool(
+        context
+        and (
+            context.user.is_admin
+            or repository.get_job_for_user(job_id, context.user.id)
+            is not None
+        )
+    )
     summary = (
         FinalSummary.model_validate_json(job.summary_json)
         if job.summary_json
@@ -125,27 +285,43 @@ async def job_page(request: Request, job_id: str) -> Response:
             "transcript": repository.get_transcript(job_id, limit=200),
             "danmaku": repository.get_danmaku(job_id, limit=200),
             "peaks": peaks,
-            "events": repository.list_events(job_id),
+            "events": (
+                repository.list_events(job_id) if can_manage_job else []
+            ),
             "format_clock": format_clock,
+            "format_china_datetime": format_china_datetime,
+            "current_user": context.user if context else None,
+            "csrf_token": context.csrf_token if context else "",
+            "can_manage_job": can_manage_job,
+            "can_create_clips": context is not None,
         },
     )
 
 
 @router.post("/api/jobs")
 async def create_job(request: Request, payload: CreateJobRequest) -> Response:
+    context = require_auth(request)
+    request.app.state.auth.require_csrf(request, context)
     settings = request.app.state.settings
-    settings.require_processing_configuration()
     normalized_url, live_id = parse_share_url(payload.url)
     services = request.app.state.services
-    job, created = services.repository.create_or_get_job(
-        normalized_url, live_id
-    )
+    existing = services.repository.get_job_by_live_id(live_id)
+    if existing is not None and existing.status == JobStatus.COMPLETED:
+        return JSONResponse(public_job_payload(existing), status_code=200)
+    settings.require_processing_configuration()
     if services.worker is None:
         raise AppError(
             "worker_unavailable",
             "处理 Worker 未启动，请检查配置后重启应用",
             True,
         )
+    job, created = services.repository.create_or_get_job(
+        normalized_url,
+        live_id,
+        context.user.id,
+        daily_limit=settings.daily_job_limit,
+        quota_start=request.app.state.auth.quota_day_start_utc(),
+    )
     services.worker.notify()
     return JSONResponse(
         public_job_payload(job), status_code=201 if created else 200
@@ -154,9 +330,7 @@ async def create_job(request: Request, payload: CreateJobRequest) -> Response:
 
 @router.get("/api/jobs/{job_id}/status")
 async def job_status(request: Request, job_id: str) -> dict:
-    job = request.app.state.services.repository.get_job(job_id)
-    if job is None:
-        raise AppError("job_not_found", "任务不存在", False)
+    _, job = require_readable_job(request, job_id)
     return public_job_payload(job)
 
 
@@ -167,8 +341,7 @@ async def transcript_page(
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
     repository = request.app.state.services.repository
-    if repository.get_job(job_id) is None:
-        raise AppError("job_not_found", "任务不存在", False)
+    require_readable_job(request, job_id)
     segments = repository.get_transcript(job_id, limit=limit, offset=offset)
     return {
         "segments": [segment.model_dump() for segment in segments],
@@ -186,8 +359,7 @@ async def danmaku_page(
 ) -> dict:
     limit = max(1, min(limit, 500))
     repository = request.app.state.services.repository
-    if repository.get_job(job_id) is None:
-        raise AppError("job_not_found", "任务不存在", False)
+    require_readable_job(request, job_id)
     entries = repository.get_danmaku(
         job_id, limit=limit, after_ms=max(-1, after_ms)
     )
@@ -200,6 +372,8 @@ async def danmaku_page(
 
 @router.post("/api/jobs/{job_id}/retry")
 async def retry_job(request: Request, job_id: str) -> dict:
+    context, _ = require_owned_job(request, job_id)
+    request.app.state.auth.require_csrf(request, context)
     services = request.app.state.services
     if services.worker is None:
         raise AppError(
@@ -207,7 +381,13 @@ async def retry_job(request: Request, job_id: str) -> dict:
             "处理 Worker 未启动，请检查配置后重启应用",
             True,
         )
-    job = services.repository.retry_job(job_id)
+    job = (
+        services.repository.retry_job(job_id)
+        if context.user.is_admin
+        else services.repository.retry_job_for_user(
+            job_id, context.user.id
+        )
+    )
     services.worker.notify()
     return public_job_payload(job)
 
@@ -216,6 +396,8 @@ async def retry_job(request: Request, job_id: str) -> dict:
 async def create_timeline_clip(
     request: Request, job_id: str, timeline_index: int
 ) -> Response:
+    context = require_auth(request)
+    request.app.state.auth.require_csrf(request, context)
     job, item = timeline_clip_context(request, job_id, timeline_index)
     clipper = request.app.state.services.clipper
     if clipper is None:
@@ -294,9 +476,7 @@ async def download_timeline_clip(
 @router.get("/jobs/{job_id}/transcript.srt")
 async def download_srt(request: Request, job_id: str) -> Response:
     repository = request.app.state.services.repository
-    job = repository.get_job(job_id)
-    if job is None:
-        raise AppError("job_not_found", "任务不存在", False)
+    _, job = require_readable_job(request, job_id)
     segments = repository.get_all_transcript(job_id)
     if not segments:
         raise AppError("transcript_not_ready", "字幕尚未生成", True)
@@ -313,9 +493,8 @@ async def download_srt(request: Request, job_id: str) -> Response:
 
 @router.get("/jobs/{job_id}/asr.json")
 async def download_asr_json(request: Request, job_id: str) -> Response:
-    job = request.app.state.services.repository.get_job(job_id)
-    if job is None:
-        raise AppError("job_not_found", "任务不存在", False)
+    require_auth(request)
+    _, job = require_readable_job(request, job_id)
     if not job.asr_raw_json:
         raise AppError("transcript_not_ready", "语音识别结果尚未生成", True)
     return Response(
@@ -331,9 +510,7 @@ async def download_asr_json(request: Request, job_id: str) -> Response:
 
 @router.get("/jobs/{job_id}/summary.md")
 async def download_summary(request: Request, job_id: str) -> Response:
-    job = request.app.state.services.repository.get_job(job_id)
-    if job is None:
-        raise AppError("job_not_found", "任务不存在", False)
+    _, job = require_readable_job(request, job_id)
     if not job.summary_markdown:
         raise AppError("summary_not_ready", "总结尚未生成", True)
     return Response(

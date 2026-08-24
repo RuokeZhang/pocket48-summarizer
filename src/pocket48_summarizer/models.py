@@ -164,3 +164,27 @@ class JobRecord(BaseModel):
     updated_at: str
     started_at: str | None = None
     completed_at: str | None = None
+
+
+class UserRecord(BaseModel):
+    id: str
+    username: str
+    username_normalized: str
+    password_hash: str
+    is_admin: bool
+    is_active: bool
+    failed_login_count: int
+    locked_until: str | None = None
+    created_at: str
+    last_login_at: str | None = None
+
+
+class SessionRecord(BaseModel):
+    id: str
+    user_id: str
+    token_hash: str
+    csrf_token_hash: str
+    created_at: str
+    expires_at: str
+    last_seen_at: str
+    user: UserRecord

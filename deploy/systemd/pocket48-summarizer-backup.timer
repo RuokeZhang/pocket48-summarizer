@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Pocket48 Summarizer database backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

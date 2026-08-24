@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.media.ffmpeg import FFmpegRunner
 
 
@@ -50,3 +53,16 @@ def test_clip_command_uses_exact_range_and_reencodes(settings):
     assert command[command.index("-c:a") + 1] == "aac"
     assert command.index("-ss") < command.index("-i")
     assert command[-1] == "/tmp/clip.mp4"
+
+
+def test_clip_command_rejects_overlong_range(settings):
+    settings.max_clip_minutes = 2
+    runner = FFmpegRunner(settings)
+
+    with pytest.raises(AppError, match="最长 2 分钟"):
+        runner.build_clip_command(
+            MANIFEST_URL,
+            Path("/tmp/clip.mp4"),
+            start_ms=0,
+            end_ms=120_001,
+        )

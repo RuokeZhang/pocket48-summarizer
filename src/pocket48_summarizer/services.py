@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .auth import AuthService
 from .clients.dashscope import DashScopeClient
 from .clients.llm import OpenAICompatibleClient
 from .clients.oss_store import OSSStore
@@ -19,6 +20,7 @@ from .worker import DurableWorker
 @dataclass(slots=True)
 class ApplicationServices:
     repository: JobRepository
+    auth: AuthService | None = None
     worker: DurableWorker | None = None
     clipper: VideoClipService | None = None
     pocket48: Pocket48Client | None = None

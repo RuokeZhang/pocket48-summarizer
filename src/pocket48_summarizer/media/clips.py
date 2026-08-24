@@ -31,7 +31,7 @@ class VideoClipService:
         self.logger = logging.getLogger(__name__)
         self._states: dict[tuple[str, int], ClipState] = {}
         self._tasks: dict[tuple[str, int], asyncio.Task[None]] = {}
-        self._capacity = asyncio.Semaphore(2)
+        self._capacity = asyncio.Semaphore(settings.clip_concurrency)
 
     def output_path(
         self,

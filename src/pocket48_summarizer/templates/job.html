@@ -11,7 +11,7 @@
       <div>
         <p class="eyebrow">{{ job.member_name or "等待解析主播" }}</p>
         <h1>{{ job.title or "正在解析回放" }}</h1>
-        <p class="job-meta">直播 ID：<code>{{ job.live_id }}</code>{% if job.replay_started_at %} · {{ job.replay_started_at[:19].replace("T", " ") }}{% endif %}</p>
+        <p class="job-meta">直播 ID：<code>{{ job.live_id }}</code>{% if job.replay_started_at %} · 中国时间 {{ format_china_datetime(job.replay_started_at) }}{% endif %}</p>
       </div>
       <span id="job-status" class="status status-{{ job.status }}">{{ job.status }}</span>
     </div>
@@ -26,7 +26,7 @@
     <section class="notice error">
       <strong>{{ job.error_code }}</strong>
       <p>{{ job.error_message }}</p>
-      {% if job.error_retryable %}
+      {% if job.error_retryable and can_manage_job %}
         <button id="retry-job" type="button">重试任务</button>
       {% endif %}
     </section>
@@ -42,9 +42,29 @@
   {% if job.status == "completed" %}
     <nav class="download-row">
       <a href="/jobs/{{ job.id }}/transcript.srt">下载 SRT</a>
-      <a href="/jobs/{{ job.id }}/asr.json">下载 ASR JSON</a>
+      {% if current_user %}<a href="/jobs/{{ job.id }}/asr.json">下载 ASR JSON</a>{% endif %}
       <a href="/jobs/{{ job.id }}/summary.md">下载 Markdown</a>
     </nav>
+  {% endif %}
+
+  {% if job.status == "completed" and job.media_url %}
+    <section class="panel replay-player-panel" id="replay-player-panel">
+      <p class="eyebrow">Replay</p>
+      <h2>直播回放</h2>
+      <video
+        id="replay-player"
+        controls
+        playsinline
+        preload="metadata"
+        src="{{ job.media_url }}"
+      ></video>
+      <p id="replay-player-message" class="muted">
+        点击时间线、高光或字幕中的时间，即可跳转到对应位置。
+      </p>
+      <noscript>
+        <p><a href="{{ job.media_url }}">打开原始 HLS 回放</a></p>
+      </noscript>
+    </section>
   {% endif %}
 
   {% if summary %}
@@ -60,14 +80,21 @@
       <ol class="timeline">
         {% for item in summary.timeline %}
           <li data-clip-index="{{ loop.index0 }}">
-            <time>{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</time>
+            <button
+              class="timestamp-link"
+              type="button"
+              data-seek-ms="{{ item.start_ms }}"
+              title="跳转到 {{ format_clock(item.start_ms) }}"
+            >{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</button>
             <div class="timeline-title-row">
               <strong>{{ item.title }}</strong>
-              <button
-                class="clip-button"
-                type="button"
-                data-clip-index="{{ loop.index0 }}"
-              >剪视频</button>
+              {% if can_create_clips %}
+                <button
+                  class="clip-button"
+                  type="button"
+                  data-clip-index="{{ loop.index0 }}"
+                >剪视频</button>
+              {% endif %}
             </div>
             <p>{{ item.detail }}</p>
             <p class="clip-status" aria-live="polite" hidden></p>
@@ -82,7 +109,12 @@
       <div class="highlight-grid">
         {% for item in summary.highlights %}
           <article>
-            <time>{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</time>
+            <button
+              class="timestamp-link"
+              type="button"
+              data-seek-ms="{{ item.start_ms }}"
+              title="跳转到 {{ format_clock(item.start_ms) }}"
+            >{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</button>
             <h3>{{ item.title }}</h3>
             <p>{{ item.detail }}</p>
             {% if item.danmaku_evidence %}<small>弹幕参考：{{ item.danmaku_evidence }}</small>{% endif %}
@@ -140,7 +172,12 @@
       >
         {% for segment in transcript %}
           <article id="segment-{{ segment.sequence }}">
-            <time>{{ format_clock(segment.start_ms) }}</time>
+            <button
+              class="timestamp-link"
+              type="button"
+              data-seek-ms="{{ segment.start_ms }}"
+              title="跳转到 {{ format_clock(segment.start_ms) }}"
+            >{{ format_clock(segment.start_ms) }}</button>
             <p>{{ segment.text }}</p>
           </article>
         {% else %}
@@ -184,16 +221,18 @@
     </div>
   </section>
 
-  <section class="panel">
-    <p class="eyebrow">Job events</p>
-    <h2>处理记录</h2>
-    <ol class="event-list">
-      {% for event in events %}
-        <li class="event-{{ event.level }}">
-          <time>{{ event.created_at[:19].replace("T", " ") }}</time>
-          <span>{{ event.message }}</span>
-        </li>
-      {% endfor %}
-    </ol>
-  </section>
+  {% if can_manage_job %}
+    <section class="panel">
+      <p class="eyebrow">Job events</p>
+      <h2>处理记录</h2>
+      <ol class="event-list">
+        {% for event in events %}
+          <li class="event-{{ event.level }}">
+            <time>{{ event.created_at[:19].replace("T", " ") }}</time>
+            <span>{{ event.message }}</span>
+          </li>
+        {% endfor %}
+      </ol>
+    </section>
+  {% endif %}
 {% endblock %}

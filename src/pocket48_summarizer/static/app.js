@@ -1,3 +1,19 @@
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+function apiFetch(url, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const headers = new Headers(options.headers || {});
+  if (!["GET", "HEAD", "OPTIONS"].includes(method) && csrfToken) {
+    headers.set("X-CSRF-Token", csrfToken);
+  }
+  return fetch(url, { ...options, headers }).then((response) => {
+    if (response.status === 401) {
+      window.location.assign("/login");
+    }
+    return response;
+  });
+}
+
 const createForm = document.querySelector("#create-job-form");
 
 if (createForm) {
@@ -9,7 +25,7 @@ if (createForm) {
     button.disabled = true;
     error.textContent = "";
     try {
-      const response = await fetch("/api/jobs", {
+      const response = await apiFetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url })
@@ -34,7 +50,7 @@ if (jobHero) {
   const poll = async () => {
     if (!active) return;
     try {
-      const response = await fetch(`/api/jobs/${encodeURIComponent(jobID)}/status`);
+      const response = await apiFetch(`/api/jobs/${encodeURIComponent(jobID)}/status`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error?.message || "读取任务状态失败");
       const status = document.querySelector("#job-status");
@@ -62,6 +78,47 @@ if (jobHero) {
   window.setTimeout(poll, 1200);
 }
 
+const replayPlayer = document.querySelector("#replay-player");
+const replayPlayerPanel = document.querySelector("#replay-player-panel");
+const replayPlayerMessage = document.querySelector("#replay-player-message");
+let pendingSeekSeconds = null;
+
+const applyPendingSeek = () => {
+  if (!replayPlayer || pendingSeekSeconds === null) return;
+  const duration = Number.isFinite(replayPlayer.duration) ? replayPlayer.duration : null;
+  replayPlayer.currentTime = duration === null
+    ? pendingSeekSeconds
+    : Math.min(pendingSeekSeconds, Math.max(0, duration - 0.1));
+  pendingSeekSeconds = null;
+  void replayPlayer.play().catch(() => {
+    if (replayPlayerMessage) {
+      replayPlayerMessage.textContent = "已跳转到目标时间，点击播放键开始播放。";
+    }
+  });
+};
+
+if (replayPlayer) {
+  replayPlayer.addEventListener("loadedmetadata", applyPendingSeek);
+  replayPlayer.addEventListener("error", () => {
+    if (replayPlayerMessage) {
+      replayPlayerMessage.textContent =
+        "当前浏览器无法直接播放此 HLS 回放；可尝试 iPhone、iPad 或 Safari。";
+    }
+  });
+}
+
+document.addEventListener("click", (event) => {
+  const timestamp = event.target.closest("[data-seek-ms]");
+  if (!timestamp || !replayPlayer) return;
+  pendingSeekSeconds = Math.max(0, Number(timestamp.dataset.seekMs || 0) / 1000);
+  replayPlayerPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (replayPlayer.readyState >= 1) {
+    applyPendingSeek();
+  } else {
+    replayPlayer.load();
+  }
+});
+
 const clipRows = document.querySelectorAll(".timeline > li[data-clip-index]");
 
 const renderClipState = (row, payload) => {
@@ -80,7 +137,7 @@ const renderClipState = (row, payload) => {
     button.disabled = true;
     button.textContent = "已剪好";
     status.hidden = false;
-    status.append(document.createTextNode(`已保存到 ${payload.saved_path} · `));
+    status.append(document.createTextNode(`${payload.filename} 已生成 · `));
     const link = document.createElement("a");
     link.href = payload.download_url;
     link.textContent = "下载 MP4";
@@ -103,7 +160,7 @@ const pollClip = async (row) => {
   if (!jobHero) return;
   const clipIndex = row.dataset.clipIndex;
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/clips/${encodeURIComponent(clipIndex)}`
     );
     const payload = await response.json();
@@ -129,7 +186,7 @@ for (const row of clipRows) {
     button.disabled = true;
     button.textContent = "正在启动…";
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/clips/${encodeURIComponent(row.dataset.clipIndex)}`,
         { method: "POST" }
       );
@@ -154,7 +211,7 @@ if (retryButton && jobHero) {
   retryButton.addEventListener("click", async () => {
     retryButton.disabled = true;
     try {
-      const response = await fetch(`/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/retry`, {
+      const response = await apiFetch(`/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/retry`, {
         method: "POST"
       });
       const payload = await response.json();
@@ -202,7 +259,7 @@ const loadAllTranscript = async () => {
   transcriptCount.textContent = `（已显示 ${offset} 条，正在加载全部…）`;
   try {
     while (hasMore) {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/transcript?offset=${offset}&limit=500`
       );
       const payload = await response.json();
@@ -211,7 +268,11 @@ const loadAllTranscript = async () => {
       for (const segment of payload.segments) {
         const article = document.createElement("article");
         article.id = `segment-${segment.sequence}`;
-        const time = document.createElement("time");
+        const time = document.createElement("button");
+        time.type = "button";
+        time.className = "timestamp-link";
+        time.dataset.seekMs = String(segment.start_ms);
+        time.title = `跳转到 ${formatClock(segment.start_ms)}`;
         time.textContent = formatClock(segment.start_ms);
         const text = document.createElement("p");
         text.textContent = segment.text;
@@ -298,7 +359,7 @@ const loadAllDanmaku = async () => {
   danmakuCount.textContent = `（已显示 ${count} 条，正在加载全部…）`;
   try {
     while (hasMore) {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/danmaku?after_ms=${afterMs}&limit=500`
       );
       const payload = await response.json();

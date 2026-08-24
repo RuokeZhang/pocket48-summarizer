@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pocket48-summarizer"
 version = "0.1.0"
-description = "Local web application for transcribing and summarizing public Pocket48 replays."
+description = "Web application for transcribing and summarizing public Pocket48 replays."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -28,6 +28,7 @@ test = [
 
 [project.scripts]
 pocket48-summarizer = "pocket48_summarizer.cli:main"
+pocket48-users = "pocket48_summarizer.manage:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     database_name: str = "pocket48.sqlite3"
     ffmpeg_path: str = "ffmpeg"
+    auth_required: bool = False
+    session_cookie_secure: bool = False
+    session_ttl_days: int = Field(default=30, ge=1, le=365)
+    daily_job_limit: int = Field(default=3, ge=1, le=100)
+    session_cookie_name: str = "p48_session"
+    csrf_cookie_name: str = "p48_csrf"
 
     pocket_api_base_url: str = "https://pocketapi.48.cn"
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
@@ -37,12 +43,15 @@ class Settings(BaseSettings):
     max_hls_segments: int = Field(default=20_000, ge=1)
     hls_concurrent_fragments: int = Field(default=8, ge=1, le=32)
     max_replay_hours: float = Field(default=12.0, gt=0, le=12)
+    max_clip_minutes: float = Field(default=10.0, gt=0, le=30)
+    clip_concurrency: int = Field(default=2, ge=1, le=4)
     max_audio_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1024)
     failed_audio_retention_hours: int = Field(default=24, ge=1, le=168)
 
     aliyun_access_key_id: SecretStr | None = None
     aliyun_access_key_secret: SecretStr | None = None
     aliyun_oss_endpoint: str | None = None
+    aliyun_oss_public_endpoint: str | None = None
     aliyun_oss_bucket: str | None = None
     aliyun_oss_prefix: str = "pocket48-summarizer"
     aliyun_oss_signed_url_seconds: int = Field(default=7200, ge=300, le=86_400)
@@ -68,6 +77,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bind_address(self) -> "Settings":
+        if self.auth_required and not self.session_cookie_secure:
+            if self.app_host not in {"127.0.0.1", "localhost", "::1"}:
+                raise ValueError(
+                    "SESSION_COOKIE_SECURE must be true when authentication "
+                    "is enabled outside localhost"
+                )
         if self.allow_remote_bind:
             return self
         if self.app_host == "localhost":

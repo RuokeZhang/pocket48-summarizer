@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from pocket48_summarizer.app import create_app
+from pocket48_summarizer.auth import AuthRepository, hash_password
 from pocket48_summarizer.media.clips import ClipState
 from pocket48_summarizer.models import (
     DanmakuEntry,
@@ -9,6 +10,7 @@ from pocket48_summarizer.models import (
     FinalSummary,
     TimelineItem,
 )
+from pocket48_summarizer.routes import format_china_datetime
 from pocket48_summarizer.services import ApplicationServices
 
 
@@ -40,6 +42,13 @@ class DummyClipper:
 
     async def close(self):
         return None
+
+
+def test_formats_replay_time_in_china_timezone():
+    assert (
+        format_china_datetime("2026-08-22T10:57:06+00:00")
+        == "2026-08-22 18:57"
+    )
 
 
 def test_create_and_view_job(settings, repository):
@@ -204,3 +213,273 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert clipper.started_with["end_ms"] == 125_750
     assert download.status_code == 200
     assert download.content == b"fake mp4"
+
+
+def auth_app(
+    settings,
+    repository,
+    *,
+    daily_limit=3,
+    clipper=None,
+):
+    auth_settings = settings.model_copy(
+        update={
+            "auth_required": True,
+            "session_cookie_secure": False,
+            "daily_job_limit": daily_limit,
+        }
+    )
+    auth_repository = AuthRepository(repository.database)
+    auth_repository.create_user(
+        "alice",
+        "alice",
+        hash_password("alice has a secure password"),
+        is_admin=True,
+    )
+    auth_repository.create_user(
+        "bob",
+        "bob",
+        hash_password("bob also has secure password"),
+        is_admin=False,
+    )
+    app = create_app(
+        auth_settings,
+        ApplicationServices(
+            repository=repository,
+            worker=DummyWorker(),
+            clipper=clipper,
+        ),
+    )
+    return app
+
+
+def login(client: TestClient, username: str, password: str):
+    return client.post(
+        "/login",
+        content=f"username={username}&password={password}",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+
+
+def csrf_headers(client: TestClient) -> dict[str, str]:
+    return {"X-CSRF-Token": client.cookies.get("p48_csrf")}
+
+
+def test_authentication_and_csrf(settings, repository):
+    app = auth_app(settings, repository)
+    with TestClient(app) as client:
+        anonymous = client.get("/", follow_redirects=False)
+        assert anonymous.status_code == 200
+        assert 'id="create-job-form"' not in anonymous.text
+        assert "最近公开结果" in anonymous.text
+
+        protected = client.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800000"
+                )
+            },
+        )
+        assert protected.status_code == 401
+
+        response = login(client, "alice", "alice has a secure password")
+        assert response.status_code == 303
+        assert client.get("/").status_code == 200
+
+        without_csrf = client.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800001"
+                )
+            },
+        )
+        assert without_csrf.status_code == 403
+
+        created = client.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800001"
+                )
+            },
+            headers=csrf_headers(client),
+        )
+        assert created.status_code == 201
+
+
+def test_completed_result_is_public_but_raw_asr_requires_login(
+    settings, repository
+):
+    app = auth_app(settings, repository)
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        created = alice.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800010"
+                )
+            },
+            headers=csrf_headers(alice),
+        )
+        job_id = created.json()["id"]
+    claimed = repository.claim_next_job("test-worker", 120)
+    assert claimed and claimed.id == job_id
+    repository.save_asr_raw(job_id, '{"transcripts":[]}')
+    public_summary = FinalSummary(
+        overview="公开结果",
+        timeline=[],
+        topics=[],
+        highlights=[],
+    )
+    repository.save_summary(
+        job_id, public_summary.model_dump_json(), "# 公开结果"
+    )
+    with repository.database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE jobs SET replay_started_at = ?
+            WHERE id = ?
+            """,
+            ("2026-08-22T10:57:06+00:00", job_id),
+        )
+    repository.mark_completed(job_id)
+
+    with TestClient(app) as anonymous:
+        index = anonymous.get("/")
+        page = anonymous.get(f"/jobs/{job_id}")
+        summary = anonymous.get(f"/jobs/{job_id}/summary.md")
+        raw_asr = anonymous.get(
+            f"/jobs/{job_id}/asr.json", follow_redirects=False
+        )
+
+    assert "800010" in index.text
+    assert "直播时间 · 2026-08-22 18:57" in index.text
+    assert page.status_code == 200
+    assert summary.status_code == 200
+    assert raw_asr.status_code == 303
+    assert raw_asr.headers["location"] == "/login"
+
+
+def test_user_cannot_read_another_users_job(settings, repository):
+    app = auth_app(settings, repository)
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        created = alice.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800002"
+                )
+            },
+            headers=csrf_headers(alice),
+        )
+        job_id = created.json()["id"]
+
+    with TestClient(app) as bob:
+        login(bob, "bob", "bob also has secure password")
+        assert bob.get(f"/api/jobs/{job_id}/status").status_code == 404
+        assert bob.get(f"/jobs/{job_id}/summary.md").status_code == 404
+
+
+def test_daily_quota_is_enforced(settings, repository):
+    app = auth_app(settings, repository, daily_limit=1)
+    with TestClient(app) as client:
+        login(client, "alice", "alice has a secure password")
+        first = client.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800003"
+                )
+            },
+            headers=csrf_headers(client),
+        )
+        second = client.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800004"
+                )
+            },
+            headers=csrf_headers(client),
+        )
+        assert first.status_code == 201
+        assert second.status_code == 429
+        assert second.json()["error"]["code"] == "daily_quota_exceeded"
+
+
+def test_any_invited_user_can_clip_a_public_result(
+    settings, repository, tmp_path
+):
+    output_path = tmp_path / "public-timeline.mp4"
+    output_path.write_bytes(b"public clip")
+    clipper = DummyClipper(output_path)
+    app = auth_app(settings, repository, clipper=clipper)
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        created = alice.post(
+            "/api/jobs",
+            json={
+                "url": (
+                    "https://h5.48.cn/2019appshare/memberLiveShare/"
+                    "index.html?id=800020"
+                )
+            },
+            headers=csrf_headers(alice),
+        )
+        job_id = created.json()["id"]
+
+    repository.set_media_details(
+        job_id,
+        "https://idol-vod.48.cn/path/public-replay.m3u8",
+        600_000,
+    )
+    summary = FinalSummary(
+        overview="公开测试",
+        timeline=[
+            TimelineItem(
+                start_ms=30_000,
+                end_ms=60_000,
+                title="公开时间线",
+                detail="任何受邀账号都可剪辑",
+                evidence_segment_ids=[1],
+            )
+        ],
+        topics=[],
+        highlights=[],
+    )
+    repository.save_summary(job_id, summary.model_dump_json(), "# 公开测试")
+    claimed = repository.claim_next_job("test-worker", 120)
+    assert claimed and claimed.id == job_id
+    repository.mark_completed(job_id)
+
+    with TestClient(app) as bob:
+        login(bob, "bob", "bob also has secure password")
+        response = bob.post(
+            f"/api/jobs/{job_id}/clips/0",
+            headers=csrf_headers(bob),
+        )
+
+    with TestClient(app) as anonymous:
+        page = anonymous.get(f"/jobs/{job_id}")
+        download = anonymous.get(f"/jobs/{job_id}/clips/0/download")
+
+    assert response.status_code == 200
+    assert clipper.started_with["job_id"] == job_id
+    assert 'class="clip-button"' not in page.text
+    assert 'id="replay-player"' in page.text
+    assert 'data-seek-ms="30000"' in page.text
+    assert download.status_code == 200
+    assert download.content == b"public clip"

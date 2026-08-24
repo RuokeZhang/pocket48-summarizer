@@ -28,6 +28,12 @@ class OSSStore:
             settings.aliyun_oss_endpoint,
             settings.aliyun_oss_bucket,
         )
+        self.signing_bucket = oss2.Bucket(
+            auth,
+            settings.aliyun_oss_public_endpoint
+            or settings.aliyun_oss_endpoint,
+            settings.aliyun_oss_bucket,
+        )
 
     def object_key(self, job_id: str) -> str:
         prefix = self.settings.aliyun_oss_prefix.strip("/")
@@ -48,7 +54,7 @@ class OSSStore:
     async def signed_get_url(self, key: str) -> str:
         try:
             return await asyncio.to_thread(
-                self.bucket.sign_url,
+                self.signing_bucket.sign_url,
                 "GET",
                 key,
                 self.settings.aliyun_oss_signed_url_seconds,

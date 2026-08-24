@@ -100,6 +100,7 @@ class FFmpegRunner:
         return [
             self.require_ytdlp_executable(),
             "--no-config",
+            "--no-cache-dir",
             "--no-playlist",
             "--quiet",
             "--no-warnings",
@@ -165,6 +166,18 @@ class FFmpegRunner:
             raise AppError(
                 "invalid_clip_range",
                 "视频剪辑时间范围无效",
+                False,
+            )
+        max_duration_ms = round(
+            self.settings.max_clip_minutes * 60 * 1000
+        )
+        if end_ms - start_ms > max_duration_ms:
+            raise AppError(
+                "clip_too_long",
+                (
+                    "单个视频片段最长 "
+                    f"{self.settings.max_clip_minutes:g} 分钟"
+                ),
                 False,
             )
         return [

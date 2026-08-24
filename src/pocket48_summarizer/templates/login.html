@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}登录 · 口袋48直播总结{% endblock %}
+{% block content %}
+  <section class="login-shell">
+    <div class="panel login-panel">
+      <p class="eyebrow">Invite only</p>
+      <h1>登录口袋48直播总结</h1>
+      <p class="muted">当前为邀请制试用，请使用管理员创建的账号。</p>
+      {% if login_error %}
+        <div class="notice error"><p>{{ login_error }}</p></div>
+      {% endif %}
+      <form action="/login" method="post" class="login-form">
+        <label for="username">用户名</label>
+        <input id="username" name="username" required autocomplete="username" maxlength="32">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" required autocomplete="current-password" maxlength="128">
+        <button type="submit">登录</button>
+      </form>
+    </div>
+  </section>
+{% endblock %}

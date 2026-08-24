@@ -4,8 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}口袋48直播总结{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260824-2">
-    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260824-2"></script>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260824-3">
+    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260824-3"></script>
   </head>
   <body>
     <header class="site-header">
@@ -16,7 +17,19 @@
           <small>公开回放字幕与总结</small>
         </span>
       </a>
-      <span class="local-pill">仅限 localhost</span>
+      {% if current_user %}
+        <div class="account-actions">
+          <span class="local-pill">{{ current_user.username }}</span>
+          {% if csrf_token %}
+            <form action="/logout" method="post">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button class="logout-button" type="submit">退出</button>
+            </form>
+          {% endif %}
+        </div>
+      {% else %}
+        <a class="login-link" href="/login">登录后提交或剪辑</a>
+      {% endif %}
     </header>
     <main class="page-shell">
       {% block content %}{% endblock %}

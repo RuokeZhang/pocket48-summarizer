@@ -34,17 +34,59 @@ class JobRepository:
         return JobRecord.model_validate(dict(row))
 
     def create_or_get_job(
-        self, source_url: str, live_id: str
+        self,
+        source_url: str,
+        live_id: str,
+        user_id: str = "local",
+        *,
+        daily_limit: int | None = None,
+        quota_start: str | None = None,
     ) -> tuple[JobRecord, bool]:
         now = utcnow()
         job_id = str(uuid.uuid4())
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                "SELECT * FROM jobs WHERE live_id = ?", (live_id,)
+                """
+                SELECT j.* FROM jobs j
+                JOIN job_access a ON a.job_id = j.id
+                WHERE j.live_id = ? AND a.user_id = ?
+                """,
+                (live_id, user_id),
             ).fetchone()
             if existing is not None:
                 return self._job(existing), False  # type: ignore[return-value]
+            shared = connection.execute(
+                "SELECT * FROM jobs WHERE live_id = ?", (live_id,)
+            ).fetchone()
+            if (
+                shared is not None
+                and shared["status"] == JobStatus.COMPLETED
+            ):
+                return self._job(shared), False  # type: ignore[return-value]
+            if daily_limit is not None and quota_start is not None:
+                used = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count FROM job_access
+                    WHERE user_id = ? AND created_at >= ?
+                    """,
+                    (user_id, quota_start),
+                ).fetchone()["count"]
+                if int(used) >= daily_limit:
+                    raise AppError(
+                        "daily_quota_exceeded",
+                        f"今日任务额度已用完（每天 {daily_limit} 个）",
+                        False,
+                    )
+            if shared is not None:
+                connection.execute(
+                    """
+                    INSERT INTO job_access (job_id, user_id, created_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (shared["id"], user_id, now),
+                )
+                return self._job(shared), False  # type: ignore[return-value]
             connection.execute(
                 """
                 INSERT INTO jobs (
@@ -66,6 +108,13 @@ class JobRepository:
             self._event(
                 connection, job_id, JobStage.QUEUED, "info", "任务已创建", now
             )
+            connection.execute(
+                """
+                INSERT INTO job_access (job_id, user_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (job_id, user_id, now),
+            )
             row = connection.execute(
                 "SELECT * FROM jobs WHERE id = ?", (job_id,)
             ).fetchone()
@@ -79,6 +128,29 @@ class JobRepository:
                 ).fetchone()
             )
 
+    def get_job_by_live_id(self, live_id: str) -> JobRecord | None:
+        with self.database.connect() as connection:
+            return self._job(
+                connection.execute(
+                    "SELECT * FROM jobs WHERE live_id = ?", (live_id,)
+                ).fetchone()
+            )
+
+    def get_job_for_user(
+        self, job_id: str, user_id: str
+    ) -> JobRecord | None:
+        with self.database.connect() as connection:
+            return self._job(
+                connection.execute(
+                    """
+                    SELECT j.* FROM jobs j
+                    JOIN job_access a ON a.job_id = j.id
+                    WHERE j.id = ? AND a.user_id = ?
+                    """,
+                    (job_id, user_id),
+                ).fetchone()
+            )
+
     def list_jobs(self, limit: int = 50) -> list[JobRecord]:
         with self.database.connect() as connection:
             rows = connection.execute(
@@ -88,6 +160,58 @@ class JobRepository:
             return [
                 job for row in rows if (job := self._job(row)) is not None
             ]
+
+    def list_jobs_for_user(
+        self, user_id: str, limit: int = 50
+    ) -> list[JobRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT j.* FROM jobs j
+                JOIN job_access a ON a.job_id = j.id
+                WHERE a.user_id = ?
+                ORDER BY a.created_at DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+            return [
+                job for row in rows if (job := self._job(row)) is not None
+            ]
+
+    def list_visible_jobs(
+        self, user_id: str | None, limit: int = 50
+    ) -> list[JobRecord]:
+        with self.database.connect() as connection:
+            if user_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE status = ?
+                    ORDER BY COALESCE(replay_started_at, created_at) DESC
+                    LIMIT ?
+                    """,
+                    (JobStatus.COMPLETED, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT DISTINCT j.* FROM jobs j
+                    LEFT JOIN job_access a
+                      ON a.job_id = j.id AND a.user_id = ?
+                    WHERE j.status = ? OR a.user_id IS NOT NULL
+                    ORDER BY COALESCE(j.replay_started_at, j.created_at) DESC
+                    LIMIT ?
+                    """,
+                    (user_id, JobStatus.COMPLETED, limit),
+                ).fetchall()
+            return [
+                job for row in rows if (job := self._job(row)) is not None
+            ]
+
+    def require_job_access(self, job_id: str, user_id: str) -> None:
+        if self.get_job_for_user(job_id, user_id) is None:
+            raise AppError("job_not_found", "任务不存在", False)
 
     def recover_expired_jobs(self) -> int:
         now = utcnow()
@@ -751,6 +875,10 @@ class JobRepository:
                 "SELECT * FROM jobs WHERE id = ?", (job_id,)
             ).fetchone()
             return self._job(updated)  # type: ignore[return-value]
+
+    def retry_job_for_user(self, job_id: str, user_id: str) -> JobRecord:
+        self.require_job_access(job_id, user_id)
+        return self.retry_job(job_id)
 
     def list_events(self, job_id: str, limit: int = 100) -> list[dict]:
         with self.database.connect() as connection:

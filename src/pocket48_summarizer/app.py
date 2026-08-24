@@ -4,12 +4,13 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import Settings
+from .auth import AuthRepository, AuthService
 from .db import Database
 from .errors import AppError
 from .media.clips import VideoClipService
@@ -32,6 +33,8 @@ def create_app(
             services = build_services(settings, repository)
         else:
             services = ApplicationServices(repository=repository)
+    if services.auth is None:
+        services.auth = AuthService(settings, AuthRepository(database))
     if services.clipper is None:
         services.clipper = VideoClipService(settings)
 
@@ -56,6 +59,7 @@ def create_app(
     ).__path__[0]
     app.state.settings = settings
     app.state.services = services
+    app.state.auth = services.auth
     app.state.templates = Jinja2Templates(directory=f"{package_dir}/templates")
     app.mount(
         "/static",
@@ -67,6 +71,12 @@ def create_app(
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError):
         status = 404 if exc.code == "job_not_found" else 400
+        if exc.code == "authentication_required":
+            status = 401
+        if exc.code == "csrf_failed":
+            status = 403
+        if exc.code == "daily_quota_exceeded":
+            status = 429
         if exc.retryable and exc.code.endswith("_not_ready"):
             status = 409
         if exc.code in {"configuration_error", "worker_unavailable"}:
@@ -76,6 +86,8 @@ def create_app(
                 {"error": {"code": exc.code, "message": exc.message}},
                 status_code=status,
             )
+        if exc.code == "authentication_required":
+            return RedirectResponse("/login", status_code=303)
         return app.state.templates.TemplateResponse(
             request=request,
             name="error.html",

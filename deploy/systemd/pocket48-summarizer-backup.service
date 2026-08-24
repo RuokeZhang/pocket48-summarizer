@@ -1,0 +1,17 @@
+[Unit]
+Description=Back up Pocket48 Summarizer SQLite database
+After=pocket48-summarizer.service
+
+[Service]
+Type=oneshot
+User=pocket48
+Group=pocket48
+ExecStart=/opt/pocket48-summarizer/scripts/backup-sqlite.sh
+UMask=0077
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pocket48-summarizer /var/backups/pocket48-summarizer
