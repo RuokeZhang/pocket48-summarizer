@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     session_ttl_days: int = Field(default=30, ge=1, le=365)
     daily_job_limit: int = Field(default=3, ge=1, le=100)
+    unlimited_job_usernames: str = "ruoke"
     session_cookie_name: str = "p48_session"
     csrf_cookie_name: str = "p48_csrf"
 
@@ -123,6 +124,14 @@ class Settings(BaseSettings):
         if not hosts:
             raise ConfigurationError("TRUSTED_HOSTS 至少需要一个主机名")
         return hosts
+
+    @property
+    def unlimited_job_username_set(self) -> set[str]:
+        return {
+            username.strip().casefold()
+            for username in self.unlimited_job_usernames.split(",")
+            if username.strip()
+        }
 
     @property
     def temp_dir(self) -> Path:

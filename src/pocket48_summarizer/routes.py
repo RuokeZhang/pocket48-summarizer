@@ -239,6 +239,11 @@ async def index(request: Request) -> Response:
             "current_user": context.user if context else None,
             "csrf_token": context.csrf_token if context else "",
             "daily_job_limit": settings.daily_job_limit,
+            "has_unlimited_jobs": (
+                context is not None
+                and context.user.username_normalized
+                in settings.unlimited_job_username_set
+            ),
             "format_china_datetime": format_china_datetime,
         },
     )
@@ -318,7 +323,12 @@ async def create_job(request: Request, payload: CreateJobRequest) -> Response:
         normalized_url,
         live_id,
         context.user.id,
-        daily_limit=settings.daily_job_limit,
+        daily_limit=(
+            None
+            if context.user.username_normalized
+            in settings.unlimited_job_username_set
+            else settings.daily_job_limit
+        ),
         quota_start=request.app.state.auth.quota_day_start_utc(),
     )
     if services.worker:

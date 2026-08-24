@@ -459,6 +459,32 @@ def test_daily_quota_is_enforced(settings, repository):
         assert second.json()["error"]["code"] == "daily_quota_exceeded"
 
 
+def test_configured_user_has_unlimited_job_quota(settings, repository):
+    unlimited_settings = settings.model_copy(
+        update={"unlimited_job_usernames": "alice"}
+    )
+    app = auth_app(unlimited_settings, repository, daily_limit=1)
+    with TestClient(app) as client:
+        login(client, "alice", "alice has a secure password")
+        page = client.get("/")
+        responses = [
+            client.post(
+                "/api/jobs",
+                json={
+                    "url": (
+                        "https://h5.48.cn/2019appshare/memberLiveShare/"
+                        f"index.html?id={live_id}"
+                    )
+                },
+                headers=csrf_headers(client),
+            )
+            for live_id in ("800005", "800006")
+        ]
+
+    assert "当前额度：无限任务" in page.text
+    assert [response.status_code for response in responses] == [201, 201]
+
+
 def test_any_invited_user_can_clip_a_public_result(
     settings, repository, tmp_path
 ):

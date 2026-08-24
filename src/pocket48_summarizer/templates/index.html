@@ -7,7 +7,11 @@
       <h1>从直播回放到字幕、总结与精彩片段</h1>
       <p class="lede">粘贴公开回放链接，自动整理完整字幕与弹幕，生成 AI 时间线和高光；支持在线播放、按时间跳转，并一键剪辑视频。</p>
       {% if current_user and current_user.id != "local" %}
-        <p class="quota-copy">当前额度：每天 {{ daily_job_limit }} 个任务，单个回放最长由站点配置限制。</p>
+        {% if has_unlimited_jobs %}
+          <p class="quota-copy">当前额度：无限任务，单个回放最长由站点配置限制。</p>
+        {% else %}
+          <p class="quota-copy">当前额度：每天 {{ daily_job_limit }} 个任务，单个回放最长由站点配置限制。</p>
+        {% endif %}
       {% elif not current_user %}
         <p class="quota-copy">已完成的回放、字幕与总结可公开浏览；登录后可以提交新回放，并从时间线一键剪视频。</p>
       {% endif %}
