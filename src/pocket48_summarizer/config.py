@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     dashscope_poll_seconds: float = Field(default=5.0, ge=1, le=60)
     dashscope_timeout_seconds: int = Field(default=4 * 60 * 60, ge=60, le=12 * 60 * 60)
     dashscope_diarization_enabled: bool = False
+    dashscope_vocabulary_enabled: bool = True
+    dashscope_vocabulary_prefix: str = "p48vocab"
+    dashscope_vocabulary_weight: int = Field(default=4, ge=1, le=5)
+    dashscope_vocabulary_max_terms: int = Field(default=500, ge=1, le=500)
+    dashscope_vocabulary_ready_timeout_seconds: int = Field(
+        default=60, ge=10, le=300
+    )
 
     llm_base_url: str | None = None
     llm_api_key: SecretStr | None = None
@@ -108,6 +115,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bind_address(self) -> "Settings":
+        if self.dashscope_vocabulary_enabled:
+            prefix = self.dashscope_vocabulary_prefix
+            if (
+                not prefix
+                or len(prefix) > 10
+                or not prefix.isascii()
+                or not prefix.isalnum()
+                or prefix.lower() != prefix
+            ):
+                raise ValueError(
+                    "DASHSCOPE_VOCABULARY_PREFIX must contain only "
+                    "lowercase ASCII letters and digits and be at most "
+                    "10 characters"
+                )
         if self.auth_required and not self.session_cookie_secure:
             if self.app_host not in {"127.0.0.1", "localhost", "::1"}:
                 raise ValueError(

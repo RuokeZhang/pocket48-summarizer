@@ -14,6 +14,7 @@ from .pipeline import ReplayPipeline
 from .repository import JobRepository
 from .runtime_lock import shared_runtime_lock
 from .translation import SubtitleTranslationService
+from .vocabulary import VocabularyManager
 
 
 class DurableWorker:
@@ -24,12 +25,14 @@ class DurableWorker:
         pipeline: ReplayPipeline,
         translator: SubtitleTranslationService | None = None,
         member_catalog: MemberCatalogService | None = None,
+        vocabulary: VocabularyManager | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
         self.pipeline = pipeline
         self.translator = translator
         self.member_catalog = member_catalog
+        self.vocabulary = vocabulary
         self.worker_id = str(uuid.uuid4())
         self.logger = logging.getLogger(__name__)
         self._wake = asyncio.Event()
@@ -73,7 +76,7 @@ class DurableWorker:
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
-            await self._sync_member_catalog_if_due()
+            await self._refresh_terminology_if_due()
             await self._cleanup_expired_artifacts_if_due()
             maintenance_active = False
             translation = None
@@ -120,21 +123,31 @@ class DurableWorker:
             except TimeoutError:
                 pass
 
-    async def _sync_member_catalog_if_due(self) -> None:
-        if self.member_catalog is None:
+    async def _refresh_terminology_if_due(self) -> None:
+        if self.member_catalog is None and self.vocabulary is None:
             return
         now = time.monotonic()
         if now - self._last_member_catalog_check < 60:
             return
         self._last_member_catalog_check = now
-        try:
-            await self.member_catalog.sync_if_due()
-        except AppError as exc:
-            self.logger.warning(
-                "Official member catalog sync failed: %s (%s)",
-                exc.message,
-                exc.code,
-            )
+        if self.member_catalog is not None:
+            try:
+                await self.member_catalog.sync_if_due()
+            except AppError as exc:
+                self.logger.warning(
+                    "Official member catalog sync failed: %s (%s)",
+                    exc.message,
+                    exc.code,
+                )
+        if self.vocabulary is not None:
+            try:
+                await self.vocabulary.ensure_current()
+            except AppError as exc:
+                self.logger.warning(
+                    "DashScope vocabulary refresh failed: %s (%s)",
+                    exc.message,
+                    exc.code,
+                )
 
     async def _process_job(self, job: JobRecord) -> None:
         heartbeat = asyncio.create_task(

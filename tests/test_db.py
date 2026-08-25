@@ -29,6 +29,7 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "004_subtitle_translations.sql",
         "005_backfill_subtitle_translations.sql",
         "006_member_glossary.sql",
+        "007_asr_vocabulary.sql",
     ]
 
 

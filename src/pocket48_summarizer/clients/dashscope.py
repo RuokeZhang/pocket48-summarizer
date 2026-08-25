@@ -31,16 +31,27 @@ class DashScopeClient:
             await self.client.aclose()
 
     @property
-    def headers(self) -> dict[str, str]:
+    def authorization_headers(self) -> dict[str, str]:
         return {
             "Authorization": (
                 "Bearer " + self.settings.dashscope_api_key.get_secret_value()
             ),
             "Content-Type": "application/json",
+        }
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {
+            **self.authorization_headers,
             "X-DashScope-Async": "enable",
         }
 
-    async def submit(self, audio_url: str) -> tuple[str, str]:
+    async def submit(
+        self,
+        audio_url: str,
+        *,
+        vocabulary_id: str | None = None,
+    ) -> tuple[str, str]:
         endpoint = (
             self.settings.dashscope_base_url.rstrip("/")
             + "/api/v1/services/audio/asr/transcription"
@@ -51,6 +62,8 @@ class DashScopeClient:
         }
         if self.settings.dashscope_diarization_enabled:
             parameters["diarization_enabled"] = True
+        if vocabulary_id:
+            parameters["vocabulary_id"] = vocabulary_id
         response = await self._post(
             endpoint,
             json={
@@ -69,6 +82,83 @@ class DashScopeClient:
                 True,
             )
         return task_id, str(status)
+
+    @property
+    def vocabulary_endpoint(self) -> str:
+        return (
+            self.settings.dashscope_base_url.rstrip("/")
+            + "/api/v1/services/audio/asr/customization"
+        )
+
+    async def create_vocabulary(
+        self,
+        *,
+        prefix: str,
+        target_model: str,
+        vocabulary: list[dict[str, Any]],
+    ) -> str:
+        response = await self._post(
+            self.vocabulary_endpoint,
+            headers=self.authorization_headers,
+            json={
+                "model": "speech-biasing",
+                "input": {
+                    "action": "create_vocabulary",
+                    "target_model": target_model,
+                    "prefix": prefix,
+                    "vocabulary": vocabulary,
+                },
+            },
+        )
+        output = response.get("output")
+        vocabulary_id = (
+            output.get("vocabulary_id")
+            if isinstance(output, dict)
+            else None
+        )
+        if not isinstance(vocabulary_id, str) or not vocabulary_id:
+            raise ExternalServiceError(
+                "dashscope_vocabulary_create_failed",
+                "DashScope 没有返回热词列表 ID",
+                True,
+            )
+        return vocabulary_id
+
+    async def query_vocabulary(
+        self, vocabulary_id: str
+    ) -> dict[str, Any]:
+        response = await self._post(
+            self.vocabulary_endpoint,
+            headers=self.authorization_headers,
+            json={
+                "model": "speech-biasing",
+                "input": {
+                    "action": "query_vocabulary",
+                    "vocabulary_id": vocabulary_id,
+                },
+            },
+        )
+        output = response.get("output")
+        if not isinstance(output, dict):
+            raise ExternalServiceError(
+                "dashscope_vocabulary_query_failed",
+                "DashScope 返回了无效的热词列表状态",
+                True,
+            )
+        return output
+
+    async def delete_vocabulary(self, vocabulary_id: str) -> None:
+        await self._post(
+            self.vocabulary_endpoint,
+            headers=self.authorization_headers,
+            json={
+                "model": "speech-biasing",
+                "input": {
+                    "action": "delete_vocabulary",
+                    "vocabulary_id": vocabulary_id,
+                },
+            },
+        )
 
     async def wait_for_result(
         self,
@@ -208,10 +298,16 @@ class DashScopeClient:
             )
         return payload
 
-    async def _post(self, url: str, **kwargs) -> dict[str, Any]:
+    async def _post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
         try:
             response = await self.client.post(
-                url, headers=self.headers, **kwargs
+                url, headers=headers or self.headers, **kwargs
             )
         except httpx.RequestError as exc:
             raise ExternalServiceError(

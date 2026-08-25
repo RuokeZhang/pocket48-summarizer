@@ -16,6 +16,7 @@ from .parsing.transcript import normalize_asr_result
 from .repository import JobRepository
 from .security import redact_signed_urls
 from .summarization.service import SummarizationService
+from .vocabulary import VocabularyManager
 
 
 class ReplayPipeline:
@@ -30,6 +31,7 @@ class ReplayPipeline:
         oss: OSSStore,
         dashscope: DashScopeClient,
         summarizer: SummarizationService,
+        vocabulary: VocabularyManager | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -39,6 +41,7 @@ class ReplayPipeline:
         self.oss = oss
         self.dashscope = dashscope
         self.summarizer = summarizer
+        self.vocabulary = vocabulary
 
     async def run(self, job_id: str) -> None:
         job = self._require_job(job_id)
@@ -122,8 +125,34 @@ class ReplayPipeline:
                     45,
                     "正在提交 DashScope 识别任务",
                 )
-                task_id, status = await self.dashscope.submit(signed_url)
-                self.repository.set_dashscope_task(job_id, task_id, status)
+                active_vocabulary = (
+                    await self.vocabulary.ensure_current()
+                    if self.vocabulary
+                    else None
+                )
+                task_id, status = await self.dashscope.submit(
+                    signed_url,
+                    vocabulary_id=(
+                        active_vocabulary.vocabulary_id
+                        if active_vocabulary
+                        else None
+                    ),
+                )
+                self.repository.set_dashscope_task(
+                    job_id,
+                    task_id,
+                    status,
+                    vocabulary_id=(
+                        active_vocabulary.vocabulary_id
+                        if active_vocabulary
+                        else None
+                    ),
+                    glossary_fingerprint=(
+                        active_vocabulary.fingerprint
+                        if active_vocabulary
+                        else None
+                    ),
+                )
                 job = self._require_job(job_id)
 
             self.repository.set_stage(

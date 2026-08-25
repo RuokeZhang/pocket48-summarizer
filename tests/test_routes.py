@@ -339,6 +339,7 @@ def test_glossary_admin_requires_admin_and_manages_entries(
         source_url=settings.member_catalog_url,
         source_hash="e" * 64,
     )
+    repository.activate_vocabulary("vocab-admin-test", "f" * 64)
     member_catalog = DummyMemberCatalog()
     app = auth_app(
         settings,
@@ -364,6 +365,7 @@ def test_glossary_admin_requires_admin_and_manages_entries(
         assert page.status_code == 200
         assert "成员与术语词库" in page.text
         assert "曹可甜" in page.text
+        assert "vocab-admin-test" in page.text
 
         csrf = alice.cookies.get("p48_csrf")
         created_term = alice.post(
@@ -731,8 +733,8 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'class="live-danmaku-panel mobile-danmaku-overlay"' in page.text
     assert 'id="playback-layout"' in page.text
     assert 'id="language-toggle"' in page.text
-    assert "i18n.js?v=20260825-2" in page.text
-    assert "styles.css?v=20260825-5" in page.text
+    assert "i18n.js?v=20260825-3" in page.text
+    assert "styles.css?v=20260825-6" in page.text
     assert "app.js?v=20260825-3" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

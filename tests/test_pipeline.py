@@ -12,6 +12,7 @@ from pocket48_summarizer.models import (
     TopicItem,
 )
 from pocket48_summarizer.pipeline import ReplayPipeline
+from pocket48_summarizer.vocabulary import ActiveVocabulary
 
 
 class FakePocket:
@@ -63,9 +64,11 @@ class FakeOSS:
 class FakeDashScope:
     def __init__(self):
         self.submits = 0
+        self.vocabulary_id = None
 
-    async def submit(self, _url):
+    async def submit(self, _url, *, vocabulary_id=None):
         self.submits += 1
+        self.vocabulary_id = vocabulary_id
         return "task-1", "PENDING"
 
     async def wait_for_result(self, _task_id, on_status=None):
@@ -123,6 +126,11 @@ class FakeSummarizer:
         )
 
 
+class FakeVocabulary:
+    async def ensure_current(self):
+        return ActiveVocabulary("vocab-p48-test", "f" * 64)
+
+
 @pytest.mark.asyncio
 async def test_complete_pipeline_is_idempotent(settings, repository):
     job, _ = repository.create_or_get_job(
@@ -142,6 +150,7 @@ async def test_complete_pipeline_is_idempotent(settings, repository):
         oss=oss,
         dashscope=dashscope,
         summarizer=FakeSummarizer(),
+        vocabulary=FakeVocabulary(),
     )
     await pipeline.run(job.id)
     completed = repository.get_job(job.id)
@@ -153,3 +162,6 @@ async def test_complete_pipeline_is_idempotent(settings, repository):
     assert oss.uploads == 1
     assert oss.deletes == 1
     assert dashscope.submits == 1
+    assert dashscope.vocabulary_id == "vocab-p48-test"
+    assert completed.asr_vocabulary_id == "vocab-p48-test"
+    assert completed.asr_glossary_fingerprint == "f" * 64

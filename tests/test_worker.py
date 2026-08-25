@@ -82,6 +82,15 @@ class RecordingMemberCatalog:
             )
 
 
+class RecordingVocabulary:
+    def __init__(self):
+        self.calls = 0
+
+    async def ensure_current(self):
+        self.calls += 1
+        return None
+
+
 @pytest.mark.asyncio
 async def test_worker_refreshes_catalog_without_blocking_job_claims(settings):
     worker_settings = settings.model_copy(
@@ -89,11 +98,13 @@ async def test_worker_refreshes_catalog_without_blocking_job_claims(settings):
     )
     repository = IdleRepository()
     member_catalog = RecordingMemberCatalog(fail=True)
+    vocabulary = RecordingVocabulary()
     worker = DurableWorker(
         worker_settings,
         repository,
         IdlePipeline(),
         member_catalog=member_catalog,
+        vocabulary=vocabulary,
     )
 
     await worker.start()
@@ -101,6 +112,7 @@ async def test_worker_refreshes_catalog_without_blocking_job_claims(settings):
     await worker.stop()
 
     assert member_catalog.calls == 1
+    assert vocabulary.calls == 1
     assert repository.claims > 0
 
 

@@ -375,6 +375,102 @@ class JobRepository:
             if (alias := self._glossary_alias(row)) is not None
         ]
 
+    def list_active_vocabulary_texts(self) -> list[str]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT text
+                FROM (
+                    SELECT 0 AS priority,
+                           canonical_name AS text,
+                           member_id AS order_key
+                    FROM member_catalog
+                    WHERE active = 1 AND source_present = 1
+
+                    UNION ALL
+
+                    SELECT 1 AS priority,
+                           a.alias AS text,
+                           a.alias_normalized AS order_key
+                    FROM glossary_aliases a
+                    JOIN member_catalog m ON m.member_id = a.member_id
+                    WHERE a.active = 1
+                      AND m.active = 1
+                      AND m.source_present = 1
+
+                    UNION ALL
+
+                    SELECT 2 AS priority,
+                           canonical_text AS text,
+                           canonical_normalized AS order_key
+                    FROM glossary_terms
+                    WHERE active = 1
+
+                    UNION ALL
+
+                    SELECT 3 AS priority,
+                           a.alias AS text,
+                           a.alias_normalized AS order_key
+                    FROM glossary_aliases a
+                    JOIN glossary_terms t ON t.id = a.term_id
+                    WHERE a.active = 1 AND t.active = 1
+
+                    UNION ALL
+
+                    SELECT 4 AS priority,
+                           group_name AS text,
+                           group_name AS order_key
+                    FROM member_catalog
+                    WHERE active = 1
+                      AND source_present = 1
+                      AND group_name != ''
+                    GROUP BY group_name
+
+                    UNION ALL
+
+                    SELECT 5 AS priority,
+                           team_name AS text,
+                           team_name AS order_key
+                    FROM member_catalog
+                    WHERE active = 1
+                      AND source_present = 1
+                      AND team_name != ''
+                    GROUP BY team_name
+                )
+                ORDER BY priority, order_key
+                """
+            ).fetchall()
+        return [str(row["text"]) for row in rows]
+
+    def activate_vocabulary(
+        self, vocabulary_id: str, fingerprint: str
+    ) -> GlossarySyncStateRecord:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE glossary_sync_state
+                SET active_vocabulary_id = ?,
+                    vocabulary_fingerprint = ?,
+                    vocabulary_updated_at = ?,
+                    vocabulary_error = NULL
+                WHERE singleton = 1
+                """,
+                (vocabulary_id, fingerprint, now),
+            )
+        return self.get_glossary_sync_state()
+
+    def record_vocabulary_error(self, message: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE glossary_sync_state
+                SET vocabulary_error = ?
+                WHERE singleton = 1
+                """,
+                (strip_control_chars(message)[:1000],),
+            )
+
     def create_glossary_term(
         self,
         *,
@@ -1273,7 +1369,13 @@ class JobRepository:
             )
 
     def set_dashscope_task(
-        self, job_id: str, task_id: str, task_status: str
+        self,
+        job_id: str,
+        task_id: str,
+        task_status: str,
+        *,
+        vocabulary_id: str | None = None,
+        glossary_fingerprint: str | None = None,
     ) -> None:
         now = utcnow()
         with self.database.connect() as connection:
@@ -1281,10 +1383,19 @@ class JobRepository:
                 """
                 UPDATE jobs
                 SET dashscope_task_id = ?, dashscope_task_status = ?,
+                    asr_vocabulary_id = ?,
+                    asr_glossary_fingerprint = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (task_id, task_status, now, job_id),
+                (
+                    task_id,
+                    task_status,
+                    vocabulary_id,
+                    glossary_fingerprint,
+                    now,
+                    job_id,
+                ),
             )
 
     def set_dashscope_status(self, job_id: str, task_status: str) -> None:

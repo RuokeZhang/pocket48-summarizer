@@ -236,6 +236,8 @@ class JobRecord(BaseModel):
     oss_uploaded_at: str | None = None
     dashscope_task_id: str | None = None
     dashscope_task_status: str | None = None
+    asr_vocabulary_id: str | None = None
+    asr_glossary_fingerprint: str | None = None
     asr_raw_json: str | None = None
     asr_completed_at: str | None = None
     summary_json: str | None = None

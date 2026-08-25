@@ -17,6 +17,7 @@ from .pipeline import ReplayPipeline
 from .repository import JobRepository
 from .summarization.service import SummarizationService
 from .translation import SubtitleTranslationService
+from .vocabulary import VocabularyManager
 from .worker import DurableWorker
 
 
@@ -33,6 +34,7 @@ class ApplicationServices:
     translator: SubtitleTranslationService | None = None
     member_catalog_client: MemberCatalogClient | None = None
     member_catalog: MemberCatalogService | None = None
+    vocabulary: VocabularyManager | None = None
 
     async def close(self) -> None:
         if self.worker:
@@ -65,6 +67,7 @@ def build_services(
     member_catalog = MemberCatalogService(
         settings, repository, member_catalog_client
     )
+    vocabulary = VocabularyManager(settings, repository, dashscope)
     oss = OSSStore(settings)
     summarizer = SummarizationService(settings, repository, llm)
     translator = SubtitleTranslationService(
@@ -81,6 +84,7 @@ def build_services(
         oss=oss,
         dashscope=dashscope,
         summarizer=summarizer,
+        vocabulary=vocabulary,
     )
     worker = DurableWorker(
         settings,
@@ -88,6 +92,7 @@ def build_services(
         pipeline,
         translator,
         member_catalog,
+        vocabulary,
     )
     return ApplicationServices(
         repository=repository,
@@ -104,4 +109,5 @@ def build_services(
         translator=translator,
         member_catalog_client=member_catalog_client,
         member_catalog=member_catalog,
+        vocabulary=vocabulary,
     )

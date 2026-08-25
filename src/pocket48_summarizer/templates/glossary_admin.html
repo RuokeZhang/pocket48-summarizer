@@ -24,6 +24,13 @@
     </section>
   {% endif %}
 
+  {% if sync_state.vocabulary_error %}
+    <section class="notice warning">
+      <strong data-i18n="vocabularyLastBuildWarning">最近一次 ASR 热词更新有警告</strong>
+      <p>{{ sync_state.vocabulary_error }}</p>
+    </section>
+  {% endif %}
+
   <section class="admin-stat-grid">
     <article class="admin-stat">
       <span data-i18n="catalogMembers">目录成员</span>
@@ -41,6 +48,14 @@
       <span data-i18n="catalogLastSuccess">上次成功同步</span>
       <strong>{{ sync_state.last_success_at or "—" }}</strong>
     </article>
+    <article class="admin-stat">
+      <span data-i18n="activeVocabulary">当前 ASR 热词列表</span>
+      <strong>{{ sync_state.active_vocabulary_id or "—" }}</strong>
+    </article>
+    <article class="admin-stat">
+      <span data-i18n="vocabularyUpdatedAt">热词更新时间</span>
+      <strong>{{ sync_state.vocabulary_updated_at or "—" }}</strong>
+    </article>
   </section>
 
   <section class="panel admin-section-heading">
@@ -48,6 +63,7 @@
       <p class="eyebrow">Official source</p>
       <h2 data-i18n="officialMemberCatalog">官方成员目录</h2>
       <p class="muted">{{ sync_state.source_url }}</p>
+      <p class="muted" data-i18n="vocabularyAutoRebuild">成员或术语变化后，单 Worker 会自动构建并启用 paraformer-v2 热词列表。</p>
     </div>
     <form action="/admin/glossary/sync" method="post">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
