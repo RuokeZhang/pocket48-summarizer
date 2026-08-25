@@ -10,6 +10,7 @@ class FakeDashScopeVocabulary:
         self.created = []
         self.deleted = []
         self.fail_create = False
+        self.target_model = "paraformer-v2"
 
     async def create_vocabulary(
         self, *, prefix, target_model, vocabulary
@@ -20,6 +21,7 @@ class FakeDashScopeVocabulary:
                 "热词服务暂时不可用",
                 True,
             )
+        self.target_model = target_model
         vocabulary_id = f"vocab-{len(self.created) + 1}"
         self.created.append(
             {
@@ -34,7 +36,7 @@ class FakeDashScopeVocabulary:
     async def query_vocabulary(self, vocabulary_id):
         return {
             "status": "OK",
-            "target_model": "paraformer-v2",
+            "target_model": self.target_model,
             "vocabulary_id": vocabulary_id,
         }
 
@@ -157,8 +159,24 @@ async def test_vocabulary_rejects_unsupported_model(settings, repository):
         FakeDashScopeVocabulary(),
     )
 
-    with pytest.raises(ConfigurationError, match="paraformer-v2"):
+    with pytest.raises(ConfigurationError, match="不支持预编译热词"):
         await manager.ensure_current()
+
+
+@pytest.mark.asyncio
+async def test_vocabulary_supports_fun_asr(settings, repository):
+    seed_catalog(repository)
+    dashscope = FakeDashScopeVocabulary()
+    manager = VocabularyManager(
+        settings.model_copy(update={"dashscope_asr_model": "fun-asr"}),
+        repository,
+        dashscope,
+    )
+
+    active = await manager.ensure_current()
+
+    assert active
+    assert dashscope.created[0]["target_model"] == "fun-asr"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,11 @@ from .repository import JobRepository, normalize_glossary_text
 from .security import strip_control_chars
 
 SUPPORTED_VOCABULARY_MODELS = {
+    "fun-asr",
+    "fun-asr-2025-08-25",
+    "fun-asr-2025-11-07",
+    "fun-asr-mtl",
+    "fun-asr-mtl-2025-08-25",
     "paraformer-v2",
     "paraformer-8k-v2",
 }
@@ -49,8 +54,8 @@ class VocabularyManager:
             not in SUPPORTED_VOCABULARY_MODELS
         ):
             raise ConfigurationError(
-                "DASHSCOPE_VOCABULARY_ENABLED=true 仅支持 "
-                "paraformer-v2 或 paraformer-8k-v2"
+                "当前 DASHSCOPE_ASR_MODEL 不支持预编译热词："
+                f"{self.settings.dashscope_asr_model}"
             )
 
         vocabulary = self._build_vocabulary()

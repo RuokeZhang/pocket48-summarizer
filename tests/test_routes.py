@@ -733,7 +733,7 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'class="live-danmaku-panel mobile-danmaku-overlay"' in page.text
     assert 'id="playback-layout"' in page.text
     assert 'id="language-toggle"' in page.text
-    assert "i18n.js?v=20260825-3" in page.text
+    assert "i18n.js?v=20260825-4" in page.text
     assert "styles.css?v=20260825-6" in page.text
     assert "app.js?v=20260825-3" in page.text
     assert 'id="danmaku-opacity"' not in page.text

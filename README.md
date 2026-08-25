@@ -13,7 +13,7 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
 - 仅处理无需登录即可访问的已结束公开回放。
 - 不支持实时直播、私有内容、口袋48登录、`pa` 签名或网易云信 QChat。
 - 不永久保存原始整场视频；通过 FFmpeg 从 HLS 直接提取临时音频。
-- 字幕由阿里云百炼 DashScope `paraformer-v2` 生成。
+- 字幕由可配置的阿里云百炼 DashScope 非实时语音识别模型生成。
 - 总结通过可配置的 OpenAI-compatible `/chat/completions` API 生成。
 - SQLite 保存任务、中英文字幕、翻译队列、弹幕、ASR 原始 JSON 和总结。
 - 成功识别后删除本地临时音频和私有 OSS 临时对象。
@@ -27,7 +27,7 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
 - 网站界面支持右上角一键切换中文或英文，并在浏览器中记住选择。
 - 新处理完成的直播会自动排队生成英文字幕；升级时现有已完成直播也会统一补入翻译队列，登录用户仍可手动重试。已完成片段会持久化并支持断点续传。
 - 单 Worker 会从 SNH48 官方成员目录同步规范姓名、拼音、团体、队伍和状态；管理员可在 `/admin/glossary` 维护成员昵称和团内术语。
-- 单 Worker 会把有效成员名和管理员词库编译成 DashScope `paraformer-v2` 的 `vocabulary_id`，之后提交的新 ASR 任务自动引用该版本。
+- 单 Worker 会把有效成员名和管理员词库编译成当前兼容 DashScope ASR 模型的 `vocabulary_id`，之后提交的新 ASR 任务自动引用该版本。
 
 ## 安全说明
 
@@ -121,7 +121,7 @@ AUTH_REQUIRED=true pocket48-users create --username admin --admin
 别名按 Unicode 规范化后全局唯一，不能与已有规范成员名或术语冲突，避免同一个听写词指向多个对象。
 官方同步不会删除管理员维护的别名。词库变化后，单 Worker 会按确定顺序生成最多 500 个热词：
 当前成员规范名优先，其后是成员昵称、管理员术语及其别名、团体和队伍名。默认权重为 4，
-含非 ASCII 字符的热词最长 15 个字符，符合 DashScope 对 Paraformer 预编译热词的限制。
+含非 ASCII 字符的热词最长 15 个字符，符合 DashScope 预编译热词限制。
 
 热词内容指纹未变化时复用现有 `vocabulary_id`。重建时先创建并确认新列表状态为 `OK`，
 再切换数据库中的活动 ID；失败会保留上一版可用 ID。每个新提交的 ASR 任务会记录实际使用的
@@ -197,5 +197,6 @@ P48_RUN_PAID_SMOKE=I_UNDERSTAND_THIS_UPLOADS_AUDIO_AND_COSTS_MONEY \
 - [48tools/idol-grab-utils](https://github.com/48tools/idol-grab-utils)（LGPL-3.0）
 - [阿里云非实时语音识别文档](https://help.aliyun.com/zh/model-studio/non-realtime-speech-recognition-user-guide)
 - [Paraformer REST API](https://help.aliyun.com/zh/model-studio/paraformer-recorded-speech-recognition-restful-api)
+- [提升语音识别准确率](https://help.aliyun.com/zh/model-studio/improve-asr-accuracy)
 
 本项目没有复制上述项目代码，也没有包含逆向 `pa` 签名或 QChat 实现。

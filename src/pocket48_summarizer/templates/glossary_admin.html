@@ -63,7 +63,7 @@
       <p class="eyebrow">Official source</p>
       <h2 data-i18n="officialMemberCatalog">官方成员目录</h2>
       <p class="muted">{{ sync_state.source_url }}</p>
-      <p class="muted" data-i18n="vocabularyAutoRebuild">成员或术语变化后，单 Worker 会自动构建并启用 paraformer-v2 热词列表。</p>
+      <p class="muted" data-i18n="vocabularyAutoRebuild">成员或术语变化后，单 Worker 会自动为当前兼容 ASR 模型构建并启用预编译热词列表。</p>
     </div>
     <form action="/admin/glossary/sync" method="post">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
