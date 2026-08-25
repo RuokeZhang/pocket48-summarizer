@@ -1077,6 +1077,20 @@ class JobRepository:
                 job for row in rows if (job := self._job(row)) is not None
             ]
 
+    def has_queued_jobs(self) -> bool:
+        with self.database.connect() as connection:
+            return (
+                connection.execute(
+                    """
+                    SELECT 1 FROM jobs
+                    WHERE status = ?
+                    LIMIT 1
+                    """,
+                    (JobStatus.QUEUED,),
+                ).fetchone()
+                is not None
+            )
+
     def claim_next_job(
         self, worker_id: str, lease_seconds: int
     ) -> JobRecord | None:
@@ -1727,6 +1741,38 @@ class JobRepository:
                     SubtitleTranslationStatus.RUNNING,
                 ),
             )
+
+    def pause_owned_subtitle_translation(
+        self, job_id: str, language: str, worker_id: str
+    ) -> None:
+        with self.database.connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE subtitle_translation_requests
+                SET status = ?, worker_id = NULL, lease_expires_at = NULL,
+                    retry_count = CASE
+                        WHEN retry_count > 0 THEN retry_count - 1
+                        ELSE 0
+                    END,
+                    updated_at = ?
+                WHERE job_id = ? AND language = ? AND worker_id = ?
+                  AND status = ?
+                """,
+                (
+                    SubtitleTranslationStatus.QUEUED,
+                    utcnow(),
+                    job_id,
+                    language,
+                    worker_id,
+                    SubtitleTranslationStatus.RUNNING,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise AppError(
+                    "translation_lease_lost",
+                    "英文字幕任务租约已失效",
+                    True,
+                )
 
     def save_transcript_translations(
         self, job_id: str, language: str, translations: dict[int, str]

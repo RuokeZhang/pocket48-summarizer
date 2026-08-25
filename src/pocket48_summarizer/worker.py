@@ -216,15 +216,25 @@ class DurableWorker:
             name=f"pocket48-translation-heartbeat-{request.job_id}",
         )
         try:
-            await self.translator.translate_job(
-                request.job_id, request.language
-            )
-            await asyncio.to_thread(
-                self.repository.mark_subtitle_translation_completed,
+            result = await self.translator.translate_job(
                 request.job_id,
                 request.language,
-                self.worker_id,
+                should_pause=self.repository.has_queued_jobs,
             )
+            if result.completed:
+                await asyncio.to_thread(
+                    self.repository.mark_subtitle_translation_completed,
+                    request.job_id,
+                    request.language,
+                    self.worker_id,
+                )
+            else:
+                await asyncio.to_thread(
+                    self.repository.pause_owned_subtitle_translation,
+                    request.job_id,
+                    request.language,
+                    self.worker_id,
+                )
         except asyncio.CancelledError:
             await asyncio.to_thread(
                 self.repository.release_owned_subtitle_translation,

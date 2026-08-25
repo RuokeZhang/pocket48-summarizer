@@ -156,6 +156,38 @@ async def test_translation_persists_completed_batches_before_failure(
 
 
 @pytest.mark.asyncio
+async def test_translation_pauses_between_batches_for_queued_job(repository):
+    job = completed_job_with_transcript(repository, "900004")
+    llm = FakeLLM(
+        [
+            {
+                "translations": [
+                    {"sequence": 1, "text": "First sentence."}
+                ]
+            }
+        ]
+    )
+    service = SubtitleTranslationService(
+        repository,
+        llm,
+        max_input_chars=4,
+    )
+    pause_checks = iter([False, True])
+
+    result = await service.translate_job(
+        job.id,
+        should_pause=lambda: next(pause_checks),
+    )
+
+    assert result.translated_count == 1
+    assert result.completed is False
+    assert repository.get_transcript_translations(job.id) == {
+        1: "First sentence."
+    }
+    assert len(llm.prompts) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload",
     [

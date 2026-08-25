@@ -4,6 +4,7 @@ import pytest
 
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.models import TranscriptSegment
+from pocket48_summarizer.translation import SubtitleTranslationRunResult
 from pocket48_summarizer.worker import DurableWorker
 
 
@@ -58,13 +59,26 @@ class CompletingTranslator:
     def __init__(self, repository):
         self.repository = repository
 
-    async def translate_job(self, job_id, language):
+    async def translate_job(self, job_id, language, should_pause=None):
         self.repository.save_transcript_translations(
             job_id,
             language,
             {1: "Automatic translation."},
         )
-        return 1
+        return SubtitleTranslationRunResult(
+            translated_count=1,
+            completed=True,
+        )
+
+
+class PausingTranslator:
+    async def translate_job(self, job_id, language, should_pause=None):
+        assert should_pause is not None
+        assert should_pause() is True
+        return SubtitleTranslationRunResult(
+            translated_count=0,
+            completed=False,
+        )
 
 
 class RecordingMemberCatalog:
@@ -222,3 +236,61 @@ async def test_translation_queue_failure_does_not_fail_completed_job(
 
     completed = repository.get_job(job.id)
     assert completed and completed.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_translation_pauses_without_consuming_retry_for_queued_job(
+    settings, repository
+):
+    translated_job, _ = repository.create_or_get_job(
+        (
+            "https://h5.48.cn/2019appshare/memberLiveShare/"
+            "index.html?id=990003"
+        ),
+        "990003",
+    )
+    claimed_job = repository.claim_next_job("main-worker", 120)
+    assert claimed_job and claimed_job.id == translated_job.id
+    repository.replace_transcript(
+        translated_job.id,
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=1000,
+                text="自动翻译",
+            )
+        ],
+    )
+    repository.mark_completed(translated_job.id)
+    repository.request_subtitle_translation(translated_job.id)
+
+    worker = DurableWorker(
+        settings,
+        repository,
+        IdlePipeline(),
+        PausingTranslator(),
+    )
+    request = repository.claim_next_subtitle_translation(
+        worker.worker_id,
+        settings.worker_lease_seconds,
+    )
+    assert request and request.retry_count == 1
+    queued_job, _ = repository.create_or_get_job(
+        (
+            "https://h5.48.cn/2019appshare/memberLiveShare/"
+            "index.html?id=990004"
+        ),
+        "990004",
+    )
+
+    await worker._process_translation(request)
+
+    paused = repository.get_subtitle_translation_request(translated_job.id)
+    assert paused and paused.status == "queued"
+    assert paused.retry_count == 0
+    claimed_queued_job = repository.claim_next_job(
+        worker.worker_id,
+        settings.worker_lease_seconds,
+    )
+    assert claimed_queued_job and claimed_queued_job.id == queued_job.id

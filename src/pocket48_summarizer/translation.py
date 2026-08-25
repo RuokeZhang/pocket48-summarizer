@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -23,6 +25,12 @@ class TranslationBatch(BaseModel):
     translations: list[TranslationItem]
 
 
+@dataclass(frozen=True)
+class SubtitleTranslationRunResult:
+    translated_count: int
+    completed: bool
+
+
 class SubtitleTranslationService:
     def __init__(
         self,
@@ -36,8 +44,11 @@ class SubtitleTranslationService:
         self.max_input_chars = max_input_chars
 
     async def translate_job(
-        self, job_id: str, language: str = "en"
-    ) -> int:
+        self,
+        job_id: str,
+        language: str = "en",
+        should_pause: Callable[[], bool] | None = None,
+    ) -> SubtitleTranslationRunResult:
         if language != "en":
             raise AppError(
                 "unsupported_translation_language",
@@ -61,12 +72,20 @@ class SubtitleTranslationService:
         ]
         translated_count = 0
         for batch in self._build_batches(pending):
+            if should_pause is not None and should_pause():
+                return SubtitleTranslationRunResult(
+                    translated_count=translated_count,
+                    completed=False,
+                )
             translations = await self._translate_batch(batch)
             self.repository.save_transcript_translations(
                 job_id, language, translations
             )
             translated_count += len(translations)
-        return translated_count
+        return SubtitleTranslationRunResult(
+            translated_count=translated_count,
+            completed=True,
+        )
 
     def _build_batches(
         self, segments: list[TranscriptSegment]
