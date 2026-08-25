@@ -106,11 +106,20 @@ fi
 chown root:pocket48 "$release_dir"
 chmod 0750 "$release_dir"
 
+if [[ -f /etc/pocket48-summarizer/app.env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source /etc/pocket48-summarizer/app.env
+  set +a
+fi
+verify_clip_overlay_dependencies
+
 active_slot="$(read_active_slot)"
 standby_slot="$(other_slot "$active_slot")"
 
 activate_clip_maintenance
 wait_for_status_zero video_clips "$clip_drain_seconds"
+wait_for_status_zero video_clip_exports "$clip_drain_seconds"
 
 systemctl disable --now "pocket48-web@$standby_slot.service" || true
 if [[ -L "$SLOTS_DIR/$standby_slot" ]]; then

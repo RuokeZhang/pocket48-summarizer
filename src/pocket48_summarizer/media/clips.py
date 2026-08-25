@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -10,20 +11,31 @@ from typing import Literal
 from ..clients.oss_store import OSSStore
 from ..config import Settings
 from ..errors import AppError
+from ..models import VideoClipExportRecord
 from ..repository import JobRepository
+from .boundaries import (
+    BoundaryKind,
+    BoundarySuggestion,
+    ClipBoundaryService,
+)
 from .ffmpeg import FFmpegRunner
+from .overlays import build_clip_overlay
 
 ClipStatus = Literal["running", "completed", "failed"]
 LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+RENDER_VERSION = "ass-v1"
 
 
 @dataclass(slots=True)
 class ClipState:
     status: ClipStatus
     output_path: Path
+    clip_id: str = ""
     error: str | None = None
+    warning: str | None = None
     oss_object_key: str | None = None
 
 
@@ -35,56 +47,180 @@ class VideoClipService:
         oss: OSSStore,
         ffmpeg: FFmpegRunner | None = None,
     ) -> None:
+        self.settings = settings
         self.output_dir = settings.data_dir / "clips"
         self.repository = repository
         self.oss = oss
         self.ffmpeg = ffmpeg or FFmpegRunner(settings)
+        self.boundaries = ClipBoundaryService(
+            settings, repository, self.ffmpeg
+        )
         self.logger = logging.getLogger(__name__)
-        self._states: dict[tuple[str, int], ClipState] = {}
-        self._tasks: dict[tuple[str, int], asyncio.Task[None]] = {}
+        self._states: dict[str, ClipState] = {}
+        self._tasks: dict[str, asyncio.Task[None]] = {}
         self._capacity = asyncio.Semaphore(settings.clip_concurrency)
         self._retry_attempts = settings.clip_retry_attempts
         self._retry_delay_seconds = settings.clip_retry_delay_seconds
+        self._ass_supported: bool | None = None
+        self._ass_probe_lock = asyncio.Lock()
 
     async def startup(self) -> None:
         self.repository.recover_running_video_clips()
-        for path in self.output_dir.glob("*/timeline-*.mp4"):
-            match = LEGACY_CLIP_RE.fullmatch(path.name)
-            if not match or not path.is_file() or path.stat().st_size == 0:
+        self.repository.recover_running_video_clip_exports()
+        for path in self.output_dir.glob("*/*.mp4"):
+            if not path.is_file() or path.stat().st_size == 0:
                 continue
             job_id = path.parent.name
-            if self.repository.get_job(job_id) is None:
+            job = self.repository.get_job(job_id)
+            if job is None:
                 continue
-            timeline_index = int(match.group("index")) - 1
-            if timeline_index < 0:
+            record = self.repository.find_video_clip_export_by_filename(
+                job_id, path.name
+            )
+            if record is None:
+                record = self._register_legacy_file(job_id, path)
+            if record is None:
                 continue
-            record = self.repository.get_video_clip(job_id, timeline_index)
-            if record and record.status == "completed":
+            if record.status == "completed" and record.oss_object_key:
                 path.unlink(missing_ok=True)
                 continue
-            self._start_task(
-                job_id=job_id,
-                timeline_index=timeline_index,
-                manifest_url=None,
-                start_ms=int(match.group("start")) * 1000,
-                end_ms=int(match.group("end")) * 1000,
-                output_path=path,
+            record = self.repository.retry_video_clip_export(
+                job_id, record.id, allow_completed=True
             )
+            self._start_task(record, manifest_url=None, output_path=path)
 
-    def output_path(
+    def output_path_for(self, record: VideoClipExportRecord) -> Path:
+        if not SAFE_ID_RE.fullmatch(record.job_id):
+            raise AppError("invalid_job_id", "任务 ID 无效", False)
+        if not SAFE_ID_RE.fullmatch(record.id):
+            raise AppError("invalid_clip_id", "视频片段 ID 无效", False)
+        return self.output_dir / record.job_id / record.filename
+
+    def output_filename(
         self,
-        job_id: str,
+        *,
+        clip_id: str,
         timeline_index: int,
         start_ms: int,
         end_ms: int,
-    ) -> Path:
-        if Path(job_id).name != job_id:
-            raise AppError("invalid_job_id", "任务 ID 无效", False)
-        filename = (
+        subtitle_mode: str,
+        include_danmaku: bool,
+    ) -> str:
+        overlay = subtitle_mode
+        if include_danmaku:
+            overlay += "-danmaku"
+        return (
             f"timeline-{timeline_index + 1:02d}-"
-            f"{start_ms // 1000}-{end_ms // 1000}.mp4"
+            f"{start_ms}-{end_ms}-{overlay}-{clip_id[:8]}.mp4"
         )
-        return self.output_dir / job_id / filename
+
+    def start_export(
+        self,
+        *,
+        job_id: str,
+        timeline_index: int,
+        timeline_title: str,
+        requested_by_user_id: str | None,
+        request_id: str,
+        manifest_url: str,
+        start_ms: int,
+        end_ms: int,
+        subtitle_mode: str,
+        include_danmaku: bool,
+    ) -> VideoClipExportRecord:
+        clip_id = str(uuid.uuid4())
+        filename = self.output_filename(
+            clip_id=clip_id,
+            timeline_index=timeline_index,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            subtitle_mode=subtitle_mode,
+            include_danmaku=include_danmaku,
+        )
+        record, created = self.repository.begin_video_clip_export(
+            clip_id=clip_id,
+            job_id=job_id,
+            timeline_index=timeline_index,
+            timeline_title=timeline_title,
+            requested_by_user_id=requested_by_user_id,
+            request_id=request_id,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            subtitle_mode=subtitle_mode,
+            include_danmaku=include_danmaku,
+            render_version=RENDER_VERSION,
+            filename=filename,
+        )
+        if created:
+            self._start_task(
+                record,
+                manifest_url=manifest_url,
+                output_path=self.output_path_for(record),
+            )
+        return record
+
+    def retry_export(
+        self,
+        *,
+        job_id: str,
+        clip_id: str,
+        manifest_url: str,
+    ) -> VideoClipExportRecord:
+        record = self.repository.retry_video_clip_export(job_id, clip_id)
+        current = self._tasks.get(clip_id)
+        if current is None or current.done():
+            self._start_task(
+                record,
+                manifest_url=manifest_url,
+                output_path=self.output_path_for(record),
+            )
+        return record
+
+    async def suggest_boundary(
+        self,
+        *,
+        job_id: str,
+        manifest_url: str,
+        duration_ms: int,
+        boundary: BoundaryKind,
+        target_ms: int,
+        minimum_ms: int = 0,
+        maximum_ms: int | None = None,
+    ) -> BoundarySuggestion:
+        return await self.boundaries.suggest(
+            job_id=job_id,
+            manifest_url=manifest_url,
+            duration_ms=duration_ms,
+            boundary=boundary,
+            target_ms=target_ms,
+            minimum_ms=minimum_ms,
+            maximum_ms=maximum_ms,
+        )
+
+    def get_export(
+        self, job_id: str, clip_id: str
+    ) -> VideoClipExportRecord | None:
+        return self.repository.get_video_clip_export(job_id, clip_id)
+
+    def list_exports(
+        self, job_id: str, timeline_index: int | None = None
+    ) -> list[VideoClipExportRecord]:
+        return self.repository.list_video_clip_exports(
+            job_id, timeline_index=timeline_index
+        )
+
+    def latest_export(
+        self,
+        job_id: str,
+        timeline_index: int,
+        *,
+        completed_only: bool = False,
+    ) -> VideoClipExportRecord | None:
+        return self.repository.get_latest_video_clip_export(
+            job_id,
+            timeline_index,
+            completed_only=completed_only,
+        )
 
     def start(
         self,
@@ -95,55 +231,27 @@ class VideoClipService:
         start_ms: int,
         end_ms: int,
     ) -> ClipState:
-        key = (job_id, timeline_index)
-        output_path = self.output_path(
-            job_id, timeline_index, start_ms, end_ms
-        )
-        current = self._states.get(key)
-        if current and current.status == "running":
-            return current
-        record = self.repository.get_video_clip(job_id, timeline_index)
-        if record and record.status == "completed" and record.oss_object_key:
-            state = ClipState(
-                "completed",
-                output_path,
-                oss_object_key=record.oss_object_key,
-            )
-            self._states[key] = state
-            return state
-        return self._start_task(
+        record = self.start_export(
             job_id=job_id,
             timeline_index=timeline_index,
+            timeline_title="",
+            requested_by_user_id=None,
+            request_id=(
+                f"legacy-api:{timeline_index}:{start_ms}:{end_ms}"
+            ),
             manifest_url=manifest_url,
             start_ms=start_ms,
             end_ms=end_ms,
-            output_path=output_path,
+            subtitle_mode="off",
+            include_danmaku=False,
         )
-
-    def _start_task(
-        self,
-        *,
-        job_id: str,
-        timeline_index: int,
-        manifest_url: str | None,
-        start_ms: int,
-        end_ms: int,
-        output_path: Path,
-    ) -> ClipState:
-        key = (job_id, timeline_index)
-        self.repository.begin_video_clip(
-            job_id,
-            timeline_index,
-            start_ms,
-            end_ms,
-            output_path.name,
-        )
-        state = ClipState("running", output_path)
-        self._states[key] = state
-        self._tasks[key] = asyncio.create_task(
-            self._run(key, state, manifest_url, start_ms, end_ms)
-        )
-        return state
+        if record.status == "failed":
+            record = self.retry_export(
+                job_id=job_id,
+                clip_id=record.id,
+                manifest_url=manifest_url,
+            )
+        return self._state_from_record(record)
 
     def get(
         self,
@@ -153,39 +261,41 @@ class VideoClipService:
         start_ms: int,
         end_ms: int,
     ) -> ClipState | None:
-        key = (job_id, timeline_index)
-        output_path = self.output_path(
-            job_id, timeline_index, start_ms, end_ms
-        )
-        current = self._states.get(key)
+        del start_ms, end_ms
+        record = self.latest_export(job_id, timeline_index)
+        return self._state_from_record(record) if record else None
+
+    def _start_task(
+        self,
+        record: VideoClipExportRecord,
+        *,
+        manifest_url: str | None,
+        output_path: Path,
+    ) -> ClipState:
+        current = self._states.get(record.id)
         if current and current.status == "running":
             return current
-        record = self.repository.get_video_clip(job_id, timeline_index)
-        if record is not None:
-            state = ClipState(
-                record.status,
-                output_path,
-                error=record.error_message,
-                oss_object_key=record.oss_object_key,
-            )
-            self._states[key] = state
-            return state
-        if output_path.is_file() and output_path.stat().st_size > 0:
-            state = ClipState("completed", output_path)
-            self._states[key] = state
-            return state
-        return None
+        state = ClipState(
+            status="running",
+            output_path=output_path,
+            clip_id=record.id,
+        )
+        self._states[record.id] = state
+        self._tasks[record.id] = asyncio.create_task(
+            self._run(record, state, manifest_url)
+        )
+        return state
 
     async def _run(
         self,
-        key: tuple[str, int],
+        record: VideoClipExportRecord,
         state: ClipState,
         manifest_url: str | None,
-        start_ms: int,
-        end_ms: int,
     ) -> None:
+        ass_path = state.output_path.with_suffix(".ass")
         try:
             async with self._capacity:
+                warning = record.warning_message
                 for attempt in range(1, self._retry_attempts + 1):
                     try:
                         if not (
@@ -198,24 +308,78 @@ class VideoClipService:
                                     "本地视频片段不存在，请重新剪辑",
                                     True,
                                 )
-                            await self.ffmpeg.clip_video(
-                                manifest_url,
-                                state.output_path,
-                                start_ms,
-                                end_ms,
-                            )
+                            ass_input: Path | None = None
+                            if (
+                                record.subtitle_mode != "off"
+                                or record.include_danmaku
+                            ):
+                                await self._require_ass_support()
+                                dimensions = (
+                                    await self.ffmpeg.probe_video_dimensions(
+                                        manifest_url
+                                    )
+                                )
+                                document = build_clip_overlay(
+                                    width=dimensions.width,
+                                    height=dimensions.height,
+                                    clip_start_ms=record.start_ms,
+                                    clip_end_ms=record.end_ms,
+                                    subtitle_mode=record.subtitle_mode,
+                                    include_danmaku=record.include_danmaku,
+                                    font_name=self.settings.clip_font_name,
+                                    transcript=(
+                                        self.repository.get_all_transcript(
+                                            record.job_id
+                                        )
+                                    ),
+                                    translations=(
+                                        self.repository
+                                        .get_transcript_translations(
+                                            record.job_id, "en"
+                                        )
+                                    ),
+                                    danmaku=(
+                                        self.repository.get_all_danmaku(
+                                            record.job_id
+                                        )
+                                    ),
+                                )
+                                ass_path.parent.mkdir(
+                                    parents=True, exist_ok=True
+                                )
+                                ass_path.write_text(
+                                    document.content, encoding="utf-8"
+                                )
+                                ass_input = ass_path
+                                warning = document.warning_message
+                            if ass_input is None:
+                                await self.ffmpeg.clip_video(
+                                    manifest_url,
+                                    state.output_path,
+                                    record.start_ms,
+                                    record.end_ms,
+                                )
+                            else:
+                                await self.ffmpeg.clip_video(
+                                    manifest_url,
+                                    state.output_path,
+                                    record.start_ms,
+                                    record.end_ms,
+                                    ass_input,
+                                )
                         object_key = self.oss.clip_object_key(
-                            key[0], state.output_path.name
+                            record.job_id, state.output_path.name
                         )
                         await self.oss.upload_clip(
                             state.output_path,
                             object_key,
                             state.output_path.name,
                         )
-                        self.repository.complete_video_clip(
-                            key[0], key[1], object_key
+                        self.repository.complete_video_clip_export(
+                            record.id, object_key, warning
                         )
                         state.oss_object_key = object_key
+                        state.warning = warning
                         state.output_path.unlink(missing_ok=True)
                         break
                     except asyncio.CancelledError:
@@ -230,8 +394,8 @@ class VideoClipService:
                         self.logger.warning(
                             "Retrying video clip after transient failure",
                             extra={
-                                "job_id": key[0],
-                                "timeline_index": key[1],
+                                "job_id": record.job_id,
+                                "clip_id": record.id,
                                 "attempt": attempt,
                                 "error_code": exc.code,
                             },
@@ -242,11 +406,12 @@ class VideoClipService:
                         self.logger.exception(
                             "Retrying video clip after unexpected failure",
                             extra={
-                                "job_id": key[0],
-                                "timeline_index": key[1],
+                                "job_id": record.job_id,
+                                "clip_id": record.id,
                                 "attempt": attempt,
                             },
                         )
+                    ass_path.unlink(missing_ok=True)
                     await asyncio.sleep(
                         self._retry_delay_seconds * (2 ** (attempt - 1))
                     )
@@ -254,32 +419,95 @@ class VideoClipService:
         except AppError as exc:
             state.status = "failed"
             state.error = exc.message
-            self.repository.fail_video_clip(key[0], key[1], exc.message)
+            state.output_path.unlink(missing_ok=True)
+            self.repository.fail_video_clip_export(record.id, exc.message)
         except asyncio.CancelledError:
             state.status = "failed"
             state.error = "服务重启中，请重新剪辑"
-            self.repository.fail_video_clip(
-                key[0], key[1], state.error
+            self.repository.fail_video_clip_export(
+                record.id, state.error
             )
             raise
         except Exception:
             self.logger.exception("Unexpected video clipping failure")
             state.status = "failed"
             state.error = "视频剪辑失败，请查看服务日志"
-            self.repository.fail_video_clip(
-                key[0], key[1], state.error
+            state.output_path.unlink(missing_ok=True)
+            self.repository.fail_video_clip_export(
+                record.id, state.error
             )
         finally:
-            self._tasks.pop(key, None)
+            ass_path.unlink(missing_ok=True)
+            self._tasks.pop(record.id, None)
 
-    async def signed_download_url(self, state: ClipState) -> str:
-        if not state.oss_object_key:
+    async def _require_ass_support(self) -> None:
+        if self._ass_supported is None:
+            async with self._ass_probe_lock:
+                if self._ass_supported is None:
+                    self._ass_supported = await self.ffmpeg.supports_ass_filter()
+        if not self._ass_supported:
+            raise AppError(
+                "clip_overlay_unavailable",
+                "当前 FFmpeg 不支持 ASS 字幕滤镜，无法烧录字幕或弹幕",
+                False,
+            )
+
+    def _register_legacy_file(
+        self, job_id: str, path: Path
+    ) -> VideoClipExportRecord | None:
+        match = LEGACY_CLIP_RE.fullmatch(path.name)
+        if not match:
+            return None
+        timeline_index = int(match.group("index")) - 1
+        if timeline_index < 0:
+            return None
+        clip_id = (
+            f"legacy-file-{job_id.replace('-', '')}-{timeline_index}"
+        )
+        record, _ = self.repository.begin_video_clip_export(
+            clip_id=clip_id,
+            job_id=job_id,
+            timeline_index=timeline_index,
+            timeline_title="",
+            requested_by_user_id=None,
+            request_id=f"legacy-file:{timeline_index}:{path.name}",
+            start_ms=int(match.group("start")) * 1000,
+            end_ms=int(match.group("end")) * 1000,
+            subtitle_mode="off",
+            include_danmaku=False,
+            render_version="legacy-v1",
+            filename=path.name,
+        )
+        return record
+
+    def _state_from_record(
+        self, record: VideoClipExportRecord
+    ) -> ClipState:
+        current = self._states.get(record.id)
+        if current and current.status == "running":
+            return current
+        state = ClipState(
+            status=record.status,
+            output_path=self.output_path_for(record),
+            clip_id=record.id,
+            error=record.error_message,
+            warning=record.warning_message,
+            oss_object_key=record.oss_object_key,
+        )
+        self._states[record.id] = state
+        return state
+
+    async def signed_download_url(
+        self, record_or_state: VideoClipExportRecord | ClipState
+    ) -> str:
+        object_key = record_or_state.oss_object_key
+        if not object_key:
             raise AppError(
                 "video_clip_not_ready",
                 "视频片段尚未上传完成",
                 True,
             )
-        return await self.oss.signed_clip_url(state.oss_object_key)
+        return await self.oss.signed_clip_url(object_key)
 
     async def close(self) -> None:
         tasks = list(self._tasks.values())

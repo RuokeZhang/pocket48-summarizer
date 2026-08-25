@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from pocket48_summarizer.app import create_app
 from pocket48_summarizer.auth import AuthRepository, hash_password
+from pocket48_summarizer.media.boundaries import BoundarySuggestion
 from pocket48_summarizer.media.clips import ClipState
 from pocket48_summarizer.models import (
     DanmakuEntry,
@@ -32,9 +33,11 @@ class DummyWorker:
 
 
 class DummyClipper:
-    def __init__(self, output_path):
+    def __init__(self, output_path, repository=None):
         self.state = ClipState("completed", output_path)
         self.started_with = None
+        self.started_export_with = None
+        self.repository = repository
 
     def start(self, **kwargs):
         self.started_with = kwargs
@@ -42,6 +45,55 @@ class DummyClipper:
 
     def get(self, **kwargs):
         return self.state
+
+    def start_export(self, **kwargs):
+        self.started_export_with = kwargs
+        record, _ = self.repository.begin_video_clip_export(
+            clip_id="clip-export-1",
+            job_id=kwargs["job_id"],
+            timeline_index=kwargs["timeline_index"],
+            timeline_title=kwargs["timeline_title"],
+            requested_by_user_id=kwargs["requested_by_user_id"],
+            request_id=kwargs["request_id"],
+            start_ms=kwargs["start_ms"],
+            end_ms=kwargs["end_ms"],
+            subtitle_mode=kwargs["subtitle_mode"],
+            include_danmaku=kwargs["include_danmaku"],
+            render_version="ass-v1",
+            filename=self.state.output_path.name,
+        )
+        self.repository.complete_video_clip_export(
+            record.id, "clips/job/clip-export-1.mp4"
+        )
+        return self.repository.get_video_clip_export(
+            kwargs["job_id"], record.id
+        )
+
+    def retry_export(self, **kwargs):
+        record = self.repository.retry_video_clip_export(
+            kwargs["job_id"], kwargs["clip_id"]
+        )
+        self.repository.complete_video_clip_export(
+            record.id, "clips/job/clip-export-1.mp4"
+        )
+        return self.repository.get_video_clip_export(
+            kwargs["job_id"], record.id
+        )
+
+    async def suggest_boundary(self, **kwargs):
+        return BoundarySuggestion(
+            boundary=kwargs["boundary"],
+            requested_ms=kwargs["target_ms"],
+            sentence_sequence=1,
+            sentence_ms=30_000,
+            suggested_ms=29_850,
+            source="silence",
+            silence_start_ms=29_400,
+            silence_end_ms=29_850,
+        )
+
+    def output_path_for(self, record):
+        return self.state.output_path
 
     async def startup(self):
         return None
@@ -254,6 +306,15 @@ def test_timeline_clip_can_be_created_and_downloaded(
         )
 
     assert 'class="clip-button"' in page.text
+    assert 'id="clip-editor"' in page.text
+    assert 'data-duration-ms="600000"' in page.text
+    assert 'data-clip-start-ms="61250"' in page.text
+    assert 'data-clip-end-ms="125750"' in page.text
+    assert 'id="clip-start-range"' in page.text
+    assert 'id="clip-end-range"' in page.text
+    assert 'id="clip-subtitle-mode"' in page.text
+    assert 'id="clip-danmaku-enabled"' in page.text
+    assert 'id="clip-preview-player"' in page.text
     assert blocked.status_code == 503
     assert blocked.json()["error"]["code"] == "clipper_maintenance"
     assert response.status_code == 200
@@ -265,6 +326,155 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert download.content == b"fake mp4"
     assert redirect.status_code == 303
     assert redirect.headers["location"].startswith("https://oss.example/")
+
+
+def test_configurable_clip_export_routes_preserve_versions(
+    settings, repository, tmp_path
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=556678",
+        "556678",
+    )
+    repository.set_media_details(
+        job.id,
+        "https://idol-vod.48.cn/path/replay.m3u8",
+        600_000,
+    )
+    repository.replace_transcript(
+        job.id,
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=30_000,
+                end_ms=60_000,
+                text="测试字幕",
+            )
+        ],
+    )
+    repository.save_summary(
+        job.id,
+        FinalSummary(
+            overview="测试",
+            timeline=[
+                TimelineItem(
+                    start_ms=30_000,
+                    end_ms=60_000,
+                    title="可调剪辑",
+                    detail="测试详情",
+                    evidence_segment_ids=[1],
+                )
+            ],
+            topics=[],
+            highlights=[],
+        ).model_dump_json(),
+        "# 测试",
+    )
+    repository.claim_next_job("worker", 120)
+    repository.mark_completed(job.id)
+    output_path = tmp_path / "clip-export-1.mp4"
+    output_path.write_bytes(b"configurable clip")
+    clipper = DummyClipper(output_path, repository)
+    app = auth_app(settings, repository, clipper=clipper)
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        suggestion = alice.post(
+            f"/api/jobs/{job.id}/clip-boundaries/suggest",
+            json={
+                "timeline_index": 0,
+                "boundary": "start",
+                "target_ms": 30_400,
+            },
+            headers=csrf_headers(alice),
+        )
+        created = alice.post(
+            f"/api/jobs/{job.id}/clip-exports",
+            json={
+                "request_id": "request-clip-1",
+                "timeline_index": 0,
+                "start_ms": 29_850,
+                "end_ms": 60_500,
+                "subtitle_mode": "zh",
+                "include_danmaku": False,
+            },
+            headers=csrf_headers(alice),
+        )
+        repeated = alice.post(
+            f"/api/jobs/{job.id}/clip-exports",
+            json={
+                "request_id": "request-clip-1",
+                "timeline_index": 0,
+                "start_ms": 29_850,
+                "end_ms": 60_500,
+                "subtitle_mode": "zh",
+                "include_danmaku": False,
+            },
+            headers=csrf_headers(alice),
+        )
+        english_blocked = alice.post(
+            f"/api/jobs/{job.id}/clip-exports",
+            json={
+                "request_id": "request-clip-en",
+                "timeline_index": 0,
+                "start_ms": 30_000,
+                "end_ms": 60_000,
+                "subtitle_mode": "en",
+                "include_danmaku": False,
+            },
+            headers=csrf_headers(alice),
+        )
+
+    newer, _ = repository.begin_video_clip_export(
+        clip_id="clip-export-failed",
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="可调剪辑",
+        requested_by_user_id=None,
+        request_id="request-clip-failed",
+        start_ms=31_000,
+        end_ms=59_000,
+        subtitle_mode="off",
+        include_danmaku=False,
+        render_version="ass-v1",
+        filename="clip-export-failed.mp4",
+    )
+    repository.fail_video_clip_export(newer.id, "测试失败")
+
+    with TestClient(app) as anonymous:
+        listed = anonymous.get(f"/api/jobs/{job.id}/clip-exports")
+        status = anonymous.get(
+            f"/api/jobs/{job.id}/clip-exports/clip-export-1"
+        )
+        download = anonymous.get(
+            f"/jobs/{job.id}/clip-exports/clip-export-1/download",
+            follow_redirects=False,
+        )
+        legacy_download = anonymous.get(
+            f"/jobs/{job.id}/clips/0/download",
+            follow_redirects=False,
+        )
+
+    assert suggestion.status_code == 200
+    assert suggestion.json()["source"] == "silence"
+    assert suggestion.json()["suggested_ms"] == 29_850
+    assert created.status_code == 200
+    assert repeated.json()["id"] == created.json()["id"]
+    assert created.json()["subtitle_mode"] == "zh"
+    assert clipper.started_export_with["start_ms"] == 29_850
+    assert english_blocked.status_code == 409
+    assert (
+        english_blocked.json()["error"]["code"]
+        == "clip_english_subtitles_not_ready"
+    )
+    assert listed.status_code == 200
+    assert len(listed.json()["clips"]) == 2
+    assert status.json()["id"] == "clip-export-1"
+    assert download.status_code == 303
+    assert download.headers["location"].startswith("https://oss.example/")
+    assert legacy_download.status_code == 303
+    assert legacy_download.headers["location"].startswith(
+        "https://oss.example/"
+    )
 
 
 def auth_app(
@@ -772,6 +982,7 @@ def test_any_invited_user_can_clip_a_public_result(
     assert response.status_code == 200
     assert clipper.started_with["job_id"] == job_id
     assert 'class="clip-button"' not in page.text
+    assert 'id="clip-editor"' not in page.text
     assert 'id="replay-player"' in page.text
     assert "hls-1.7.1.min.js" in page.text
     assert (
@@ -854,9 +1065,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260825-6" in page.text
-    assert "styles.css?v=20260825-9" in page.text
-    assert "app.js?v=20260825-4" in page.text
+    assert "i18n.js?v=20260825-7" in page.text
+    assert "styles.css?v=20260825-10" in page.text
+    assert "app.js?v=20260825-5" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text

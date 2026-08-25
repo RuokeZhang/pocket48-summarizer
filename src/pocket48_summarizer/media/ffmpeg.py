@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import shutil
 import sys
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -12,6 +15,23 @@ from ..errors import AppError, ConfigurationError
 from ..security import MEDIA_HOSTS, redact_url, validate_https_url
 
 Heartbeat = Callable[[], Awaitable[None]]
+SILENCE_START_RE = re.compile(r"silence_start:\s*(-?\d+(?:\.\d+)?)")
+SILENCE_END_RE = re.compile(
+    r"silence_end:\s*(-?\d+(?:\.\d+)?)"
+    r"(?:\s*\|\s*silence_duration:\s*(\d+(?:\.\d+)?))?"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SilenceInterval:
+    start_ms: int
+    end_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class VideoDimensions:
+    width: int
+    height: int
 
 
 class FFmpegRunner:
@@ -24,6 +44,14 @@ class FFmpegRunner:
         if not executable:
             raise ConfigurationError(
                 "FFmpeg 未安装或 FFMPEG_PATH 无效；应用不会自动下载二进制文件"
+            )
+        return executable
+
+    def require_ffprobe_executable(self) -> str:
+        executable = self.settings.ffprobe_executable()
+        if not executable:
+            raise ConfigurationError(
+                "FFprobe 未安装或 FFPROBE_PATH 无效，无法渲染字幕或弹幕"
             )
         return executable
 
@@ -155,6 +183,7 @@ class FFmpegRunner:
         output_path: Path,
         start_ms: int,
         end_ms: int,
+        ass_path: Path | None = None,
     ) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -180,7 +209,7 @@ class FFmpegRunner:
                 ),
                 False,
             )
-        return [
+        command = [
             self.require_executable(),
             "-nostdin",
             "-hide_banner",
@@ -212,6 +241,16 @@ class FFmpegRunner:
             "0:v:0",
             "-map",
             "0:a:0?",
+        ]
+        if ass_path is not None:
+            command.extend(
+                [
+                    "-vf",
+                    f"ass=filename='{self._escape_filter_path(ass_path)}'",
+                ]
+            )
+        command.extend(
+            [
             "-c:v",
             "libx264",
             "-preset",
@@ -228,7 +267,195 @@ class FFmpegRunner:
             "make_zero",
             "-y",
             str(output_path),
+            ]
+        )
+        return command
+
+    def build_probe_command(self, manifest_url: str) -> list[str]:
+        validate_https_url(
+            manifest_url,
+            MEDIA_HOSTS,
+            code="invalid_media_url",
+            label="回放媒体",
+        )
+        return [
+            self.require_ffprobe_executable(),
+            "-v",
+            "error",
+            "-user_agent",
+            "pocket48-summarizer/0.1",
+            "-headers",
+            "Origin: https://h5.48.cn\r\nReferer: https://h5.48.cn/\r\n",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "json",
+            manifest_url,
         ]
+
+    async def probe_video_dimensions(
+        self, manifest_url: str, timeout_seconds: int = 30
+    ) -> VideoDimensions:
+        stdout, stderr = await self._run_capture_both(
+            self.build_probe_command(manifest_url),
+            timeout_seconds=timeout_seconds,
+            error_code="clip_video_probe_failed",
+            error_message="读取回放视频尺寸失败",
+            redact_value=manifest_url,
+        )
+        try:
+            payload = json.loads(stdout)
+            stream = payload["streams"][0]
+            width = int(stream["width"])
+            height = int(stream["height"])
+        except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise AppError(
+                "clip_video_probe_invalid",
+                "FFprobe 没有返回有效的视频尺寸",
+                True,
+            ) from exc
+        if width <= 0 or height <= 0 or width > 8192 or height > 8192:
+            raise AppError(
+                "clip_video_probe_invalid",
+                "回放视频尺寸超出允许范围",
+                False,
+            )
+        return VideoDimensions(width=width, height=height)
+
+    async def supports_ass_filter(self, timeout_seconds: int = 15) -> bool:
+        stdout, _ = await self._run_capture_both(
+            [
+                self.require_executable(),
+                "-nostdin",
+                "-hide_banner",
+                "-filters",
+            ],
+            timeout_seconds=timeout_seconds,
+            error_code="clip_overlay_probe_failed",
+            error_message="检查 FFmpeg 字幕滤镜失败",
+        )
+        return any(
+            line.split()[1:2] == ["ass"] for line in stdout.splitlines()
+        )
+
+    def build_silence_command(
+        self,
+        manifest_url: str,
+        *,
+        start_ms: int,
+        end_ms: int,
+        noise_db: float,
+        min_duration_ms: int,
+    ) -> list[str]:
+        validate_https_url(
+            manifest_url,
+            MEDIA_HOSTS,
+            code="invalid_media_url",
+            label="回放媒体",
+        )
+        if start_ms < 0 or end_ms <= start_ms:
+            raise AppError(
+                "invalid_silence_range",
+                "静音分析时间范围无效",
+                False,
+            )
+        return [
+            self.require_executable(),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "info",
+            "-user_agent",
+            "pocket48-summarizer/0.1",
+            "-rw_timeout",
+            "30000000",
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_on_network_error",
+            "1",
+            "-reconnect_on_http_error",
+            "4xx,5xx",
+            "-reconnect_delay_max",
+            "5",
+            "-headers",
+            "Origin: https://h5.48.cn\r\nReferer: https://h5.48.cn/\r\n",
+            "-ss",
+            f"{start_ms / 1000:.3f}",
+            "-i",
+            manifest_url,
+            "-t",
+            f"{(end_ms - start_ms) / 1000:.3f}",
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-af",
+            (
+                "silencedetect="
+                f"noise={noise_db:g}dB:"
+                f"d={min_duration_ms / 1000:.3f}"
+            ),
+            "-f",
+            "null",
+            "-",
+        ]
+
+    @staticmethod
+    def parse_silence_intervals(stderr: str) -> list[SilenceInterval]:
+        intervals: list[SilenceInterval] = []
+        pending_start_ms: int | None = None
+        for line in stderr.splitlines():
+            start_match = SILENCE_START_RE.search(line)
+            if start_match:
+                pending_start_ms = max(
+                    0, round(float(start_match.group(1)) * 1000)
+                )
+                continue
+            end_match = SILENCE_END_RE.search(line)
+            if not end_match:
+                continue
+            end_ms = max(0, round(float(end_match.group(1)) * 1000))
+            duration_ms = (
+                round(float(end_match.group(2)) * 1000)
+                if end_match.group(2)
+                else None
+            )
+            start_ms = pending_start_ms
+            if start_ms is None and duration_ms is not None:
+                start_ms = max(0, end_ms - duration_ms)
+            if start_ms is not None and end_ms >= start_ms:
+                intervals.append(SilenceInterval(start_ms, end_ms))
+            pending_start_ms = None
+        return intervals
+
+    async def detect_silence(
+        self,
+        manifest_url: str,
+        *,
+        start_ms: int,
+        end_ms: int,
+        noise_db: float,
+        min_duration_ms: int,
+        timeout_seconds: int,
+    ) -> list[SilenceInterval]:
+        stderr = await self._run_command_capture(
+            self.build_silence_command(
+                manifest_url,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                noise_db=noise_db,
+                min_duration_ms=min_duration_ms,
+            ),
+            timeout_seconds=timeout_seconds,
+            heartbeat=None,
+            error_code="clip_silence_analysis_failed",
+            error_message="分析剪辑边界静音失败",
+            redact_value=manifest_url,
+        )
+        return self.parse_silence_intervals(stderr)
 
     async def clip_video(
         self,
@@ -236,6 +463,7 @@ class FFmpegRunner:
         output_path: Path,
         start_ms: int,
         end_ms: int,
+        ass_path: Path | None = None,
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = output_path.with_suffix(".part.mp4")
@@ -247,6 +475,7 @@ class FFmpegRunner:
                     temporary_path,
                     start_ms,
                     end_ms,
+                    ass_path,
                 ),
                 timeout_seconds=max(
                     15 * 60, int((end_ms - start_ms) / 1000 * 2 + 300)
@@ -270,6 +499,18 @@ class FFmpegRunner:
             temporary_path.unlink(missing_ok=True)
             raise
         return output_path
+
+    @staticmethod
+    def _escape_filter_path(path: Path) -> str:
+        return (
+            str(path)
+            .replace("\\", "\\\\")
+            .replace(":", "\\:")
+            .replace("'", "\\'")
+            .replace(",", "\\,")
+            .replace("[", "\\[")
+            .replace("]", "\\]")
+        )
 
     async def extract_audio(
         self,
@@ -370,6 +611,25 @@ class FFmpegRunner:
         error_message: str,
         redact_value: str | None = None,
     ) -> None:
+        await self._run_command_capture(
+            command,
+            timeout_seconds=timeout_seconds,
+            heartbeat=heartbeat,
+            error_code=error_code,
+            error_message=error_message,
+            redact_value=redact_value,
+        )
+
+    async def _run_command_capture(
+        self,
+        command: list[str],
+        *,
+        timeout_seconds: int,
+        heartbeat: Heartbeat | None,
+        error_code: str,
+        error_message: str,
+        redact_value: str | None = None,
+    ) -> str:
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.DEVNULL,
@@ -412,6 +672,49 @@ class FFmpegRunner:
                 f"{error_message}：{error or '未知错误'}",
                 True,
             )
+        return stderr.decode("utf-8", errors="replace")[-64_000:]
+
+    async def _run_capture_both(
+        self,
+        command: list[str],
+        *,
+        timeout_seconds: int,
+        error_code: str,
+        error_message: str,
+        redact_value: str | None = None,
+    ) -> tuple[str, str]:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=timeout_seconds
+            )
+        except TimeoutError as exc:
+            await self._stop_process(process)
+            raise AppError(
+                f"{error_code}_timeout",
+                f"{error_message}：操作超时",
+                True,
+            ) from exc
+        except asyncio.CancelledError:
+            await self._stop_process(process)
+            raise
+        decoded_stdout = stdout.decode("utf-8", errors="replace")[-64_000:]
+        decoded_stderr = stderr.decode("utf-8", errors="replace")[-4000:]
+        if process.returncode != 0:
+            if redact_value:
+                decoded_stderr = decoded_stderr.replace(
+                    redact_value, redact_url(redact_value)
+                )
+            raise AppError(
+                error_code,
+                f"{error_message}：{decoded_stderr or '未知错误'}",
+                True,
+            )
+        return decoded_stdout, decoded_stderr
 
     @staticmethod
     def _cleanup_download_files(source_path: Path) -> None:

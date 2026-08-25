@@ -5,6 +5,8 @@ import pytest
 
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.media.clips import VideoClipService
+from pocket48_summarizer.media.ffmpeg import VideoDimensions
+from pocket48_summarizer.models import TranscriptSegment
 
 
 class FakeFFmpeg:
@@ -34,6 +36,47 @@ class FakeOSS:
 
     async def signed_clip_url(self, key: str) -> str:
         return f"https://oss.example/{key}?signed=1"
+
+
+class FlakyOSS(FakeOSS):
+    def __init__(self):
+        super().__init__()
+        self.attempts = 0
+
+    async def upload_clip(
+        self, path: Path, key: str, filename: str
+    ) -> None:
+        self.attempts += 1
+        if self.attempts == 1:
+            raise AppError("oss_upload_failed", "temporary OSS failure", True)
+        await super().upload_clip(path, key, filename)
+
+
+class OverlayFFmpeg(FakeFFmpeg):
+    def __init__(self):
+        self.ass_content = ""
+
+    async def supports_ass_filter(self) -> bool:
+        return True
+
+    async def probe_video_dimensions(
+        self, manifest_url: str
+    ) -> VideoDimensions:
+        return VideoDimensions(width=1080, height=1920)
+
+    async def clip_video(
+        self,
+        manifest_url: str,
+        output_path: Path,
+        start_ms: int,
+        end_ms: int,
+        ass_path: Path | None = None,
+    ) -> Path:
+        assert ass_path is not None
+        self.ass_content = ass_path.read_text(encoding="utf-8")
+        return await super().clip_video(
+            manifest_url, output_path, start_ms, end_ms
+        )
 
 
 class SlowFFmpeg:
@@ -79,9 +122,9 @@ async def test_clip_uploads_to_oss_persists_and_removes_local_file(
         start_ms=1000,
         end_ms=5000,
     )
-    await service._tasks[(job.id, 0)]
+    await service._tasks[state.clip_id]
 
-    record = repository.get_video_clip(job.id, 0)
+    record = repository.get_video_clip_export(job.id, state.clip_id)
     assert state.status == "completed"
     assert state.oss_object_key == f"clips/{job.id}/{state.output_path.name}"
     assert not state.output_path.exists()
@@ -134,9 +177,9 @@ async def test_startup_migrates_existing_local_clip(settings, repository):
     path.write_bytes(b"legacy video")
 
     await service.startup()
-    await service._tasks[(job.id, 0)]
+    await next(iter(service._tasks.values()))
 
-    record = repository.get_video_clip(job.id, 0)
+    record = repository.get_latest_video_clip_export(job.id, 0)
     assert record is not None
     assert record.status == "completed"
     assert oss.uploads[0][2] == b"legacy video"
@@ -166,7 +209,7 @@ async def test_shutdown_marks_running_clip_failed(settings, repository):
     await asyncio.sleep(0)
     await service.close()
 
-    record = repository.get_video_clip(job.id, 0)
+    record = repository.get_latest_video_clip_export(job.id, 0)
     assert record is not None
     assert record.status == "failed"
 
@@ -197,8 +240,67 @@ async def test_transient_clip_failure_is_retried(settings, repository):
         start_ms=1000,
         end_ms=5000,
     )
-    await service._tasks[(job.id, 0)]
+    await service._tasks[state.clip_id]
 
     assert ffmpeg.calls == 3
     assert state.status == "completed"
-    assert repository.get_video_clip(job.id, 0).status == "completed"
+    assert (
+        repository.get_video_clip_export(job.id, state.clip_id).status
+        == "completed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_overlay_export_keeps_warning_across_upload_retry(
+    settings, repository
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=991104",
+        "991104",
+    )
+    repository.replace_transcript(
+        job.id,
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=1000,
+                end_ms=4000,
+                text="测试字幕",
+            )
+        ],
+    )
+    oss = FlakyOSS()
+    ffmpeg = OverlayFFmpeg()
+    service = VideoClipService(
+        settings.model_copy(
+            update={
+                "clip_retry_attempts": 2,
+                "clip_retry_delay_seconds": 0,
+            }
+        ),
+        repository,
+        oss,  # type: ignore[arg-type]
+        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+    )
+
+    record = service.start_export(
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="测试",
+        requested_by_user_id=None,
+        request_id="overlay-request",
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="zh",
+        include_danmaku=True,
+    )
+    await service._tasks[record.id]
+
+    completed = repository.get_video_clip_export(job.id, record.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.warning_message == "所选范围没有可渲染的弹幕"
+    assert oss.attempts == 2
+    assert "[Events]" in ffmpeg.ass_content
+    assert "测试字幕" in ffmpeg.ass_content

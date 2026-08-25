@@ -26,7 +26,17 @@ sudo /opt/pocket48-summarizer/scripts/install-server.sh
 sudoedit /etc/pocket48-summarizer/app.env
 ```
 
-填写 OSS、DashScope 和 LLM 凭证。`ALIYUN_OSS_ENDPOINT` 使用香港内网 Endpoint 上传；`ALIYUN_OSS_PUBLIC_ENDPOINT` 必须使用公网 Endpoint，供 DashScope 和浏览器读取短期签名 URL。剪辑上传到独立的 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
+安装脚本会安装 FFmpeg/ffprobe 和 `fonts-noto-cjk`。填写 OSS、DashScope 和 LLM 凭证。`ALIYUN_OSS_ENDPOINT` 使用香港内网 Endpoint 上传；`ALIYUN_OSS_PUBLIC_ENDPOINT` 必须使用公网 Endpoint，供 DashScope 和浏览器读取短期签名 URL。剪辑上传到独立的 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
+
+首次发布带烧录字幕的剪辑功能前，确认生产依赖：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y fontconfig fonts-noto-cjk
+ffprobe -version
+ffmpeg -hide_banner -filters | grep -E '(^|[[:space:]])ass([[:space:]]|$)'
+fc-match 'Noto Sans CJK SC'
+```
 
 `MAX_REPLAY_HOURS=0` 表示不设置回放小时上限。若已有服务器配置仍为 `3`，部署新版本前需要在 `/etc/pocket48-summarizer/app.env` 中改为 `0`。
 
@@ -84,11 +94,11 @@ sudo /opt/pocket48-summarizer/scripts/deploy-release.sh HEAD
 curl --fail https://p48.ruokezhang.com/healthz
 ```
 
-浏览器未登录时应看到最近公开结果和已有剪辑下载，但看不到提交表单和剪辑按钮；登录后应能提交任务并新建剪辑。
+浏览器未登录时应看到最近公开结果和已有剪辑下载，但看不到提交表单和剪辑按钮；登录后应能打开剪辑编辑器、调整范围、预览字幕/弹幕并保留多个独立导出版本。
 
 ## 6. 蓝绿发布与回滚
 
-发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑会短暂返回维护提示。独立 Worker 会在当前直播任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务和翻译任务并重新排队；任务已持久化的 DashScope ID、总结分块和英文字幕片段会继续复用，不会从头重复提交。
+发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑和边界分析会短暂返回维护提示。脚本先取得剪辑操作锁，再同时排空旧 `video_clips` 和新 `video_clip_exports` 中的运行任务，避免在 FFmpeg 或静音分析执行中切槽。独立 Worker 会在当前直播任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务和翻译任务并重新排队；任务已持久化的 DashScope ID、总结分块和英文字幕片段会继续复用，不会从头重复提交。
 
 ```bash
 cd /opt/pocket48-summarizer

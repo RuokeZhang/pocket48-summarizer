@@ -148,7 +148,12 @@
       <h2 data-i18n="timeline">时间线</h2>
       <ol class="timeline">
         {% for item in summary.timeline %}
-          <li data-clip-index="{{ loop.index0 }}">
+          <li
+            data-clip-index="{{ loop.index0 }}"
+            data-clip-start-ms="{{ item.start_ms }}"
+            data-clip-end-ms="{{ item.end_ms }}"
+            data-clip-title="{{ item.title }}"
+          >
             <button
               class="timestamp-link"
               type="button"
@@ -169,7 +174,7 @@
               {% endif %}
             </div>
             <p>{{ item.detail }}</p>
-            <p class="clip-status" aria-live="polite" hidden></p>
+            <div class="clip-status" aria-live="polite" hidden></div>
           </li>
         {% endfor %}
       </ol>
@@ -218,6 +223,177 @@
         {% endfor %}
       </div>
     </section>
+  {% endif %}
+
+  {% if can_create_clips and summary %}
+    <dialog
+      id="clip-editor"
+      class="clip-editor"
+      data-duration-ms="{{ job.duration_ms or 0 }}"
+      data-context-ms="{{ clip_context_ms }}"
+      data-max-clip-ms="{{ max_clip_ms }}"
+      data-snap-threshold-ms="{{ clip_snap_threshold_ms }}"
+      aria-labelledby="clip-editor-title"
+    >
+      <div class="clip-editor-shell">
+        <header class="clip-editor-header">
+          <div>
+            <p class="eyebrow">Clip editor</p>
+            <h2 id="clip-editor-title" data-i18n="clipEditorTitle">调整剪辑</h2>
+            <p id="clip-editor-topic" class="muted"></p>
+          </div>
+          <button
+            id="clip-editor-close"
+            class="clip-editor-close"
+            type="button"
+            aria-label="关闭剪辑编辑器"
+            data-i18n-aria-label="closeClipEditor"
+          >×</button>
+        </header>
+
+        <div class="clip-editor-content">
+          <section class="clip-preview-card">
+            <div id="clip-preview-stage" class="clip-preview-stage">
+              <video
+                id="clip-preview-player"
+                controls
+                playsinline
+                preload="metadata"
+              ></video>
+              <div
+                id="clip-preview-subtitles"
+                class="clip-preview-subtitles"
+                hidden
+              >
+                <p id="clip-preview-zh"></p>
+                <p id="clip-preview-en"></p>
+              </div>
+              <div
+                id="clip-preview-danmaku"
+                class="clip-preview-danmaku"
+                hidden
+              ></div>
+            </div>
+            <div class="clip-preview-actions">
+              <button
+                id="clip-preview-selection"
+                type="button"
+                data-i18n="playSelection"
+              >播放所选区间</button>
+              <strong id="clip-selected-duration">00:00:00.0</strong>
+            </div>
+          </section>
+
+          <section class="clip-editor-controls">
+            <div
+              id="clip-range-control"
+              class="clip-range-control"
+              aria-label="剪辑时间范围"
+              data-i18n-aria-label="clipTimeRange"
+            >
+              <div class="clip-range-rail"></div>
+              <input
+                id="clip-start-range"
+                class="clip-range-input clip-start-range"
+                type="range"
+                step="100"
+                aria-label="剪辑开始时间"
+                data-i18n-aria-label="clipStartRange"
+              >
+              <input
+                id="clip-end-range"
+                class="clip-range-input clip-end-range"
+                type="range"
+                step="100"
+                aria-label="剪辑结束时间"
+                data-i18n-aria-label="clipEndRange"
+              >
+            </div>
+            <div class="clip-window-copy">
+              <span id="clip-window-start"></span>
+              <span id="clip-window-end"></span>
+            </div>
+
+            <div class="clip-boundary-grid">
+              <fieldset class="clip-boundary-field">
+                <legend data-i18n="clipStart">开始</legend>
+                <input
+                  id="clip-start-input"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  aria-label="剪辑开始时间"
+                  data-i18n-aria-label="clipStart"
+                >
+                <div class="clip-step-buttons">
+                  <button type="button" data-clip-adjust="start:-100">−0.1s</button>
+                  <button type="button" data-clip-adjust="start:100">+0.1s</button>
+                </div>
+                <small id="clip-start-snap"></small>
+              </fieldset>
+              <fieldset class="clip-boundary-field">
+                <legend data-i18n="clipEnd">结束</legend>
+                <input
+                  id="clip-end-input"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  aria-label="剪辑结束时间"
+                  data-i18n-aria-label="clipEnd"
+                >
+                <div class="clip-step-buttons">
+                  <button type="button" data-clip-adjust="end:-100">−0.1s</button>
+                  <button type="button" data-clip-adjust="end:100">+0.1s</button>
+                </div>
+                <small id="clip-end-snap"></small>
+              </fieldset>
+            </div>
+
+            <div class="clip-option-grid">
+              <label class="toggle-control">
+                <input id="clip-snap-enabled" type="checkbox" checked>
+                <span data-i18n="snapToSpeech">吸附语句与静音边界</span>
+              </label>
+              <button
+                id="clip-reset-range"
+                class="secondary-button"
+                type="button"
+                data-i18n="resetAiRange"
+              >恢复 AI 范围</button>
+              <label>
+                <span data-i18n="burnedSubtitles">烧录字幕</span>
+                <select id="clip-subtitle-mode">
+                  <option value="off" data-i18n="off">关闭</option>
+                  <option value="zh" selected data-i18n="chinese">中文</option>
+                  <option value="en" data-i18n="english">English</option>
+                  <option value="bilingual" data-i18n="bilingual">中英双语</option>
+                </select>
+              </label>
+              <label class="toggle-control">
+                <input id="clip-danmaku-enabled" type="checkbox">
+                <span data-i18n="burnDanmaku">烧录弹幕</span>
+              </label>
+            </div>
+
+            <p id="clip-editor-error" class="clip-editor-error" role="alert"></p>
+          </section>
+        </div>
+
+        <footer class="clip-editor-footer">
+          <button
+            id="clip-editor-cancel"
+            class="secondary-button"
+            type="button"
+            data-i18n="cancel"
+          >取消</button>
+          <button
+            id="clip-editor-submit"
+            type="button"
+            data-i18n="createClipExport"
+          >生成剪辑</button>
+        </footer>
+      </div>
+    </dialog>
   {% endif %}
 
   <section class="two-column">

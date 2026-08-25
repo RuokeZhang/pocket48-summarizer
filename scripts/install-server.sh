@@ -23,6 +23,8 @@ apt-get install -y \
   debian-archive-keyring \
   debian-keyring \
   ffmpeg \
+  fontconfig \
+  fonts-noto-cjk \
   git \
   gnupg \
   python3 \

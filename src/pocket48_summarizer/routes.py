@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
@@ -12,7 +13,7 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import AuthContext
 from .errors import AppError
@@ -23,6 +24,8 @@ from .models import (
     JobRecord,
     JobStatus,
     SubtitleTranslationRequestRecord,
+    TimelineItem,
+    VideoClipExportRecord,
 )
 from .parsing.transcript import transcript_to_srt
 from .runtime_lock import shared_runtime_lock
@@ -34,6 +37,25 @@ router = APIRouter()
 
 class CreateJobRequest(BaseModel):
     url: str
+
+
+class ClipBoundarySuggestionRequest(BaseModel):
+    timeline_index: int = Field(ge=0)
+    boundary: Literal["start", "end"]
+    target_ms: int = Field(ge=0)
+
+
+class CreateClipExportRequest(BaseModel):
+    request_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    timeline_index: int = Field(ge=0)
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=1)
+    subtitle_mode: Literal["off", "zh", "en", "bilingual"]
+    include_danmaku: bool = False
 
 
 def format_china_datetime(value: str | None) -> str:
@@ -136,7 +158,7 @@ def public_job_payload(job: JobRecord) -> dict:
 
 def timeline_clip_context(
     request: Request, job_id: str, timeline_index: int
-) -> tuple[JobRecord, object]:
+) -> tuple[JobRecord, TimelineItem]:
     _, job = require_readable_job(request, job_id)
     if not job.summary_json:
         raise AppError("summary_not_ready", "总结尚未生成", True)
@@ -146,6 +168,99 @@ def timeline_clip_context(
     if not job.media_url:
         raise AppError("media_not_ready", "回放媒体地址尚未生成", True)
     return job, summary.timeline[timeline_index]
+
+
+def clip_editor_bounds(
+    request: Request, job: JobRecord, item: TimelineItem
+) -> tuple[int, int]:
+    if not job.duration_ms or job.duration_ms <= 0:
+        raise AppError(
+            "media_duration_missing",
+            "回放时长尚未准备好",
+            True,
+        )
+    context_ms = round(
+        request.app.state.settings.clip_editor_context_minutes
+        * 60
+        * 1000
+    )
+    return (
+        max(0, item.start_ms - context_ms),
+        min(job.duration_ms, item.end_ms + context_ms),
+    )
+
+
+def validate_clip_range(
+    request: Request,
+    job: JobRecord,
+    item: TimelineItem,
+    start_ms: int,
+    end_ms: int,
+) -> None:
+    lower_bound, upper_bound = clip_editor_bounds(request, job, item)
+    if (
+        start_ms < lower_bound
+        or end_ms > upper_bound
+        or end_ms <= start_ms
+    ):
+        raise AppError(
+            "invalid_clip_range",
+            "剪辑范围超出当前时间线条目的可编辑窗口",
+            False,
+        )
+    max_duration_ms = round(
+        request.app.state.settings.max_clip_minutes * 60 * 1000
+    )
+    if end_ms - start_ms > max_duration_ms:
+        raise AppError(
+            "clip_too_long",
+            (
+                "单个视频片段最长 "
+                f"{request.app.state.settings.max_clip_minutes:g} 分钟"
+            ),
+            False,
+        )
+
+
+def validate_clip_subtitles(
+    request: Request,
+    job_id: str,
+    *,
+    start_ms: int,
+    end_ms: int,
+    subtitle_mode: str,
+) -> None:
+    if subtitle_mode == "off":
+        return
+    repository = request.app.state.services.repository
+    selected = [
+        segment
+        for segment in repository.get_all_transcript(job_id)
+        if segment.end_ms > start_ms and segment.start_ms < end_ms
+    ]
+    if not selected:
+        raise AppError(
+            "clip_subtitles_empty",
+            "所选范围没有可渲染的字幕",
+            False,
+        )
+    if subtitle_mode not in {"en", "bilingual"}:
+        return
+    translation = repository.get_subtitle_translation_request(job_id, "en")
+    translations = repository.get_transcript_translations(job_id, "en")
+    if (
+        translation is None
+        or translation.status != "completed"
+        or any(
+            not translations.get(segment.sequence, "").strip()
+            for segment in selected
+        )
+    ):
+        raise AppError(
+            "clip_english_subtitles_not_ready",
+            "所选范围的英文字幕尚未完整生成",
+            True,
+        )
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -230,6 +345,33 @@ def clip_payload(
     if state.status == "completed":
         payload["download_url"] = (
             f"/jobs/{job_id}/clips/{timeline_index}/download"
+        )
+    return payload
+
+
+def clip_export_payload(
+    job_id: str, record: VideoClipExportRecord
+) -> dict:
+    payload = {
+        "id": record.id,
+        "timeline_index": record.timeline_index,
+        "timeline_title": record.timeline_title,
+        "start_ms": record.start_ms,
+        "end_ms": record.end_ms,
+        "duration_ms": record.end_ms - record.start_ms,
+        "subtitle_mode": record.subtitle_mode,
+        "include_danmaku": record.include_danmaku,
+        "filename": record.filename,
+        "status": record.status,
+        "error": record.error_message,
+        "warning": record.warning_message,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "completed_at": record.completed_at,
+    }
+    if record.status == "completed":
+        payload["download_url"] = (
+            f"/jobs/{job_id}/clip-exports/{record.id}/download"
         )
     return payload
 
@@ -500,6 +642,18 @@ async def job_page(request: Request, job_id: str) -> Response:
                 and not request.app.state.settings.clip_maintenance_path.exists()
             ),
             "can_request_translation": context is not None,
+            "clip_context_ms": round(
+                request.app.state.settings.clip_editor_context_minutes
+                * 60
+                * 1000
+            ),
+            "max_clip_ms": round(
+                request.app.state.settings.max_clip_minutes * 60 * 1000
+            ),
+            "clip_snap_threshold_ms": (
+                request.app.state.settings
+                .clip_sentence_snap_threshold_ms
+            ),
         },
     )
 
@@ -660,6 +814,233 @@ async def retry_job(request: Request, job_id: str) -> dict:
     return public_job_payload(job)
 
 
+@router.post("/api/jobs/{job_id}/clip-boundaries/suggest")
+async def suggest_clip_boundary(
+    request: Request,
+    job_id: str,
+    payload: ClipBoundarySuggestionRequest,
+) -> dict:
+    context = require_auth(request)
+    request.app.state.auth.require_csrf(request, context)
+    job, item = timeline_clip_context(
+        request, job_id, payload.timeline_index
+    )
+    lower_bound, upper_bound = clip_editor_bounds(request, job, item)
+    if not lower_bound <= payload.target_ms <= upper_bound:
+        raise AppError(
+            "clip_boundary_out_of_window",
+            "剪辑边界超出当前时间线条目的可编辑窗口",
+            False,
+        )
+    clipper = request.app.state.services.clipper
+    if clipper is None:
+        raise AppError(
+            "clipper_unavailable",
+            "视频剪辑服务未启动",
+            True,
+        )
+    settings = request.app.state.settings
+    with shared_runtime_lock(settings.clip_operation_lock_path):
+        if settings.clip_maintenance_path.exists():
+            raise AppError(
+                "clipper_maintenance",
+                "服务正在发布新版本，请稍后再剪辑",
+                True,
+            )
+        suggestion = await clipper.suggest_boundary(
+            job_id=job.id,
+            manifest_url=job.media_url,
+            duration_ms=job.duration_ms,
+            boundary=payload.boundary,
+            target_ms=payload.target_ms,
+            minimum_ms=lower_bound,
+            maximum_ms=upper_bound,
+        )
+    return {
+        "boundary": suggestion.boundary,
+        "requested_ms": suggestion.requested_ms,
+        "sentence_sequence": suggestion.sentence_sequence,
+        "sentence_ms": suggestion.sentence_ms,
+        "suggested_ms": suggestion.suggested_ms,
+        "source": suggestion.source,
+        "silence_start_ms": suggestion.silence_start_ms,
+        "silence_end_ms": suggestion.silence_end_ms,
+    }
+
+
+@router.post("/api/jobs/{job_id}/clip-exports")
+async def create_clip_export(
+    request: Request,
+    job_id: str,
+    payload: CreateClipExportRequest,
+) -> Response:
+    context = require_auth(request)
+    request.app.state.auth.require_csrf(request, context)
+    job, item = timeline_clip_context(
+        request, job_id, payload.timeline_index
+    )
+    validate_clip_range(
+        request, job, item, payload.start_ms, payload.end_ms
+    )
+    validate_clip_subtitles(
+        request,
+        job.id,
+        start_ms=payload.start_ms,
+        end_ms=payload.end_ms,
+        subtitle_mode=payload.subtitle_mode,
+    )
+    clipper = request.app.state.services.clipper
+    if clipper is None:
+        raise AppError(
+            "clipper_unavailable",
+            "视频剪辑服务未启动",
+            True,
+        )
+    settings = request.app.state.settings
+    with shared_runtime_lock(settings.clip_operation_lock_path):
+        if settings.clip_maintenance_path.exists():
+            raise AppError(
+                "clipper_maintenance",
+                "服务正在发布新版本，请稍后再剪辑",
+                True,
+            )
+        record = clipper.start_export(
+            job_id=job.id,
+            timeline_index=payload.timeline_index,
+            timeline_title=item.title,
+            requested_by_user_id=context.user.id,
+            request_id=payload.request_id,
+            manifest_url=job.media_url,
+            start_ms=payload.start_ms,
+            end_ms=payload.end_ms,
+            subtitle_mode=payload.subtitle_mode,
+            include_danmaku=payload.include_danmaku,
+        )
+    return JSONResponse(
+        clip_export_payload(job.id, record),
+        status_code=200 if record.status == "completed" else 202,
+    )
+
+
+@router.get("/api/jobs/{job_id}/clip-exports")
+async def list_clip_exports(
+    request: Request,
+    job_id: str,
+    timeline_index: int | None = None,
+) -> dict:
+    require_readable_job(request, job_id)
+    if timeline_index is not None and timeline_index < 0:
+        raise AppError(
+            "timeline_item_not_found",
+            "时间线话题不存在",
+            False,
+        )
+    records = request.app.state.services.repository.list_video_clip_exports(
+        job_id,
+        timeline_index=timeline_index,
+        limit=500,
+    )
+    return {
+        "clips": [clip_export_payload(job_id, record) for record in records]
+    }
+
+
+@router.get("/api/jobs/{job_id}/clip-exports/{clip_id}")
+async def clip_export_status(
+    request: Request, job_id: str, clip_id: str
+) -> dict:
+    require_readable_job(request, job_id)
+    record = (
+        request.app.state.services.repository.get_video_clip_export(
+            job_id, clip_id
+        )
+    )
+    if record is None:
+        raise AppError(
+            "video_clip_not_found",
+            "视频片段不存在",
+            False,
+        )
+    return clip_export_payload(job_id, record)
+
+
+@router.post("/api/jobs/{job_id}/clip-exports/{clip_id}/retry")
+async def retry_clip_export(
+    request: Request, job_id: str, clip_id: str
+) -> Response:
+    context = require_auth(request)
+    request.app.state.auth.require_csrf(request, context)
+    _, job = require_readable_job(request, job_id)
+    if not job.media_url:
+        raise AppError("media_not_ready", "回放媒体地址尚未生成", True)
+    clipper = request.app.state.services.clipper
+    if clipper is None:
+        raise AppError(
+            "clipper_unavailable",
+            "视频剪辑服务未启动",
+            True,
+        )
+    settings = request.app.state.settings
+    with shared_runtime_lock(settings.clip_operation_lock_path):
+        if settings.clip_maintenance_path.exists():
+            raise AppError(
+                "clipper_maintenance",
+                "服务正在发布新版本，请稍后再剪辑",
+                True,
+            )
+        record = clipper.retry_export(
+            job_id=job.id,
+            clip_id=clip_id,
+            manifest_url=job.media_url,
+        )
+    return JSONResponse(
+        clip_export_payload(job.id, record),
+        status_code=200 if record.status == "completed" else 202,
+    )
+
+
+@router.get("/jobs/{job_id}/clip-exports/{clip_id}/download")
+async def download_clip_export(
+    request: Request, job_id: str, clip_id: str
+) -> Response:
+    _, job = require_readable_job(request, job_id)
+    record = (
+        request.app.state.services.repository.get_video_clip_export(
+            job.id, clip_id
+        )
+    )
+    if record is None or record.status != "completed":
+        raise AppError(
+            "video_clip_not_ready",
+            "视频片段尚未生成完成",
+            True,
+        )
+    clipper = request.app.state.services.clipper
+    if clipper is None:
+        raise AppError(
+            "clipper_unavailable",
+            "视频剪辑服务未启动",
+            True,
+        )
+    if record.oss_object_key:
+        return RedirectResponse(
+            await clipper.signed_download_url(record),
+            status_code=303,
+        )
+    output_path = clipper.output_path_for(record)
+    if not output_path.is_file():
+        raise AppError(
+            "video_clip_not_ready",
+            "视频片段文件不存在，请重新剪辑",
+            True,
+        )
+    return FileResponse(
+        output_path,
+        media_type="video/mp4",
+        filename=record.filename,
+    )
+
+
 @router.post("/api/jobs/{job_id}/clips/{timeline_index}")
 async def create_timeline_clip(
     request: Request, job_id: str, timeline_index: int
@@ -723,6 +1104,11 @@ async def download_timeline_clip(
     request: Request, job_id: str, timeline_index: int
 ) -> Response:
     job, item = timeline_clip_context(request, job_id, timeline_index)
+    record = (
+        request.app.state.services.repository.get_latest_video_clip_export(
+            job.id, timeline_index, completed_only=True
+        )
+    )
     clipper = request.app.state.services.clipper
     if clipper is None:
         raise AppError(
@@ -730,6 +1116,19 @@ async def download_timeline_clip(
             "视频剪辑服务未启动",
             True,
         )
+    if record is not None:
+        if record.oss_object_key:
+            return RedirectResponse(
+                await clipper.signed_download_url(record),
+                status_code=303,
+            )
+        output_path = clipper.output_path_for(record)
+        if output_path.is_file():
+            return FileResponse(
+                output_path,
+                media_type="video/mp4",
+                filename=record.filename,
+            )
     state = clipper.get(
         job_id=job.id,
         timeline_index=timeline_index,

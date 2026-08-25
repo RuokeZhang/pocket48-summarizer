@@ -276,6 +276,41 @@ class VideoClipRecord(BaseModel):
     completed_at: str | None = None
 
 
+class VideoClipExportRecord(BaseModel):
+    id: str
+    job_id: str
+    timeline_index: int
+    timeline_title: str
+    requested_by_user_id: str | None = None
+    request_id: str
+    start_ms: int
+    end_ms: int
+    subtitle_mode: Literal["off", "zh", "en", "bilingual"]
+    include_danmaku: bool
+    render_version: str
+    filename: str
+    status: Literal["running", "completed", "failed"]
+    oss_object_key: str | None = None
+    error_message: str | None = None
+    warning_message: str | None = None
+    created_at: str
+    updated_at: str
+    completed_at: str | None = None
+
+
+class ClipBoundarySuggestionRecord(BaseModel):
+    job_id: str
+    cache_key: str
+    boundary_kind: Literal["start", "end"]
+    segment_sequence: int
+    anchor_ms: int
+    suggested_ms: int
+    silence_start_ms: int | None = None
+    silence_end_ms: int | None = None
+    analysis_version: str
+    created_at: str
+
+
 class SubtitleTranslationRequestRecord(BaseModel):
     job_id: str
     language: Literal["en"]

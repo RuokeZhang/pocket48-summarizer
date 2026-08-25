@@ -65,6 +65,29 @@ prepare_runtime_locks() {
   fi
 }
 
+verify_clip_overlay_dependencies() {
+  local font_name="${CLIP_FONT_NAME:-Noto Sans CJK SC}"
+  local matched_font
+  if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "ffprobe is required for clip overlays." >&2
+    return 1
+  fi
+  if ! ffmpeg -nostdin -hide_banner -filters 2>/dev/null \
+    | awk '$2 == "ass" { found = 1 } END { exit !found }'; then
+    echo "FFmpeg must include the libass 'ass' filter." >&2
+    return 1
+  fi
+  if ! command -v fc-match >/dev/null 2>&1; then
+    echo "fontconfig is required to validate the clip font." >&2
+    return 1
+  fi
+  matched_font="$(fc-match --format='%{family}\n' "$font_name" | head -n 1)"
+  if [[ "$matched_font" != *"$font_name"* ]]; then
+    echo "Configured clip font '$font_name' is unavailable (matched '$matched_font')." >&2
+    return 1
+  fi
+}
+
 activate_clip_maintenance() {
   if ! prepare_runtime_locks \
     || ! { exec 8>>"$CLIP_OPERATION_LOCK"; } \

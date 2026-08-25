@@ -12,6 +12,7 @@ from typing import Iterable
 from .db import Database
 from .errors import AppError
 from .models import (
+    ClipBoundarySuggestionRecord,
     DanmakuEntry,
     DanmakuPeak,
     GlossaryAliasRecord,
@@ -28,6 +29,7 @@ from .models import (
     SubtitleTranslationRequestRecord,
     SubtitleTranslationStatus,
     TranscriptSegment,
+    VideoClipExportRecord,
     VideoClipRecord,
 )
 from .security import strip_control_chars
@@ -70,6 +72,22 @@ class JobRepository:
         if row is None:
             return None
         return VideoClipRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _video_clip_export(
+        row: sqlite3.Row | None,
+    ) -> VideoClipExportRecord | None:
+        if row is None:
+            return None
+        return VideoClipExportRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _clip_boundary_suggestion(
+        row: sqlite3.Row | None,
+    ) -> ClipBoundarySuggestionRecord | None:
+        if row is None:
+            return None
+        return ClipBoundarySuggestionRecord.model_validate(dict(row))
 
     @staticmethod
     def _subtitle_translation(
@@ -1035,6 +1053,316 @@ class JobRepository:
                 """,
                 (utcnow(),),
             ).rowcount
+
+    def begin_video_clip_export(
+        self,
+        *,
+        clip_id: str,
+        job_id: str,
+        timeline_index: int,
+        timeline_title: str,
+        requested_by_user_id: str | None,
+        request_id: str,
+        start_ms: int,
+        end_ms: int,
+        subtitle_mode: str,
+        include_danmaku: bool,
+        render_version: str,
+        filename: str,
+    ) -> tuple[VideoClipExportRecord, bool]:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            inserted = connection.execute(
+                """
+                INSERT OR IGNORE INTO video_clip_exports (
+                    id, job_id, timeline_index, timeline_title,
+                    requested_by_user_id, request_id, start_ms, end_ms,
+                    subtitle_mode, include_danmaku, render_version, filename,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
+                """,
+                (
+                    clip_id,
+                    job_id,
+                    timeline_index,
+                    timeline_title,
+                    requested_by_user_id,
+                    request_id,
+                    start_ms,
+                    end_ms,
+                    subtitle_mode,
+                    int(include_danmaku),
+                    render_version,
+                    filename,
+                    now,
+                    now,
+                ),
+            ).rowcount
+            row = connection.execute(
+                """
+                SELECT * FROM video_clip_exports
+                WHERE job_id = ? AND request_id = ?
+                """,
+                (job_id, request_id),
+            ).fetchone()
+        export = self._video_clip_export(row)
+        if export is None:
+            raise AppError(
+                "video_clip_conflict",
+                "视频剪辑请求标识冲突，请重新提交",
+                True,
+            )
+        return export, inserted == 1
+
+    def get_video_clip_export(
+        self, job_id: str, clip_id: str
+    ) -> VideoClipExportRecord | None:
+        with self.database.connect() as connection:
+            return self._video_clip_export(
+                connection.execute(
+                    """
+                    SELECT * FROM video_clip_exports
+                    WHERE job_id = ? AND id = ?
+                    """,
+                    (job_id, clip_id),
+                ).fetchone()
+            )
+
+    def get_video_clip_export_by_request_id(
+        self, job_id: str, request_id: str
+    ) -> VideoClipExportRecord | None:
+        with self.database.connect() as connection:
+            return self._video_clip_export(
+                connection.execute(
+                    """
+                    SELECT * FROM video_clip_exports
+                    WHERE job_id = ? AND request_id = ?
+                    """,
+                    (job_id, request_id),
+                ).fetchone()
+            )
+
+    def find_video_clip_export_by_filename(
+        self, job_id: str, filename: str
+    ) -> VideoClipExportRecord | None:
+        with self.database.connect() as connection:
+            return self._video_clip_export(
+                connection.execute(
+                    """
+                    SELECT * FROM video_clip_exports
+                    WHERE job_id = ? AND filename = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (job_id, filename),
+                ).fetchone()
+            )
+
+    def get_latest_video_clip_export(
+        self,
+        job_id: str,
+        timeline_index: int,
+        *,
+        completed_only: bool = False,
+    ) -> VideoClipExportRecord | None:
+        condition = "AND status = 'completed'" if completed_only else ""
+        with self.database.connect() as connection:
+            return self._video_clip_export(
+                connection.execute(
+                    f"""
+                    SELECT * FROM video_clip_exports
+                    WHERE job_id = ? AND timeline_index = ?
+                    {condition}
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (job_id, timeline_index),
+                ).fetchone()
+            )
+
+    def list_video_clip_exports(
+        self,
+        job_id: str,
+        *,
+        timeline_index: int | None = None,
+        limit: int = 200,
+    ) -> list[VideoClipExportRecord]:
+        limit = max(1, min(limit, 500))
+        parameters: tuple[object, ...]
+        if timeline_index is None:
+            where = "job_id = ?"
+            parameters = (job_id, limit)
+        else:
+            where = "job_id = ? AND timeline_index = ?"
+            parameters = (job_id, timeline_index, limit)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM video_clip_exports
+                WHERE {where}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+        return [
+            VideoClipExportRecord.model_validate(dict(row)) for row in rows
+        ]
+
+    def complete_video_clip_export(
+        self,
+        clip_id: str,
+        object_key: str,
+        warning_message: str | None = None,
+    ) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE video_clip_exports
+                SET status = 'completed', oss_object_key = ?,
+                    error_message = NULL, warning_message = ?,
+                    updated_at = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (object_key, warning_message, now, now, clip_id),
+            )
+
+    def fail_video_clip_export(
+        self, clip_id: str, error_message: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE video_clip_exports
+                SET status = 'failed', error_message = ?,
+                    updated_at = ?, completed_at = NULL
+                WHERE id = ?
+                """,
+                (error_message, utcnow(), clip_id),
+            )
+
+    def retry_video_clip_export(
+        self,
+        job_id: str,
+        clip_id: str,
+        *,
+        allow_completed: bool = False,
+    ) -> VideoClipExportRecord:
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM video_clip_exports
+                WHERE job_id = ? AND id = ?
+                """,
+                (job_id, clip_id),
+            ).fetchone()
+            export = self._video_clip_export(row)
+            if export is None:
+                raise AppError(
+                    "video_clip_not_found",
+                    "视频片段不存在",
+                    False,
+                )
+            if export.status == "running":
+                return export
+            if export.status == "completed" and not allow_completed:
+                return export
+            connection.execute(
+                """
+                UPDATE video_clip_exports
+                SET status = 'running', oss_object_key = NULL,
+                    error_message = NULL, warning_message = NULL,
+                    updated_at = ?, completed_at = NULL
+                WHERE job_id = ? AND id = ?
+                """,
+                (utcnow(), job_id, clip_id),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM video_clip_exports
+                WHERE job_id = ? AND id = ?
+                """,
+                (job_id, clip_id),
+            ).fetchone()
+        retried = self._video_clip_export(row)
+        assert retried is not None
+        return retried
+
+    def recover_running_video_clip_exports(self) -> int:
+        with self.database.connect() as connection:
+            return connection.execute(
+                """
+                UPDATE video_clip_exports
+                SET status = 'failed',
+                    error_message = '服务曾重启，请重试剪辑',
+                    updated_at = ?
+                WHERE status = 'running'
+                """,
+                (utcnow(),),
+            ).rowcount
+
+    def get_clip_boundary_suggestion(
+        self, job_id: str, cache_key: str
+    ) -> ClipBoundarySuggestionRecord | None:
+        with self.database.connect() as connection:
+            return self._clip_boundary_suggestion(
+                connection.execute(
+                    """
+                    SELECT * FROM clip_boundary_suggestions
+                    WHERE job_id = ? AND cache_key = ?
+                    """,
+                    (job_id, cache_key),
+                ).fetchone()
+            )
+
+    def save_clip_boundary_suggestion(
+        self,
+        *,
+        job_id: str,
+        cache_key: str,
+        boundary_kind: str,
+        segment_sequence: int,
+        anchor_ms: int,
+        suggested_ms: int,
+        silence_start_ms: int | None,
+        silence_end_ms: int | None,
+        analysis_version: str,
+    ) -> ClipBoundarySuggestionRecord:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO clip_boundary_suggestions (
+                    job_id, cache_key, boundary_kind, segment_sequence,
+                    anchor_ms, suggested_ms, silence_start_ms,
+                    silence_end_ms, analysis_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    cache_key,
+                    boundary_kind,
+                    segment_sequence,
+                    anchor_ms,
+                    suggested_ms,
+                    silence_start_ms,
+                    silence_end_ms,
+                    analysis_version,
+                    utcnow(),
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM clip_boundary_suggestions
+                WHERE job_id = ? AND cache_key = ?
+                """,
+                (job_id, cache_key),
+            ).fetchone()
+        suggestion = self._clip_boundary_suggestion(row)
+        assert suggestion is not None
+        return suggestion
 
     def recover_expired_jobs(self) -> int:
         now = utcnow()

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     maintenance_dir: Path | None = None
     database_name: str = "pocket48.sqlite3"
     ffmpeg_path: str = "ffmpeg"
+    ffprobe_path: str = "ffprobe"
     auth_required: bool = False
     session_cookie_secure: bool = False
     session_ttl_days: int = Field(default=30, ge=1, le=365)
@@ -63,6 +64,20 @@ class Settings(BaseSettings):
     clip_concurrency: int = Field(default=2, ge=1, le=4)
     clip_retry_attempts: int = Field(default=3, ge=1, le=5)
     clip_retry_delay_seconds: float = Field(default=5.0, ge=0, le=60)
+    clip_editor_context_minutes: float = Field(default=10.0, gt=0, le=60)
+    clip_sentence_snap_threshold_ms: int = Field(
+        default=1000, ge=100, le=5000
+    )
+    clip_silence_search_ms: int = Field(default=1500, ge=250, le=5000)
+    clip_silence_noise_db: float = Field(default=-35.0, ge=-100, le=0)
+    clip_silence_min_duration_ms: int = Field(
+        default=200, ge=50, le=2000
+    )
+    clip_analysis_timeout_seconds: int = Field(
+        default=45, ge=5, le=180
+    )
+    clip_analysis_concurrency: int = Field(default=2, ge=1, le=4)
+    clip_font_name: str = "Noto Sans CJK SC"
     max_audio_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1024)
     failed_audio_retention_hours: int = Field(default=24, ge=1, le=168)
 
@@ -210,6 +225,12 @@ class Settings(BaseSettings):
         if candidate.parent != Path("."):
             return str(candidate) if candidate.is_file() else None
         return shutil.which(self.ffmpeg_path)
+
+    def ffprobe_executable(self) -> str | None:
+        candidate = Path(self.ffprobe_path).expanduser()
+        if candidate.parent != Path("."):
+            return str(candidate) if candidate.is_file() else None
+        return shutil.which(self.ffprobe_path)
 
     def missing_clip_configuration(self) -> list[str]:
         missing: list[str] = []
