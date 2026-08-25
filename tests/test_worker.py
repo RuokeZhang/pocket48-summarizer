@@ -106,7 +106,13 @@ class RecordingVocabulary:
 
 
 @pytest.mark.asyncio
-async def test_worker_refreshes_catalog_without_blocking_job_claims(settings):
+async def test_worker_refreshes_catalog_without_blocking_job_claims(
+    settings, monkeypatch
+):
+    monkeypatch.setattr(
+        "pocket48_summarizer.worker.monotonic",
+        lambda: 10.0,
+    )
     worker_settings = settings.model_copy(
         update={"worker_poll_seconds": 0.05}
     )

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 
 from .config import Settings
 from .errors import AppError
@@ -39,7 +39,7 @@ class DurableWorker:
         self._stopping = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._last_cleanup = 0.0
-        self._last_member_catalog_check = 0.0
+        self._last_member_catalog_check: float | None = None
 
     async def start(self) -> None:
         if self._task is not None:
@@ -126,8 +126,11 @@ class DurableWorker:
     async def _refresh_terminology_if_due(self) -> None:
         if self.member_catalog is None and self.vocabulary is None:
             return
-        now = time.monotonic()
-        if now - self._last_member_catalog_check < 60:
+        now = monotonic()
+        if (
+            self._last_member_catalog_check is not None
+            and now - self._last_member_catalog_check < 60
+        ):
             return
         self._last_member_catalog_check = now
         if self.member_catalog is not None:
@@ -321,7 +324,7 @@ class DurableWorker:
                 return
 
     async def _cleanup_expired_artifacts_if_due(self) -> None:
-        now = time.monotonic()
+        now = monotonic()
         if now - self._last_cleanup < 30 * 60:
             return
         self._last_cleanup = now
