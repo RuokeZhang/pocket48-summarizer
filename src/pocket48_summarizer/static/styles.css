@@ -642,7 +642,6 @@ code { color: #d4c8ff; }
   .playback-toolbar > label, .sync-adjustment { flex: 1 1 140px; }
   .playback-status-row { display: grid; }
   .translation-state { text-align: left; }
-  .subtitle-overlay { right: 12px; bottom: 46px; left: 12px; }
   .event-list li { grid-template-columns: 1fr; gap: 2px; }
 }
 
@@ -692,15 +691,37 @@ code { color: #d4c8ff; }
     transform: translateY(-1px);
   }
   .playback-layout {
+    --mobile-overlay-content-bottom: 10px;
+    --mobile-danmaku-stream-padding: 6px;
     position: relative;
     grid-template-columns: minmax(0, 1fr);
+  }
+  .subtitle-overlay {
+    right: 12px;
+    bottom: var(--mobile-overlay-content-bottom);
+    left: 12px;
+  }
+  .subtitle-overlay p {
+    margin-top: 3px;
+    padding: 3px 8px;
+    border-radius: 7px;
+    line-height: 1.32;
+  }
+  .subtitle-zh {
+    font-size: clamp(11px, 3vw, 13px);
+  }
+  .subtitle-en {
+    font-size: clamp(9px, 2.5vw, 11px);
   }
   .mobile-danmaku-overlay {
     position: absolute;
     z-index: 3;
     top: 8px;
     right: 8px;
-    bottom: 52px;
+    bottom: calc(
+      var(--mobile-overlay-content-bottom)
+      - var(--mobile-danmaku-stream-padding)
+    );
     width: min(43%, 190px);
     min-height: 0;
     max-height: none;
@@ -720,7 +741,7 @@ code { color: #d4c8ff; }
   }
   .mobile-danmaku-overlay .live-danmaku-stream {
     gap: 4px;
-    padding: 6px;
+    padding: var(--mobile-danmaku-stream-padding);
   }
   .mobile-danmaku-overlay .danmaku-empty {
     display: none;

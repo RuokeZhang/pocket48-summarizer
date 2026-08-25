@@ -855,7 +855,7 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
     assert "i18n.js?v=20260825-6" in page.text
-    assert "styles.css?v=20260825-8" in page.text
+    assert "styles.css?v=20260825-9" in page.text
     assert "app.js?v=20260825-4" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -863,6 +863,10 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert ".mobile-danmaku-overlay" in styles.text
     assert ".mobile-history-nav" in styles.text
     assert "safe-area-inset-bottom" in styles.text
+    assert "--mobile-overlay-content-bottom: 10px" in styles.text
+    assert "--mobile-danmaku-stream-padding: 6px" in styles.text
+    assert "font-size: clamp(11px, 3vw, 13px)" in styles.text
+    assert "font-size: clamp(9px, 2.5vw, 11px)" in styles.text
     assert "position: absolute" in styles.text
     assert javascript.status_code == 200
     assert "mobileDanmakuMedia" in javascript.text
