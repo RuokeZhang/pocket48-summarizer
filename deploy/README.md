@@ -100,6 +100,24 @@ curl --fail https://p48.ruokezhang.com/healthz
 
 发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑和边界分析会短暂返回维护提示。脚本先取得剪辑操作锁，再同时排空旧 `video_clips` 和新 `video_clip_exports` 中的运行任务，避免在 FFmpeg 或静音分析执行中切槽。独立 Worker 会在当前直播任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务和翻译任务并重新排队；任务已持久化的 DashScope ID、总结分块和英文字幕片段会继续复用，不会从头重复提交。
 
+推荐使用手动触发的 GitHub Actions 工作流。一次性初始化会生成独立部署密钥；该密钥在服务器端绑定强制命令，只能部署已经进入 `origin/main` 的完整提交 SHA，不能打开任意 root shell，也不会把现有管理员 SSH 私钥上传到 GitHub：
+
+```bash
+cd /Users/roxzhang/Desktop/pocket48-summarizer
+./scripts/bootstrap-github-actions-deploy.sh
+```
+
+初始化后可在 GitHub 的 **Actions → Deploy production → Run workflow** 点击发布，或运行：
+
+```bash
+gh workflow run deploy-production.yml \
+  --repo RuokeZhang/pocket48-summarizer \
+  --ref main
+gh run watch --repo RuokeZhang/pocket48-summarizer
+```
+
+工作流会先执行完整离线测试，再通过受限密钥部署同一个提交，最后检查生产健康状态、迁移表和旧剪辑回填。仓库 `production` Environment 可按需增加 required reviewers，部署并发固定为一个且不会取消正在执行的发布。
+
 ```bash
 cd /opt/pocket48-summarizer
 sudo git fetch origin
