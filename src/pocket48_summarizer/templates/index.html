@@ -59,6 +59,33 @@
     </div>
   </section>
 
+  {% if member_filters %}
+    <form
+      class="member-filter-form"
+      action="/"
+      method="get"
+      aria-label="成员筛选"
+      data-i18n-aria-label="memberFilter"
+    >
+      <label class="member-filter-field" for="member-filter">
+        <span data-i18n="memberFilter">按成员筛选</span>
+        <select id="member-filter" name="member">
+          <option value="" data-i18n="allMembers">全部成员</option>
+          {% for member in member_filters %}
+            <option
+              value="{{ member.member_id }}"
+              {% if member.member_id == selected_member_id %}selected{% endif %}
+            >{{ member.member_name }}{% if member.group_name %} · {{ member.group_name }}{% endif %} ({{ member.job_count }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit" data-i18n="applyFilter">筛选</button>
+      {% if selected_member_id %}
+        <a class="member-filter-clear" href="/" data-i18n="clearFilter">清除</a>
+      {% endif %}
+    </form>
+  {% endif %}
+
   <section class="job-grid">
     {% for job in jobs %}
       <a class="job-card" href="/jobs/{{ job.id }}">
@@ -75,8 +102,13 @@
       </a>
     {% else %}
       <div class="empty-state">
-        <strong data-i18n="noPublicResults">还没有公开结果</strong>
-        <p data-i18n="resultsAppearHere">完成后的直播总结会显示在这里。</p>
+        {% if selected_member_id %}
+          <strong data-i18n="noMemberResults">该成员暂无可见直播</strong>
+          <p data-i18n="tryAnotherMember">请选择其他成员或清除筛选。</p>
+        {% else %}
+          <strong data-i18n="noPublicResults">还没有公开结果</strong>
+          <p data-i18n="resultsAppearHere">完成后的直播总结会显示在这里。</p>
+        {% endif %}
       </div>
     {% endfor %}
   </section>

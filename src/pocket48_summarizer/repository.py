@@ -23,6 +23,7 @@ from .models import (
     JobStatus,
     MemberCatalogEntry,
     MemberCatalogRecord,
+    MemberJobFilterRecord,
     ReplayMetadata,
     SubtitleTranslationRequestRecord,
     SubtitleTranslationStatus,
@@ -852,35 +853,82 @@ class JobRepository:
                 job for row in rows if (job := self._job(row)) is not None
             ]
 
+    @staticmethod
+    def _visible_jobs_condition(
+        user_id: str | None,
+    ) -> tuple[str, list[object]]:
+        if user_id is None:
+            return "j.status = ?", [JobStatus.COMPLETED]
+        return (
+            """
+            (
+                j.status = ?
+                OR EXISTS (
+                    SELECT 1 FROM job_access a
+                    WHERE a.job_id = j.id AND a.user_id = ?
+                )
+            )
+            """,
+            [JobStatus.COMPLETED, user_id],
+        )
+
     def list_visible_jobs(
-        self, user_id: str | None, limit: int = 50
+        self,
+        user_id: str | None,
+        limit: int = 50,
+        *,
+        member_id: str | None = None,
     ) -> list[JobRecord]:
+        where, parameters = self._visible_jobs_condition(user_id)
+        if member_id is not None:
+            where = f"{where} AND j.member_id = ?"
+            parameters.append(member_id)
+        parameters.append(limit)
         with self.database.connect() as connection:
-            if user_id is None:
-                rows = connection.execute(
-                    """
-                    SELECT * FROM jobs
-                    WHERE status = ?
-                    ORDER BY COALESCE(replay_started_at, created_at) DESC
-                    LIMIT ?
-                    """,
-                    (JobStatus.COMPLETED, limit),
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    """
-                    SELECT DISTINCT j.* FROM jobs j
-                    LEFT JOIN job_access a
-                      ON a.job_id = j.id AND a.user_id = ?
-                    WHERE j.status = ? OR a.user_id IS NOT NULL
-                    ORDER BY COALESCE(j.replay_started_at, j.created_at) DESC
-                    LIMIT ?
-                    """,
-                    (user_id, JobStatus.COMPLETED, limit),
-                ).fetchall()
+            rows = connection.execute(
+                f"""
+                SELECT j.* FROM jobs j
+                WHERE {where}
+                ORDER BY COALESCE(j.replay_started_at, j.created_at) DESC
+                LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
             return [
                 job for row in rows if (job := self._job(row)) is not None
             ]
+
+    def list_visible_member_filters(
+        self, user_id: str | None
+    ) -> list[MemberJobFilterRecord]:
+        where, parameters = self._visible_jobs_condition(user_id)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    j.member_id,
+                    COALESCE(
+                        MAX(NULLIF(m.canonical_name, '')),
+                        MAX(NULLIF(j.member_name, '')),
+                        j.member_id
+                    ) AS member_name,
+                    COALESCE(MAX(m.group_name), '') AS group_name,
+                    COUNT(*) AS job_count
+                FROM jobs j
+                LEFT JOIN member_catalog m ON m.member_id = j.member_id
+                WHERE {where}
+                  AND j.member_id IS NOT NULL
+                  AND j.member_id != ''
+                GROUP BY j.member_id
+                ORDER BY group_name COLLATE NOCASE,
+                         member_name COLLATE NOCASE,
+                         j.member_id
+                """,
+                parameters,
+            ).fetchall()
+        return [
+            MemberJobFilterRecord.model_validate(dict(row)) for row in rows
+        ]
 
     def require_job_access(self, job_id: str, user_id: str) -> None:
         if self.get_job_for_user(job_id, user_id) is None:

@@ -403,18 +403,32 @@ async def set_glossary_alias_active(
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request) -> Response:
+async def index(request: Request, member: str | None = None) -> Response:
     context = optional_auth(request)
     services = request.app.state.services
     settings = request.app.state.settings
     missing_configuration = settings.missing_processing_configuration()
+    user_id = context.user.id if context else None
+    member_filters = services.repository.list_visible_member_filters(user_id)
+    requested_member_id = (member or "").strip()
+    visible_member_ids = {
+        member_filter.member_id for member_filter in member_filters
+    }
+    selected_member_id = (
+        requested_member_id
+        if requested_member_id in visible_member_ids
+        else None
+    )
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "jobs": services.repository.list_visible_jobs(
-                context.user.id if context else None
+                user_id,
+                member_id=selected_member_id,
             ),
+            "member_filters": member_filters,
+            "selected_member_id": selected_member_id,
             "missing_configuration": missing_configuration,
             "processing_ready": not missing_configuration,
             "current_user": context.user if context else None,

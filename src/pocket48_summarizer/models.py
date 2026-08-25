@@ -65,6 +65,13 @@ class MemberCatalogRecord(MemberCatalogEntry):
     last_seen_at: str
 
 
+class MemberJobFilterRecord(BaseModel):
+    member_id: str
+    member_name: str
+    group_name: str = ""
+    job_count: int = Field(ge=1)
+
+
 class GlossaryTermRecord(BaseModel):
     id: str
     canonical_text: str

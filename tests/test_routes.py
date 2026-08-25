@@ -9,6 +9,7 @@ from pocket48_summarizer.models import (
     DanmakuPeakSummary,
     FinalSummary,
     MemberCatalogEntry,
+    ReplayMetadata,
     TimelineItem,
     TranscriptSegment,
 )
@@ -516,6 +517,123 @@ def test_completed_result_is_public_but_raw_asr_requires_login(
     assert raw_asr.headers["location"] == "/login"
 
 
+def test_homepage_member_filter_respects_job_visibility(
+    settings, repository
+):
+    repository.replace_member_catalog(
+        [
+            MemberCatalogEntry(
+                member_id=member_id,
+                canonical_name=member_name,
+                group_id="10",
+                group_name="SNH48",
+                status="99",
+                active=True,
+            )
+            for member_id, member_name in (
+                ("1001", "成员甲"),
+                ("1002", "成员乙"),
+                ("1003", "成员丙"),
+                ("1004", "成员丁"),
+            )
+        ],
+        source_url=settings.member_catalog_url,
+        source_hash="f" * 64,
+    )
+    app = auth_app(settings, repository)
+    auth_repository = AuthRepository(repository.database)
+    alice = auth_repository.get_user_by_username("alice")
+    bob = auth_repository.get_user_by_username("bob")
+    assert alice and bob
+
+    def add_job(
+        live_id: str,
+        member_id: str,
+        member_name: str,
+        title: str,
+        *,
+        user_id: str = "local",
+        completed: bool,
+    ):
+        job, _ = repository.create_or_get_job(
+            (
+                "https://h5.48.cn/2019appshare/memberLiveShare/"
+                f"index.html?id={live_id}"
+            ),
+            live_id,
+            user_id,
+        )
+        if completed:
+            claimed = repository.claim_next_job("filter-worker", 120)
+            assert claimed and claimed.id == job.id
+        repository.save_replay_metadata(
+            job.id,
+            ReplayMetadata(
+                live_id=live_id,
+                member_id=member_id,
+                member_name=f"SNH48-{member_name}",
+                title=title,
+                media_url="https://idol-vod.48.cn/replay.m3u8",
+            ),
+        )
+        if completed:
+            repository.mark_completed(job.id)
+        return job
+
+    public_a = add_job(
+        "810001", "1001", "成员甲", "甲的公开直播", completed=True
+    )
+    public_b = add_job(
+        "810002", "1002", "成员乙", "乙的公开直播", completed=True
+    )
+    private_c = add_job(
+        "810003",
+        "1003",
+        "成员丙",
+        "丙的私有任务",
+        user_id=alice.id,
+        completed=False,
+    )
+    private_d = add_job(
+        "810004",
+        "1004",
+        "成员丁",
+        "丁的私有任务",
+        user_id=bob.id,
+        completed=False,
+    )
+
+    with TestClient(app) as anonymous:
+        home = anonymous.get("/")
+        filtered = anonymous.get("/?member=1001")
+        hidden_filter = anonymous.get("/?member=1003")
+
+    assert 'id="member-filter"' in home.text
+    assert "成员甲 · SNH48 (1)" in home.text
+    assert "成员乙 · SNH48 (1)" in home.text
+    assert "成员丙" not in home.text
+    assert "成员丁" not in home.text
+    assert public_a.live_id in filtered.text
+    assert public_b.live_id not in filtered.text
+    assert 'value="1001"' in filtered.text
+    assert "selected" in filtered.text
+    assert public_a.live_id in hidden_filter.text
+    assert public_b.live_id in hidden_filter.text
+    assert private_c.live_id not in hidden_filter.text
+
+    with TestClient(app) as alice_client:
+        login(alice_client, "alice", "alice has a secure password")
+        alice_home = alice_client.get("/")
+        alice_filtered = alice_client.get("/?member=1003")
+
+    assert "成员丙 · SNH48 (1)" in alice_home.text
+    assert "成员丁" not in alice_home.text
+    assert private_c.live_id in alice_filtered.text
+    assert public_a.live_id not in alice_filtered.text
+    assert public_b.live_id not in alice_filtered.text
+    assert private_d.live_id not in alice_filtered.text
+
+
 def test_user_cannot_read_another_users_job(settings, repository):
     app = auth_app(settings, repository)
     with TestClient(app) as alice:
@@ -736,8 +854,8 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260825-5" in page.text
-    assert "styles.css?v=20260825-7" in page.text
+    assert "i18n.js?v=20260825-6" in page.text
+    assert "styles.css?v=20260825-8" in page.text
     assert "app.js?v=20260825-4" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
