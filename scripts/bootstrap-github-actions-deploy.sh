@@ -126,5 +126,26 @@ printf '%s\n' "$known_hosts" \
       --env production
 
 echo "GitHub Actions production deployment is configured."
-echo "Run it with:"
-echo "  gh workflow run deploy-production.yml --repo $repository --ref main"
+if [[ "${SKIP_INITIAL_DEPLOY:-false}" == "true" ]]; then
+  echo "Initial deployment was skipped."
+  echo "Run it with:"
+  echo "  gh workflow run deploy-production.yml --repo $repository --ref main"
+  exit 0
+fi
+
+run_output="$(
+  gh workflow run deploy-production.yml \
+    --repo "$repository" \
+    --ref main
+)"
+printf '%s\n' "$run_output"
+run_id="$(sed -nE 's#^.*/actions/runs/([0-9]+).*$#\1#p' <<< "$run_output")"
+if [[ -n "$run_id" ]]; then
+  gh run watch "$run_id" \
+    --repo "$repository" \
+    --compact \
+    --exit-status
+else
+  echo "Deployment was triggered. Track it in GitHub Actions:"
+  echo "  https://github.com/$repository/actions/workflows/deploy-production.yml"
+fi

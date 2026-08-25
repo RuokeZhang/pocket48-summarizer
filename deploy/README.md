@@ -107,7 +107,9 @@ cd /Users/roxzhang/Desktop/pocket48-summarizer
 ./scripts/bootstrap-github-actions-deploy.sh
 ```
 
-初始化后可在 GitHub 的 **Actions → Deploy production → Run workflow** 点击发布，或运行：
+该命令会完成初始化、触发第一次发布，并在终端等待 GitHub Actions 结束。只初始化而不立即发布时可设置 `SKIP_INITIAL_DEPLOY=true`。
+
+之后可在 GitHub 的 **Actions → Deploy production → Run workflow** 点击发布，或运行：
 
 ```bash
 gh workflow run deploy-production.yml \
