@@ -266,9 +266,19 @@ const clipEditorClose = document.querySelector("#clip-editor-close");
 const clipEditorCancel = document.querySelector("#clip-editor-cancel");
 const clipEditorSubmit = document.querySelector("#clip-editor-submit");
 const clipEditorError = document.querySelector("#clip-editor-error");
+const clipTimelineViewport = document.querySelector("#clip-timeline-viewport");
 const clipRangeControl = document.querySelector("#clip-range-control");
-const clipStartRange = document.querySelector("#clip-start-range");
-const clipEndRange = document.querySelector("#clip-end-range");
+const clipTimelineCues = document.querySelector("#clip-transcript-cues");
+const clipStartHandle = document.querySelector("#clip-start-handle");
+const clipEndHandle = document.querySelector("#clip-end-handle");
+const clipStartHandleTime = document.querySelector("#clip-start-handle-time");
+const clipEndHandleTime = document.querySelector("#clip-end-handle-time");
+const clipRawMarker = document.querySelector("#clip-raw-marker");
+const clipSnapMarker = document.querySelector("#clip-snap-marker");
+const clipPreviewPlayhead = document.querySelector("#clip-preview-playhead");
+const clipZoomOut = document.querySelector("#clip-zoom-out");
+const clipZoomIn = document.querySelector("#clip-zoom-in");
+const clipZoomLevel = document.querySelector("#clip-zoom-value");
 const clipStartInput = document.querySelector("#clip-start-input");
 const clipEndInput = document.querySelector("#clip-end-input");
 const clipStartSnap = document.querySelector("#clip-start-snap");
@@ -297,6 +307,14 @@ let clipPreviewFrame = null;
 let clipPendingSeekMs = null;
 let clipPendingPlay = false;
 let clipSuggestionTokens = { start: 0, end: 0 };
+let clipDragState = null;
+
+const CLIP_MIN_ZOOM = 1;
+const CLIP_MAX_ZOOM = 64;
+const CLIP_SNAP_ENTER_PX = 12;
+const CLIP_SNAP_RELEASE_PX = 22;
+const CLIP_AUTO_SCROLL_EDGE_PX = 52;
+const CLIP_AUTO_SCROLL_MAX_PX = 24;
 
 const clipOverlayLabel = (clip) => {
   const subtitles = {
@@ -457,25 +475,87 @@ const updateClipEnglishOptions = () => {
   }
 };
 
-const updateClipRangeUI = () => {
+const clipPercent = (milliseconds) => {
+  if (!clipEditorState) return 0;
+  const span = Math.max(1, clipEditorState.maxMs - clipEditorState.minMs);
+  return Math.max(
+    0,
+    Math.min(100, ((milliseconds - clipEditorState.minMs) / span) * 100)
+  );
+};
+
+const updateClipHandle = (boundary, handle, output) => {
+  if (!clipEditorState || !handle) return;
+  const value = boundary === "start"
+    ? clipEditorState.startMs
+    : clipEditorState.endMs;
+  const minimum = boundary === "start"
+    ? clipEditorState.minMs
+    : clipEditorState.startMs + 100;
+  const maximum = boundary === "start"
+    ? clipEditorState.endMs - 100
+    : clipEditorState.maxMs;
+  handle.setAttribute("aria-valuemin", String(minimum));
+  handle.setAttribute("aria-valuemax", String(maximum));
+  handle.setAttribute("aria-valuenow", String(value));
+  handle.setAttribute("aria-valuetext", formatFineClock(value));
+  handle.classList.toggle(
+    "is-snapped",
+    clipEditorState[`${boundary}Source`] !== "manual"
+  );
+  if (output) output.textContent = formatFineClock(value);
+};
+
+const updateClipRangeUI = ({ renderPreview = false } = {}) => {
   if (!clipEditorState) return;
   const {
-    minMs, maxMs, startMs, endMs
+    minMs, maxMs, startMs, endMs, aiStartMs, aiEndMs
   } = clipEditorState;
-  const span = Math.max(1, maxMs - minMs);
-  const startPercent = ((startMs - minMs) / span) * 100;
-  const endPercent = ((endMs - minMs) / span) * 100;
   if (clipRangeControl) {
-    clipRangeControl.style.setProperty("--clip-start-position", `${startPercent}%`);
-    clipRangeControl.style.setProperty("--clip-end-position", `${endPercent}%`);
+    clipRangeControl.style.setProperty(
+      "--clip-start-position",
+      `${clipPercent(startMs)}%`
+    );
+    clipRangeControl.style.setProperty(
+      "--clip-end-position",
+      `${clipPercent(endMs)}%`
+    );
+    clipRangeControl.style.setProperty(
+      "--clip-ai-start-position",
+      `${clipPercent(aiStartMs)}%`
+    );
+    clipRangeControl.style.setProperty(
+      "--clip-ai-end-position",
+      `${clipPercent(aiEndMs)}%`
+    );
+    clipRangeControl.classList.toggle("is-dragging", Boolean(clipDragState));
   }
-  for (const input of [clipStartRange, clipEndRange]) {
-    if (!input) continue;
-    input.min = String(minMs);
-    input.max = String(maxMs);
+  if (clipDragState && clipRangeControl) {
+    clipRangeControl.style.setProperty(
+      "--clip-raw-position",
+      `${clipPercent(clipDragState.rawMs)}%`
+    );
+    if (clipDragState.candidate) {
+      clipRangeControl.style.setProperty(
+        "--clip-snap-position",
+        `${clipPercent(clipDragState.candidate.anchorMs)}%`
+      );
+    }
   }
-  if (clipStartRange) clipStartRange.value = String(startMs);
-  if (clipEndRange) clipEndRange.value = String(endMs);
+  if (clipRawMarker) clipRawMarker.hidden = !clipDragState;
+  if (clipSnapMarker) {
+    clipSnapMarker.hidden = !clipDragState?.candidate;
+  }
+  clipStartHandle?.classList.toggle(
+    "is-active",
+    clipDragState?.boundary === "start"
+  );
+  clipEndHandle?.classList.toggle(
+    "is-active",
+    clipDragState?.boundary === "end"
+  );
+  updateClipHandle("start", clipStartHandle, clipStartHandleTime);
+  updateClipHandle("end", clipEndHandle, clipEndHandleTime);
   if (clipStartInput) clipStartInput.value = formatFineClock(startMs);
   if (clipEndInput) clipEndInput.value = formatFineClock(endMs);
   if (clipWindowStart) clipWindowStart.textContent = formatFineClock(minMs);
@@ -483,30 +563,40 @@ const updateClipRangeUI = () => {
   if (clipSelectedDuration) {
     clipSelectedDuration.textContent = formatFineClock(endMs - startMs);
   }
-  if (clipStartSnap) clipStartSnap.textContent = clipSnapCopy(clipEditorState.startSource);
-  if (clipEndSnap) clipEndSnap.textContent = clipSnapCopy(clipEditorState.endSource);
+  if (clipStartSnap) {
+    clipStartSnap.textContent = clipSnapCopy(clipEditorState.startSource);
+  }
+  if (clipEndSnap) {
+    clipEndSnap.textContent = clipSnapCopy(clipEditorState.endSource);
+  }
   const error = clipValidationMessage();
-  if (clipEditorError) clipEditorError.textContent = error;
+  if (clipEditorError) {
+    clipEditorError.textContent = error || clipEditorState.notice || "";
+  }
   if (clipEditorSubmit) {
-    clipEditorSubmit.disabled = Boolean(
-      error
-      || clipEditorState.submitting
-      || clipEditorState.startSource === "checking"
-      || clipEditorState.endSource === "checking"
-    );
+    clipEditorSubmit.disabled = Boolean(error || clipEditorState.submitting);
   }
-  if (clipPreviewPlayer?.readyState >= 1) {
-    const currentMs = clipPreviewPlayer.currentTime * 1000;
-    if (currentMs < startMs || currentMs > endMs) {
-      clipPreviewPlayer.pause();
-      clipPreviewPlayer.currentTime = startMs / 1000;
-    }
+  if (clipZoomOut) {
+    clipZoomOut.disabled = clipEditorState.zoom <= CLIP_MIN_ZOOM;
   }
-  renderClipPreview();
+  if (clipZoomIn) {
+    clipZoomIn.disabled = clipEditorState.zoom >= CLIP_MAX_ZOOM;
+  }
+  if (renderPreview) renderClipPreview();
 };
 
-const setClipBoundary = (boundary, value, source = "manual", resetRequest = true) => {
-  if (!clipEditorState) return;
+const setClipBoundary = (
+  boundary,
+  value,
+  source = "manual",
+  {
+    resetRequest = true,
+    invalidateSuggestion = source === "manual",
+    clearNotice = source === "manual",
+    renderPreview = false
+  } = {}
+) => {
+  if (!clipEditorState || !Number.isFinite(Number(value))) return null;
   const rounded = Math.round(Number(value) / 100) * 100;
   let clamped = Math.max(
     clipEditorState.minMs,
@@ -521,42 +611,94 @@ const setClipBoundary = (boundary, value, source = "manual", resetRequest = true
     clipEditorState.endMs = clamped;
     clipEditorState.endSource = source;
   }
-  if (source === "manual") clipSuggestionTokens[boundary] += 1;
+  if (invalidateSuggestion) clipSuggestionTokens[boundary] += 1;
   if (resetRequest) clipEditorState.requestId = null;
-  updateClipRangeUI();
+  if (clearNotice) clipEditorState.notice = "";
+  updateClipRangeUI({ renderPreview });
+  return clamped;
 };
 
-const nearestClipSentence = (boundary, targetMs) => {
+const clipBoundaryLimits = (boundary) => {
+  if (!clipEditorState) return { minimum: 0, maximum: 0 };
+  return boundary === "start"
+    ? {
+      minimum: clipEditorState.minMs,
+      maximum: clipEditorState.endMs - 100
+    }
+    : {
+      minimum: clipEditorState.startMs + 100,
+      maximum: clipEditorState.maxMs
+    };
+};
+
+const clipSentenceAnchor = (boundary, subtitle) => (
+  boundary === "start" ? subtitle.start_ms : subtitle.end_ms
+);
+
+const nearestClipSentence = (
+  boundary,
+  targetMs,
+  thresholdMs = clipEditorState?.snapThresholdMs
+) => {
   const subtitles = playbackTrack?.subtitles || [];
   if (!subtitles.length || !clipEditorState) return null;
   const field = boundary === "start" ? "start_ms" : "end_ms";
   const insertion = lowerBoundByTime(subtitles, targetMs, field);
-  const candidates = [subtitles[insertion - 1], subtitles[insertion]].filter(
-    (subtitle) => (
-      subtitle
-      && subtitle[field] >= clipEditorState.minMs
-      && subtitle[field] <= clipEditorState.maxMs
-    )
-  );
-  if (!candidates.length) return null;
-  const nearest = candidates.sort((left, right) => (
-    Math.abs(left[field] - targetMs) - Math.abs(right[field] - targetMs)
-    || left.sequence - right.sequence
-  ))[0];
-  return Math.abs(nearest[field] - targetMs) <= clipEditorState.snapThresholdMs
+  const { minimum, maximum } = clipBoundaryLimits(boundary);
+  const candidates = [subtitles[insertion - 1], subtitles[insertion]]
+    .filter((subtitle) => {
+      const anchorMs = subtitle ? Number(subtitle[field]) : Number.NaN;
+      return Number.isFinite(anchorMs)
+        && anchorMs >= minimum
+        && anchorMs <= maximum;
+    })
+    .sort((left, right) => (
+      Math.abs(left[field] - targetMs) - Math.abs(right[field] - targetMs)
+      || left.sequence - right.sequence
+    ));
+  const nearest = candidates[0];
+  return nearest
+    && Math.abs(nearest[field] - targetMs) <= Number(thresholdMs)
     ? nearest
     : null;
 };
 
-const suggestClipBoundary = async (boundary, targetMs) => {
-  if (!clipEditorState || !clipSnapEnabled?.checked || !jobHero) return;
-  const nearest = nearestClipSentence(boundary, targetMs);
-  if (!nearest) {
-    setClipBoundary(boundary, targetMs, "manual");
-    return;
+const seekClipPreview = (milliseconds) => {
+  if (!clipPreviewPlayer || !clipEditorState) return;
+  const targetMs = Math.max(
+    clipEditorState.minMs,
+    Math.min(milliseconds, clipEditorState.maxMs)
+  );
+  clipPreviewPlayer.pause();
+  if (clipPreviewPlayer.readyState >= 1) {
+    clipPreviewPlayer.currentTime = targetMs / 1000;
+    renderClipPreview();
+  } else {
+    clipPendingSeekMs = targetMs;
   }
-  const anchorMs = boundary === "start" ? nearest.start_ms : nearest.end_ms;
-  setClipBoundary(boundary, anchorMs, "checking");
+  if (clipRangeControl) {
+    clipRangeControl.style.setProperty(
+      "--clip-preview-position",
+      `${clipPercent(targetMs)}%`
+    );
+  }
+  if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = false;
+};
+
+const showClipRefinement = () => {
+  if (!clipEditorState || !clipRangeControl) return;
+  window.clearTimeout(clipEditorState.refineTimer);
+  clipRangeControl.classList.add("is-refining");
+  clipEditorState.refineTimer = window.setTimeout(() => {
+    clipRangeControl.classList.remove("is-refining");
+  }, 220);
+};
+
+const refineClipBoundary = async (boundary, anchorMs) => {
+  if (!clipEditorState || !clipSnapEnabled?.checked || !jobHero) return;
+  const state = clipEditorState;
+  state[`${boundary}Source`] = "checking";
+  updateClipRangeUI();
   const token = ++clipSuggestionTokens[boundary];
   try {
     const response = await apiFetch(
@@ -565,9 +707,9 @@ const suggestClipBoundary = async (boundary, targetMs) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          timeline_index: clipEditorState.timelineIndex,
+          timeline_index: state.timelineIndex,
           boundary,
-          target_ms: targetMs
+          target_ms: anchorMs
         })
       }
     );
@@ -576,19 +718,337 @@ const suggestClipBoundary = async (boundary, targetMs) => {
       throw new Error(apiErrorMessage(payload, "clipSnapFailed"));
     }
     if (
-      !clipEditorState
+      clipEditorState !== state
       || token !== clipSuggestionTokens[boundary]
       || !clipSnapEnabled?.checked
     ) return;
-    setClipBoundary(boundary, payload.suggested_ms, payload.source);
+    showClipRefinement();
+    setClipBoundary(boundary, payload.suggested_ms, payload.source, {
+      invalidateSuggestion: false,
+      clearNotice: false
+    });
   } catch (requestError) {
-    if (token !== clipSuggestionTokens[boundary]) return;
-    setClipBoundary(boundary, anchorMs, "sentence");
-    if (clipEditorError) {
-      clipEditorError.textContent = requestError instanceof Error
-        ? requestError.message
-        : t("clipSnapFailed");
+    if (
+      clipEditorState !== state
+      || token !== clipSuggestionTokens[boundary]
+    ) return;
+    setClipBoundary(boundary, anchorMs, "sentence", {
+      invalidateSuggestion: false,
+      clearNotice: false
+    });
+    state.notice = requestError instanceof Error
+      ? requestError.message
+      : t("clipSnapFailed");
+    updateClipRangeUI();
+  }
+};
+
+const commitClipBoundary = (
+  boundary,
+  targetMs,
+  { allowSnap = true } = {}
+) => {
+  if (!clipEditorState) return;
+  const nearest = allowSnap && clipSnapEnabled?.checked
+    ? nearestClipSentence(boundary, targetMs)
+    : null;
+  const anchorMs = nearest
+    ? clipSentenceAnchor(boundary, nearest)
+    : targetMs;
+  const finalMs = setClipBoundary(
+    boundary,
+    anchorMs,
+    nearest ? "sentence" : "manual"
+  );
+  if (finalMs === null) return;
+  seekClipPreview(finalMs);
+  if (nearest) void refineClipBoundary(boundary, anchorMs);
+};
+
+const renderClipTimelineCues = () => {
+  if (!clipTimelineCues || !clipEditorState) return;
+  const fragment = document.createDocumentFragment();
+  for (const subtitle of playbackTrack?.subtitles || []) {
+    if (
+      subtitle.end_ms <= clipEditorState.minMs
+      || subtitle.start_ms >= clipEditorState.maxMs
+    ) continue;
+    const startMs = Math.max(subtitle.start_ms, clipEditorState.minMs);
+    const endMs = Math.min(subtitle.end_ms, clipEditorState.maxMs);
+    const cue = document.createElement("span");
+    cue.className = "clip-transcript-cue";
+    cue.style.left = `${clipPercent(startMs)}%`;
+    cue.style.width = `${Math.max(.08, clipPercent(endMs) - clipPercent(startMs))}%`;
+    cue.textContent = subtitle.zh || subtitle.en || "";
+    cue.title = `${formatFineClock(subtitle.start_ms)} ${cue.textContent}`;
+    fragment.append(cue);
+  }
+  clipTimelineCues.replaceChildren(fragment);
+};
+
+const scrollClipTimelineTo = (milliseconds) => {
+  if (!clipTimelineViewport || !clipRangeControl || !clipEditorState) return;
+  const viewportRect = clipTimelineViewport.getBoundingClientRect();
+  const controlRect = clipRangeControl.getBoundingClientRect();
+  const controlOffset = controlRect.left
+    - viewportRect.left
+    + clipTimelineViewport.scrollLeft;
+  const canvasX = controlOffset
+    + (clipPercent(milliseconds) / 100) * controlRect.width;
+  clipTimelineViewport.scrollLeft = Math.max(
+    0,
+    canvasX - clipTimelineViewport.clientWidth / 2
+  );
+};
+
+const setClipTimelineZoom = (value, anchorMs = null) => {
+  if (!clipEditorState || !clipRangeControl) return;
+  const zoom = Math.max(
+    CLIP_MIN_ZOOM,
+    Math.min(CLIP_MAX_ZOOM, Number(value) || CLIP_MIN_ZOOM)
+  );
+  clipEditorState.zoom = Math.round(zoom * 100) / 100;
+  clipRangeControl.style.width = `${clipEditorState.zoom * 100}%`;
+  if (clipZoomLevel) {
+    clipZoomLevel.textContent = `${clipEditorState.zoom >= 10
+      ? Math.round(clipEditorState.zoom)
+      : clipEditorState.zoom.toFixed(1)}×`;
+  }
+  updateClipRangeUI();
+  const anchor = anchorMs ?? (
+    clipEditorState.startMs + clipEditorState.endMs
+  ) / 2;
+  scrollClipTimelineTo(anchor);
+};
+
+const fitClipTimeline = () => {
+  if (!clipEditorState) return;
+  const span = Math.max(1, clipEditorState.maxMs - clipEditorState.minMs);
+  const selected = Math.max(
+    100,
+    clipEditorState.endMs - clipEditorState.startMs
+  );
+  setClipTimelineZoom(
+    Math.max(CLIP_MIN_ZOOM, Math.min(CLIP_MAX_ZOOM, .68 * span / selected))
+  );
+};
+
+const clipTimeFromClientX = (clientX) => {
+  if (!clipEditorState || !clipRangeControl) return 0;
+  const rect = clipRangeControl.getBoundingClientRect();
+  const fraction = rect.width > 0
+    ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+    : 0;
+  return clipEditorState.minMs
+    + fraction * (clipEditorState.maxMs - clipEditorState.minMs);
+};
+
+const clipSnapThresholdForPixels = (
+  pixels,
+  maximumMs = clipEditorState?.snapThresholdMs
+) => {
+  if (!clipEditorState || !clipRangeControl) return 0;
+  const width = Math.max(1, clipRangeControl.getBoundingClientRect().width);
+  const pixelThreshold = (
+    pixels / width
+  ) * (clipEditorState.maxMs - clipEditorState.minMs);
+  return Math.min(Number(maximumMs), pixelThreshold);
+};
+
+const updateClipDragAt = (clientX) => {
+  if (!clipDragState || !clipEditorState) return;
+  const { boundary } = clipDragState;
+  const { minimum, maximum } = clipBoundaryLimits(boundary);
+  const rawMs = Math.max(
+    minimum,
+    Math.min(clipTimeFromClientX(clientX), maximum)
+  );
+  clipDragState.rawMs = rawMs;
+  clipDragState.candidate = null;
+  let valueMs = rawMs;
+  let source = "manual";
+  if (clipSnapEnabled?.checked) {
+    const releaseMs = clipSnapThresholdForPixels(
+      CLIP_SNAP_RELEASE_PX,
+      clipEditorState.snapThresholdMs * 2
+    );
+    const entering = nearestClipSentence(
+      boundary,
+      rawMs,
+      clipSnapThresholdForPixels(CLIP_SNAP_ENTER_PX)
+    );
+    if (clipDragState.locked && entering) {
+      const enteringAnchorMs = clipSentenceAnchor(boundary, entering);
+      const switchMarginMs = clipSnapThresholdForPixels(
+        3,
+        Number.POSITIVE_INFINITY
+      );
+      if (
+        enteringAnchorMs !== clipDragState.locked.anchorMs
+        && Math.abs(enteringAnchorMs - rawMs) + switchMarginMs
+          < Math.abs(clipDragState.locked.anchorMs - rawMs)
+      ) {
+        clipDragState.locked = {
+          subtitle: entering,
+          anchorMs: enteringAnchorMs
+        };
+      }
     }
+    if (
+      clipDragState.locked
+      && Math.abs(clipDragState.locked.anchorMs - rawMs) > releaseMs
+    ) {
+      clipDragState.locked = null;
+    }
+    const nearby = nearestClipSentence(boundary, rawMs, releaseMs);
+    if (!clipDragState.locked && entering) {
+      clipDragState.locked = {
+        subtitle: entering,
+        anchorMs: clipSentenceAnchor(boundary, entering)
+      };
+    }
+    clipDragState.candidate = clipDragState.locked || (
+      nearby
+        ? {
+          subtitle: nearby,
+          anchorMs: clipSentenceAnchor(boundary, nearby)
+        }
+        : null
+    );
+    if (clipDragState.locked) {
+      valueMs = clipDragState.locked.anchorMs;
+      source = "sentence";
+    }
+  } else {
+    clipDragState.locked = null;
+  }
+  setClipBoundary(boundary, valueMs, source, {
+    invalidateSuggestion: false,
+    clearNotice: false
+  });
+};
+
+const clipAutoScrollVelocity = (clientX) => {
+  if (!clipTimelineViewport) return 0;
+  const rect = clipTimelineViewport.getBoundingClientRect();
+  if (clientX < rect.left + CLIP_AUTO_SCROLL_EDGE_PX) {
+    const pressure = Math.min(
+      1,
+      (rect.left + CLIP_AUTO_SCROLL_EDGE_PX - clientX)
+      / CLIP_AUTO_SCROLL_EDGE_PX
+    );
+    return -Math.max(2, pressure * CLIP_AUTO_SCROLL_MAX_PX);
+  }
+  if (clientX > rect.right - CLIP_AUTO_SCROLL_EDGE_PX) {
+    const pressure = Math.min(
+      1,
+      (clientX - rect.right + CLIP_AUTO_SCROLL_EDGE_PX)
+      / CLIP_AUTO_SCROLL_EDGE_PX
+    );
+    return Math.max(2, pressure * CLIP_AUTO_SCROLL_MAX_PX);
+  }
+  return 0;
+};
+
+const runClipDragFrame = () => {
+  if (!clipDragState || !clipTimelineViewport) return;
+  clipDragState.frame = null;
+  if (!clipDragState.moved) return;
+  const velocity = clipAutoScrollVelocity(clipDragState.clientX);
+  const maximumScroll = Math.max(
+    0,
+    clipTimelineViewport.scrollWidth - clipTimelineViewport.clientWidth
+  );
+  const previousScroll = clipTimelineViewport.scrollLeft;
+  if (velocity) {
+    clipTimelineViewport.scrollLeft = Math.max(
+      0,
+      Math.min(maximumScroll, previousScroll + velocity)
+    );
+  }
+  updateClipDragAt(clipDragState.clientX);
+  if (velocity && clipTimelineViewport.scrollLeft !== previousScroll) {
+    clipDragState.frame = window.requestAnimationFrame(runClipDragFrame);
+  }
+};
+
+const queueClipDragFrame = () => {
+  if (!clipDragState || clipDragState.frame !== null) return;
+  clipDragState.frame = window.requestAnimationFrame(runClipDragFrame);
+};
+
+const startClipDrag = (boundary, event) => {
+  if (
+    !clipEditorState
+    || clipEditorState.submitting
+    || event.button !== 0
+  ) return;
+  event.preventDefault();
+  clipSuggestionTokens[boundary] += 1;
+  clipEditorState.notice = "";
+  clipPreviewPlayer?.pause();
+  const handle = boundary === "start" ? clipStartHandle : clipEndHandle;
+  clipDragState = {
+    boundary,
+    pointerId: event.pointerId,
+    startClientX: event.clientX,
+    clientX: event.clientX,
+    rawMs: boundary === "start"
+      ? clipEditorState.startMs
+      : clipEditorState.endMs,
+    moved: false,
+    candidate: null,
+    locked: null,
+    frame: null
+  };
+  handle?.setPointerCapture(event.pointerId);
+  updateClipRangeUI();
+};
+
+const moveClipDrag = (event) => {
+  if (!clipDragState || event.pointerId !== clipDragState.pointerId) return;
+  event.preventDefault();
+  clipDragState.clientX = event.clientX;
+  if (Math.abs(event.clientX - clipDragState.startClientX) >= 2) {
+    clipDragState.moved = true;
+  }
+  queueClipDragFrame();
+};
+
+const finishClipDrag = (event, canceled = false) => {
+  if (!clipDragState || event.pointerId !== clipDragState.pointerId) return;
+  event.preventDefault();
+  if (clipDragState.frame !== null) {
+    window.cancelAnimationFrame(clipDragState.frame);
+  }
+  const moved = clipDragState.moved || (
+    !canceled
+    && Math.abs(event.clientX - clipDragState.startClientX) >= 2
+  );
+  if (!moved) {
+    clipDragState = null;
+    updateClipRangeUI();
+    return;
+  }
+  clipDragState.moved = true;
+  if (!canceled) clipDragState.clientX = event.clientX;
+  updateClipDragAt(clipDragState.clientX);
+  const drag = clipDragState;
+  const locked = drag.locked && clipSnapEnabled?.checked
+    ? drag.locked
+    : null;
+  const finalMs = locked ? locked.anchorMs : drag.rawMs;
+  clipDragState = null;
+  const committedMs = setClipBoundary(
+    drag.boundary,
+    finalMs,
+    locked ? "sentence" : "manual",
+    { invalidateSuggestion: false, clearNotice: false }
+  );
+  if (committedMs === null) return;
+  seekClipPreview(committedMs);
+  if (!canceled && locked) {
+    void refineClipBoundary(drag.boundary, locked.anchorMs);
   }
 };
 
@@ -605,9 +1065,25 @@ const clipSubtitleAt = (milliseconds) => {
 
 const renderClipPreview = () => {
   if (!clipEditorState || !clipPreviewPlayer) return;
-  const milliseconds = Number.isFinite(clipPreviewPlayer.currentTime)
+  let milliseconds = (
+    clipPreviewPlayer.readyState >= 1
+    && Number.isFinite(clipPreviewPlayer.currentTime)
+  )
     ? clipPreviewPlayer.currentTime * 1000
     : clipEditorState.startMs;
+  if (
+    milliseconds < clipEditorState.minMs
+    || milliseconds > clipEditorState.maxMs
+  ) {
+    milliseconds = clipEditorState.startMs;
+  }
+  if (clipRangeControl) {
+    clipRangeControl.style.setProperty(
+      "--clip-preview-position",
+      `${clipPercent(milliseconds)}%`
+    );
+  }
+  if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = false;
   const mode = clipSubtitleMode?.value || "zh";
   const subtitle = mode === "off" ? null : clipSubtitleAt(milliseconds);
   if (clipPreviewSubtitles && clipPreviewZh && clipPreviewEn) {
@@ -718,6 +1194,7 @@ const destroyClipPreview = () => {
   }
   clipPendingSeekMs = null;
   clipPendingPlay = false;
+  if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = true;
 };
 
 const closeClipEditor = () => {
@@ -753,21 +1230,27 @@ const openClipEditor = async (row, button) => {
     startSource: "manual",
     endSource: "manual",
     requestId: null,
-    submitting: false
+    submitting: false,
+    notice: "",
+    zoom: CLIP_MIN_ZOOM,
+    refineTimer: null
   };
   clipSuggestionTokens = { start: 0, end: 0 };
+  clipDragState = null;
   if (clipEditorTopic) clipEditorTopic.textContent = clipEditorState.title;
   if (clipSnapEnabled) clipSnapEnabled.checked = true;
   if (clipSubtitleMode) clipSubtitleMode.value = "zh";
   if (clipDanmakuEnabled) clipDanmakuEnabled.checked = false;
   updateClipEnglishOptions();
-  if (clipEditorError) clipEditorError.textContent = "";
-  updateClipRangeUI();
+  if (clipRangeControl) clipRangeControl.style.width = "100%";
+  if (clipTimelineViewport) clipTimelineViewport.scrollLeft = 0;
   clipEditor.showModal();
+  updateClipRangeUI({ renderPreview: true });
+  renderClipTimelineCues();
   attachClipPreview();
   clipPendingSeekMs = aiStartMs;
-  void suggestClipBoundary("start", aiStartMs);
-  void suggestClipBoundary("end", aiEndMs);
+  if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = false;
+  fitClipTimeline();
 };
 
 for (const row of clipRows) {
@@ -776,28 +1259,70 @@ for (const row of clipRows) {
 }
 void loadClipExports();
 
-clipStartRange?.addEventListener("input", () => {
-  setClipBoundary("start", Number(clipStartRange.value), "manual");
+const bindClipHandle = (boundary, handle) => {
+  if (!handle) return;
+  handle.addEventListener("pointerdown", (event) => {
+    startClipDrag(boundary, event);
+  });
+  handle.addEventListener("pointermove", moveClipDrag);
+  handle.addEventListener("pointerup", (event) => {
+    finishClipDrag(event);
+  });
+  handle.addEventListener("pointercancel", (event) => {
+    finishClipDrag(event, true);
+  });
+  handle.addEventListener("keydown", (event) => {
+    if (!clipEditorState || !["ArrowLeft", "ArrowRight"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    const stepMs = event.shiftKey ? 1000 : 100;
+    const current = boundary === "start"
+      ? clipEditorState.startMs
+      : clipEditorState.endMs;
+    setClipBoundary(boundary, current + direction * stepMs, "manual");
+  });
+  handle.addEventListener("keyup", (event) => {
+    if (!clipEditorState || !["ArrowLeft", "ArrowRight"].includes(event.key)) {
+      return;
+    }
+    const current = boundary === "start"
+      ? clipEditorState.startMs
+      : clipEditorState.endMs;
+    seekClipPreview(current);
+  });
+};
+
+bindClipHandle("start", clipStartHandle);
+bindClipHandle("end", clipEndHandle);
+
+clipZoomOut?.addEventListener("click", () => {
+  if (!clipEditorState) return;
+  setClipTimelineZoom(clipEditorState.zoom / 1.5);
 });
-clipStartRange?.addEventListener("change", () => {
-  void suggestClipBoundary("start", Number(clipStartRange.value));
+clipZoomIn?.addEventListener("click", () => {
+  if (!clipEditorState) return;
+  setClipTimelineZoom(clipEditorState.zoom * 1.5);
 });
-clipEndRange?.addEventListener("input", () => {
-  setClipBoundary("end", Number(clipEndRange.value), "manual");
-});
-clipEndRange?.addEventListener("change", () => {
-  void suggestClipBoundary("end", Number(clipEndRange.value));
-});
+clipTimelineViewport?.addEventListener("wheel", (event) => {
+  if (!clipEditorState || (!event.ctrlKey && !event.metaKey)) return;
+  event.preventDefault();
+  setClipTimelineZoom(
+    event.deltaY < 0
+      ? clipEditorState.zoom * 1.18
+      : clipEditorState.zoom / 1.18
+  );
+}, { passive: false });
 
 const commitClipTimeInput = (boundary, input) => {
   const parsed = parseClipTime(input.value);
   if (parsed === null) {
-    if (clipEditorError) clipEditorError.textContent = t("clipTimeInvalid");
+    if (clipEditorState) clipEditorState.notice = t("clipTimeInvalid");
     updateClipRangeUI();
     return;
   }
-  setClipBoundary(boundary, parsed, "manual");
-  void suggestClipBoundary(boundary, parsed);
+  commitClipBoundary(boundary, parsed);
 };
 clipStartInput?.addEventListener("change", () => commitClipTimeInput("start", clipStartInput));
 clipEndInput?.addEventListener("change", () => commitClipTimeInput("end", clipEndInput));
@@ -809,41 +1334,51 @@ document.querySelectorAll("[data-clip-adjust]").forEach((button) => {
     const current = boundary === "start"
       ? clipEditorState.startMs
       : clipEditorState.endMs;
-    setClipBoundary(boundary, current + Number(delta), "manual");
+    const adjusted = setClipBoundary(
+      boundary,
+      current + Number(delta),
+      "manual"
+    );
+    if (adjusted !== null) seekClipPreview(adjusted);
   });
 });
 
 clipSnapEnabled?.addEventListener("change", () => {
   if (!clipEditorState) return;
-  if (clipSnapEnabled.checked) {
-    void suggestClipBoundary("start", clipEditorState.startMs);
-    void suggestClipBoundary("end", clipEditorState.endMs);
-  } else {
-    clipSuggestionTokens.start += 1;
-    clipSuggestionTokens.end += 1;
+  clipSuggestionTokens.start += 1;
+  clipSuggestionTokens.end += 1;
+  clipEditorState.notice = "";
+  if (!clipSnapEnabled.checked) {
     clipEditorState.startSource = "manual";
     clipEditorState.endSource = "manual";
-    updateClipRangeUI();
   }
+  updateClipRangeUI();
 });
 
 clipResetRange?.addEventListener("click", () => {
   if (!clipEditorState) return;
-  setClipBoundary("start", clipEditorState.aiStartMs, "manual");
-  setClipBoundary("end", clipEditorState.aiEndMs, "manual");
-  if (clipSnapEnabled?.checked) {
-    void suggestClipBoundary("start", clipEditorState.aiStartMs);
-    void suggestClipBoundary("end", clipEditorState.aiEndMs);
-  }
+  clipSuggestionTokens.start += 1;
+  clipSuggestionTokens.end += 1;
+  clipEditorState.startMs = clipEditorState.aiStartMs;
+  clipEditorState.endMs = clipEditorState.aiEndMs;
+  clipEditorState.startSource = "manual";
+  clipEditorState.endSource = "manual";
+  clipEditorState.requestId = null;
+  clipEditorState.notice = "";
+  updateClipRangeUI();
+  seekClipPreview(clipEditorState.startMs);
+  scrollClipTimelineTo(
+    (clipEditorState.startMs + clipEditorState.endMs) / 2
+  );
 });
 
 clipSubtitleMode?.addEventListener("change", () => {
   if (clipEditorState) clipEditorState.requestId = null;
-  updateClipRangeUI();
+  updateClipRangeUI({ renderPreview: true });
 });
 clipDanmakuEnabled?.addEventListener("change", () => {
   if (clipEditorState) clipEditorState.requestId = null;
-  updateClipRangeUI();
+  updateClipRangeUI({ renderPreview: true });
 });
 
 clipPreviewPlayer?.addEventListener("loadedmetadata", () => {
@@ -888,6 +1423,17 @@ clipPreviewSelection?.addEventListener("click", () => {
 clipEditorClose?.addEventListener("click", closeClipEditor);
 clipEditorCancel?.addEventListener("click", closeClipEditor);
 clipEditor?.addEventListener("close", () => {
+  if (clipDragState?.frame !== null) {
+    window.cancelAnimationFrame(clipDragState.frame);
+  }
+  clipDragState = null;
+  if (clipEditorState?.refineTimer) {
+    window.clearTimeout(clipEditorState.refineTimer);
+  }
+  clipRangeControl?.classList.remove("is-dragging", "is-refining");
+  if (clipRawMarker) clipRawMarker.hidden = true;
+  if (clipSnapMarker) clipSnapMarker.hidden = true;
+  clipTimelineCues?.replaceChildren();
   destroyClipPreview();
   clipEditorState = null;
   clipSuggestionTokens.start += 1;
@@ -902,6 +1448,14 @@ clipEditorSubmit?.addEventListener("click", async () => {
   if (validation) {
     if (clipEditorError) clipEditorError.textContent = validation;
     return;
+  }
+  clipSuggestionTokens.start += 1;
+  clipSuggestionTokens.end += 1;
+  if (clipEditorState.startSource === "checking") {
+    clipEditorState.startSource = "sentence";
+  }
+  if (clipEditorState.endSource === "checking") {
+    clipEditorState.endSource = "sentence";
   }
   clipEditorState.submitting = true;
   updateClipRangeUI();
@@ -938,11 +1492,9 @@ clipEditorSubmit?.addEventListener("click", async () => {
     closeClipEditor();
     window.setTimeout(() => void loadClipExports(), 1000);
   } catch (requestError) {
-    if (clipEditorError) {
-      clipEditorError.textContent = requestError instanceof Error
-        ? requestError.message
-        : t("startClipFailed");
-    }
+    clipEditorState.notice = requestError instanceof Error
+      ? requestError.message
+      : t("startClipFailed");
   } finally {
     if (clipEditorState) {
       clipEditorState.submitting = false;

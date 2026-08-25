@@ -778,65 +778,270 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   align-content: start;
   gap: 16px;
 }
+.clip-timeline-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+}
+.clip-timeline-heading strong,
+.clip-timeline-heading small {
+  display: block;
+}
+.clip-timeline-heading small {
+  margin-top: 3px;
+  color: #81899b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.clip-zoom-controls {
+  display: grid;
+  flex: none;
+  grid-template-columns: 34px 54px 34px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #343a48;
+  border-radius: 10px;
+  background: #11141c;
+}
+.clip-zoom-controls button {
+  min-height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 17px;
+}
+.clip-zoom-controls output {
+  color: #cdd2df;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.clip-timeline-viewport {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 12px 22px 8px;
+  border: 1px solid #2c3240;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(33, 38, 50, .72), rgba(12, 15, 22, .95));
+  overscroll-behavior-x: contain;
+  scrollbar-color: #525a6d transparent;
+  scrollbar-width: thin;
+}
+.clip-timeline-viewport::-webkit-scrollbar {
+  height: 6px;
+}
+.clip-timeline-viewport::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #525a6d;
+}
 .clip-range-control {
   --clip-start-position: 0%;
   --clip-end-position: 100%;
+  --clip-ai-start-position: 0%;
+  --clip-ai-end-position: 100%;
+  --clip-preview-position: 0%;
+  --clip-raw-position: 0%;
+  --clip-snap-position: 0%;
   position: relative;
-  height: 44px;
+  width: 100%;
+  min-width: 100%;
+  height: 104px;
+  user-select: none;
+}
+.clip-transcript-cues {
+  position: absolute;
+  z-index: 1;
+  top: 7px;
+  right: 0;
+  left: 0;
+  height: 30px;
+}
+.clip-transcript-cue {
+  position: absolute;
+  top: 0;
+  overflow: hidden;
+  height: 30px;
+  min-width: 2px;
+  padding: 4px 6px;
+  border: 1px solid rgba(202, 189, 255, .18);
+  border-radius: 6px;
+  background: rgba(116, 102, 180, .18);
+  color: rgba(226, 222, 245, .72);
+  font-size: 9px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .clip-range-rail {
   position: absolute;
-  top: 19px;
+  z-index: 2;
+  top: 48px;
   right: 0;
   left: 0;
-  height: 6px;
-  border-radius: 999px;
+  height: 34px;
+  overflow: visible;
+  border: 1px solid #3a4050;
+  border-radius: 9px;
   background:
-    linear-gradient(
-      to right,
-      #303542 0 var(--clip-start-position),
-      #ff6d9d var(--clip-start-position) var(--clip-end-position),
-      #303542 var(--clip-end-position) 100%
-    );
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, .025) 0,
+      rgba(255, 255, 255, .025) 1px,
+      transparent 1px,
+      transparent 5%
+    ),
+    #202531;
 }
-.clip-range-input {
+.clip-ai-range,
+.clip-selection {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 44px;
-  margin: 0;
+  top: 0;
+  bottom: 0;
   pointer-events: none;
-  appearance: none;
-  background: transparent;
 }
-.clip-range-input::-webkit-slider-thumb {
-  width: 22px;
-  height: 22px;
-  border: 3px solid #0d1017;
-  border-radius: 50%;
-  background: #ff7ba5;
-  box-shadow: 0 0 0 1px #ffb2c9;
-  cursor: grab;
-  pointer-events: auto;
-  appearance: none;
+.clip-ai-range {
+  left: var(--clip-ai-start-position);
+  width: calc(
+    var(--clip-ai-end-position) - var(--clip-ai-start-position)
+  );
+  border-right: 1px solid rgba(202, 189, 255, .28);
+  border-left: 1px solid rgba(202, 189, 255, .28);
+  background: rgba(202, 189, 255, .08);
 }
-.clip-range-input::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  border: 3px solid #0d1017;
-  border-radius: 50%;
-  background: #ff7ba5;
-  box-shadow: 0 0 0 1px #ffb2c9;
-  cursor: grab;
-  pointer-events: auto;
+.clip-selection {
+  left: var(--clip-start-position);
+  width: calc(var(--clip-end-position) - var(--clip-start-position));
+  border-top: 1px solid rgba(255, 176, 201, .72);
+  border-bottom: 1px solid rgba(255, 176, 201, .72);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 82, 139, .28),
+    rgba(255, 123, 165, .43)
+  );
+  box-shadow: inset 0 0 16px rgba(255, 82, 139, .12);
+}
+.clip-boundary-handle {
+  position: absolute;
+  z-index: 7;
+  top: 39px;
+  left: var(--clip-start-position);
+  width: 44px;
+  height: 56px;
+  padding: 0;
+  outline: none;
+  cursor: ew-resize;
+  touch-action: none;
+  transform: translateX(-50%);
+}
+.clip-end-handle {
+  left: var(--clip-end-position);
+}
+.clip-boundary-handle > span {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  width: 13px;
+  height: 43px;
+  border-color: #ff8fb2;
+  border-style: solid;
+  background: rgba(13, 16, 23, .88);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, .38);
+  transform: translateX(-50%);
+}
+.clip-start-handle > span {
+  border-width: 2px 0 2px 3px;
+  border-radius: 5px 0 0 5px;
+}
+.clip-end-handle > span {
+  border-width: 2px 3px 2px 0;
+  border-radius: 0 5px 5px 0;
+}
+.clip-boundary-handle output {
+  position: absolute;
+  top: -17px;
+  left: 50%;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 143, 178, .34);
+  border-radius: 6px;
+  background: rgba(8, 10, 15, .9);
+  color: #ffc0d2;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: .72;
+  transform: translateX(-50%);
+}
+.clip-boundary-handle:hover > span,
+.clip-boundary-handle:focus-visible > span,
+.clip-boundary-handle.is-active > span {
+  border-color: #ffd0de;
+  box-shadow:
+    0 0 0 3px rgba(255, 109, 157, .18),
+    0 5px 15px rgba(0, 0, 0, .38);
+}
+.clip-boundary-handle:focus-visible output,
+.clip-boundary-handle.is-active output {
+  opacity: 1;
+}
+.clip-boundary-handle.is-snapped > span {
+  border-color: #70e7c2;
+  box-shadow:
+    0 0 0 4px rgba(112, 231, 194, .14),
+    0 5px 15px rgba(0, 0, 0, .38);
+}
+.clip-preview-playhead,
+.clip-raw-marker,
+.clip-snap-marker {
+  position: absolute;
+  z-index: 6;
+  top: -7px;
+  bottom: -7px;
+  width: 0;
+  pointer-events: none;
+}
+.clip-preview-playhead {
+  left: var(--clip-preview-position);
+  border-left: 1px solid #f3ce72;
+  box-shadow: 0 0 6px rgba(243, 206, 114, .4);
+}
+.clip-raw-marker {
+  left: var(--clip-raw-position);
+  border-left: 1px dashed rgba(255, 255, 255, .58);
+}
+.clip-snap-marker {
+  left: var(--clip-snap-position);
+  border-left: 2px solid #70e7c2;
+  box-shadow: 0 0 7px rgba(112, 231, 194, .52);
+}
+.clip-range-control.is-dragging .clip-boundary-handle,
+.clip-range-control.is-dragging .clip-selection {
+  transition:
+    left 45ms ease-out,
+    width 45ms ease-out;
+}
+.clip-range-control.is-refining .clip-boundary-handle,
+.clip-range-control.is-refining .clip-selection {
+  transition:
+    left 180ms cubic-bezier(.34, 1.26, .64, 1),
+    width 180ms cubic-bezier(.34, 1.26, .64, 1);
 }
 .clip-window-copy {
   display: flex;
   justify-content: space-between;
-  margin-top: -12px;
+  margin-top: -10px;
   color: #81899b;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+.clip-keyboard-hint {
+  margin-top: -8px;
+  color: #767f92;
+  font-size: 10px;
+  line-height: 1.4;
 }
 .clip-boundary-grid,
 .clip-option-grid {
@@ -1020,6 +1225,21 @@ code { color: #d4c8ff; }
     grid-template-columns: minmax(0, 1fr);
     padding: 14px;
   }
+  .clip-timeline-heading {
+    align-items: center;
+  }
+  .clip-timeline-heading small {
+    max-width: 220px;
+  }
+  .clip-timeline-viewport {
+    margin-right: -4px;
+    margin-left: -4px;
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+  .clip-boundary-handle {
+    width: 48px;
+  }
   .clip-preview-stage {
     min-height: 210px;
   }
@@ -1041,6 +1261,24 @@ code { color: #d4c8ff; }
   }
   .clip-editor-footer button {
     min-width: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .clip-keyboard-hint {
+    display: none;
+  }
+  .clip-zoom-controls button {
+    min-height: 42px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clip-range-control.is-dragging .clip-boundary-handle,
+  .clip-range-control.is-dragging .clip-selection,
+  .clip-range-control.is-refining .clip-boundary-handle,
+  .clip-range-control.is-refining .clip-selection {
+    transition: none;
   }
 }
 

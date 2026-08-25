@@ -285,34 +285,100 @@
           </section>
 
           <section class="clip-editor-controls">
+            <div class="clip-timeline-heading">
+              <div>
+                <strong data-i18n="clipTimeline">精细时间线</strong>
+                <small data-i18n="clipTimelineHint">拖动边界；靠近语句时会吸附，松手后再检查静音</small>
+              </div>
+              <div class="clip-zoom-controls">
+                <button
+                  id="clip-zoom-out"
+                  type="button"
+                  aria-label="缩小时间线"
+                  title="缩小时间线"
+                  data-i18n-aria-label="clipZoomOut"
+                  data-i18n-title="clipZoomOut"
+                >−</button>
+                <output id="clip-zoom-value">1×</output>
+                <button
+                  id="clip-zoom-in"
+                  type="button"
+                  aria-label="放大时间线"
+                  title="放大时间线"
+                  data-i18n-aria-label="clipZoomIn"
+                  data-i18n-title="clipZoomIn"
+                >+</button>
+              </div>
+            </div>
             <div
-              id="clip-range-control"
-              class="clip-range-control"
-              aria-label="剪辑时间范围"
-              data-i18n-aria-label="clipTimeRange"
+              id="clip-timeline-viewport"
+              class="clip-timeline-viewport"
             >
-              <div class="clip-range-rail"></div>
-              <input
-                id="clip-start-range"
-                class="clip-range-input clip-start-range"
-                type="range"
-                step="100"
-                aria-label="剪辑开始时间"
-                data-i18n-aria-label="clipStartRange"
+              <div
+                id="clip-range-control"
+                class="clip-range-control"
+                aria-label="剪辑时间范围"
+                data-i18n-aria-label="clipTimeRange"
               >
-              <input
-                id="clip-end-range"
-                class="clip-range-input clip-end-range"
-                type="range"
-                step="100"
-                aria-label="剪辑结束时间"
-                data-i18n-aria-label="clipEndRange"
-              >
+                <div
+                  id="clip-transcript-cues"
+                  class="clip-transcript-cues"
+                  aria-hidden="true"
+                ></div>
+                <div class="clip-range-rail" aria-hidden="true">
+                  <div id="clip-ai-range" class="clip-ai-range"></div>
+                  <div id="clip-selection" class="clip-selection"></div>
+                  <div
+                    id="clip-preview-playhead"
+                    class="clip-preview-playhead"
+                    hidden
+                  ></div>
+                  <div
+                    id="clip-raw-marker"
+                    class="clip-raw-marker"
+                    hidden
+                  ></div>
+                  <div
+                    id="clip-snap-marker"
+                    class="clip-snap-marker"
+                    hidden
+                  ></div>
+                </div>
+                <div
+                  id="clip-start-handle"
+                  class="clip-boundary-handle clip-start-handle"
+                  role="slider"
+                  tabindex="0"
+                  aria-label="剪辑开始时间"
+                  data-i18n-aria-label="clipStartRange"
+                  data-clip-boundary="start"
+                >
+                  <span aria-hidden="true"></span>
+                  <output id="clip-start-handle-time">00:00:00.0</output>
+                </div>
+                <div
+                  id="clip-end-handle"
+                  class="clip-boundary-handle clip-end-handle"
+                  role="slider"
+                  tabindex="0"
+                  aria-label="剪辑结束时间"
+                  data-i18n-aria-label="clipEndRange"
+                  data-clip-boundary="end"
+                >
+                  <span aria-hidden="true"></span>
+                  <output id="clip-end-handle-time">00:00:00.0</output>
+                </div>
+              </div>
             </div>
             <div class="clip-window-copy">
               <span id="clip-window-start"></span>
               <span id="clip-window-end"></span>
             </div>
+
+            <div
+              class="clip-keyboard-hint"
+              data-i18n="clipKeyboardHint"
+            >聚焦边界后用 ←/→ 微调 0.1 秒，按住 Shift 调整 1 秒。</div>
 
             <div class="clip-boundary-grid">
               <fieldset class="clip-boundary-field">

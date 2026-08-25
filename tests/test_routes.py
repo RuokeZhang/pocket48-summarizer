@@ -310,8 +310,14 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'data-duration-ms="600000"' in page.text
     assert 'data-clip-start-ms="61250"' in page.text
     assert 'data-clip-end-ms="125750"' in page.text
-    assert 'id="clip-start-range"' in page.text
-    assert 'id="clip-end-range"' in page.text
+    assert 'id="clip-timeline-viewport"' in page.text
+    assert 'id="clip-transcript-cues"' in page.text
+    assert 'id="clip-start-handle"' in page.text
+    assert 'id="clip-end-handle"' in page.text
+    assert 'id="clip-zoom-out"' in page.text
+    assert 'id="clip-zoom-in"' in page.text
+    assert 'id="clip-start-range"' not in page.text
+    assert 'id="clip-end-range"' not in page.text
     assert 'id="clip-subtitle-mode"' in page.text
     assert 'id="clip-danmaku-enabled"' in page.text
     assert 'id="clip-preview-player"' in page.text
@@ -1065,12 +1071,15 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260825-7" in page.text
-    assert "styles.css?v=20260825-10" in page.text
-    assert "app.js?v=20260825-5" in page.text
+    assert "i18n.js?v=20260825-8" in page.text
+    assert "styles.css?v=20260825-11" in page.text
+    assert "app.js?v=20260825-6" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text
+    assert "(prefers-reduced-motion: reduce)" in styles.text
+    assert ".clip-timeline-viewport" in styles.text
+    assert ".clip-boundary-handle" in styles.text
     assert ".mobile-danmaku-overlay" in styles.text
     assert ".mobile-history-nav" in styles.text
     assert "safe-area-inset-bottom" in styles.text
@@ -1082,6 +1091,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert javascript.status_code == 200
     assert "mobileDanmakuMedia" in javascript.text
     assert "mobileDensityProfiles" in javascript.text
+    assert "setPointerCapture" in javascript.text
+    assert "CLIP_SNAP_RELEASE_PX" in javascript.text
+    assert "clipStartRange" not in javascript.text
     assert "window.history.back()" in javascript.text
     assert "window.history.forward()" in javascript.text
     assert track.status_code == 200
