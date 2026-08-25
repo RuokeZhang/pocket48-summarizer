@@ -319,7 +319,7 @@
             <div class="clip-timeline-heading">
               <div>
                 <strong data-i18n="clipTimeline">精细时间线</strong>
-                <small data-i18n="clipTimelineHint">拖动边界；靠近语句时会吸附，松手后再检查静音</small>
+                <small data-i18n="clipTimelineHint">移动红线预览，单击锁定时间；拖动边界靠近红线会优先吸附</small>
               </div>
               <div class="clip-zoom-controls">
                 <button
@@ -395,7 +395,9 @@
                     id="clip-hover-marker"
                     class="clip-hover-marker"
                     hidden
-                  ></div>
+                  >
+                    <output id="clip-marker-time">00:00:00.0</output>
+                  </div>
                 </div>
                 <div
                   id="clip-start-handle"

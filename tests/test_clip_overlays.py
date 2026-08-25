@@ -1,6 +1,17 @@
+import re
+
 import pytest
 
 from pocket48_summarizer.errors import AppError
+from pocket48_summarizer.media.layouts import (
+    LANDSCAPE_CANVAS_HEIGHT,
+    LANDSCAPE_CANVAS_WIDTH,
+    LANDSCAPE_DANMAKU_BOTTOM,
+    LANDSCAPE_DANMAKU_RIGHT,
+    LANDSCAPE_DANMAKU_WIDTH,
+    LANDSCAPE_SUBTITLE_LEFT,
+    LANDSCAPE_SUBTITLE_WIDTH,
+)
 from pocket48_summarizer.media.overlays import (
     build_clip_overlay,
     subtitle_contrast_ratio,
@@ -44,10 +55,12 @@ def test_overlay_renders_bilingual_subtitles_and_bounded_danmaku():
     )
 
     assert document.subtitle_event_count == 1
-    assert document.danmaku_event_count <= 5
+    assert document.danmaku_event_count == 8
     assert r"\{测试\}" in document.content
     assert r"{\rSubtitleEn}English subtitle" in document.content
     assert r"\pos(" in document.content
+    assert r"\move(" in document.content
+    assert r"\fad(120,0)" in document.content
     assert "Style: SubtitleZh,Noto Sans CJK SC" in document.content
     assert (
         "Style: SubtitleZh,Noto Sans CJK SC,54,"
@@ -100,6 +113,61 @@ def test_overlay_warns_when_danmaku_range_is_empty():
     assert document.subtitle_event_count == 0
     assert document.danmaku_event_count == 0
     assert document.warning_message == "所选范围没有可渲染的弹幕"
+
+
+def test_danmaku_stack_rises_and_evicts_only_at_visible_limit():
+    document = build_clip_overlay(
+        width=1280,
+        height=720,
+        clip_start_ms=0,
+        clip_end_ms=10_000,
+        subtitle_mode="off",
+        include_danmaku=True,
+        font_name="Noto Sans CJK SC",
+        transcript=[],
+        translations={},
+        danmaku=[
+            DanmakuEntry(
+                sequence=index,
+                timestamp_ms=1000 + index * 500,
+                author=f"用户{index}",
+                text=f"第 {index} 条弹幕",
+            )
+            for index in range(6)
+        ],
+    )
+
+    assert document.danmaku_event_count == 6
+    first = [
+        line
+        for line in document.content.splitlines()
+        if "用户0" in line
+    ]
+    newest = [
+        line
+        for line in document.content.splitlines()
+        if "用户5" in line
+    ]
+    assert len(first) == 5
+    assert first[0].startswith(
+        "Dialogue: 10,0:00:01.00,0:00:01.50,"
+    )
+    assert first[-1].startswith(
+        "Dialogue: 10,0:00:03.00,0:00:03.50,"
+    )
+    assert newest[0].startswith(
+        "Dialogue: 10,0:00:03.50,0:00:10.00,"
+    )
+    initial_position = re.search(r"\\pos\(\d+,(\d+)\)", first[0])
+    assert initial_position is not None
+    initial_y = int(initial_position.group(1))
+    rise = re.search(
+        r"\\move\(\d+,(\d+),\d+,(\d+),0,220\)",
+        first[1],
+    )
+    assert rise is not None
+    assert int(rise.group(1)) == initial_y
+    assert int(rise.group(2)) < initial_y
 
 
 def test_overlay_rejects_out_of_range_subtitle_scale():
@@ -157,19 +225,49 @@ def test_landscape_overlay_places_content_in_side_panels():
 
     assert "PlayResX: 1920" in document.content
     assert "PlayResY: 1080" in document.content
+    assert "WrapStyle: 0" in document.content
     assert (
-        "Style: LandscapeSubtitleZh,LXGW WenKai,35,"
+        "Style: LandscapeSubtitleZh,LXGW WenKai,23,"
         "&H00123DE4"
         in document.content
     )
     assert (
-        "Style: LandscapeDanmaku,Noto Sans CJK SC,22,"
+        "Style: LandscapeDanmaku,Noto Sans CJK SC,18,"
         "&H00423A5B"
         in document.content
     )
+    assert (
+        "Style: LandscapeDanmakuBox,Noto Sans CJK SC,1,"
+        "&H0CF6F8FF"
+        in document.content
+    )
     assert "&H006D53D6" in document.content
-    assert r"\pos(1862,70)" in document.content
+    assert r"\pos(1337,943)" in document.content
+    assert r"\pos(1348,952)" in document.content
+    assert r"\p1}m 18 0 l 500 0" in document.content
     assert ",LandscapeSubtitleZh," in document.content
+
+
+def test_landscape_ass_geometry_matches_browser_preview_percentages():
+    assert LANDSCAPE_SUBTITLE_LEFT / LANDSCAPE_CANVAS_WIDTH == pytest.approx(
+        0.0375
+    )
+    assert LANDSCAPE_SUBTITLE_WIDTH / LANDSCAPE_CANVAS_WIDTH == pytest.approx(
+        0.265,
+        abs=0.0002,
+    )
+    assert LANDSCAPE_DANMAKU_RIGHT / LANDSCAPE_CANVAS_WIDTH == pytest.approx(
+        0.034,
+        abs=0.0002,
+    )
+    assert LANDSCAPE_DANMAKU_WIDTH / LANDSCAPE_CANVAS_WIDTH == pytest.approx(
+        0.27,
+        abs=0.0003,
+    )
+    assert LANDSCAPE_DANMAKU_BOTTOM / LANDSCAPE_CANVAS_HEIGHT == pytest.approx(
+        0.07,
+        abs=0.0005,
+    )
 
 
 @pytest.mark.parametrize(
@@ -203,4 +301,69 @@ def test_landscape_overlay_maps_selectable_fonts(font_family, font_name):
         subtitle_font_family=font_family,
     )
 
-    assert f"Style: LandscapeSubtitleZh,{font_name},35," in document.content
+    assert f"Style: LandscapeSubtitleZh,{font_name},23," in document.content
+
+
+def test_landscape_overlay_wraps_long_subtitle_inside_left_panel():
+    document = build_clip_overlay(
+        width=1920,
+        height=1080,
+        clip_start_ms=0,
+        clip_end_ms=3000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=3000,
+                text="我最近已经在开始反思自己了，我要走这种不那种。",
+            )
+        ],
+        translations={},
+        danmaku=[],
+        output_layout="landscape",
+    )
+
+    assert (
+        "Style: LandscapeSubtitleZh,LXGW WenKai,23,"
+        "&H00123DE4,&H00123DE4,&H00000000,&H00000000,"
+        "-1,0,0,0,100,100,0,0,1,0,0,4,72,1339,0,1"
+        in document.content
+    )
+    assert r"我最近已经在开始反思自己了，我要走这种\N不那种。" in (
+        document.content
+    )
+
+
+def test_landscape_danmaku_card_moves_by_new_bubble_height():
+    document = build_clip_overlay(
+        width=1920,
+        height=1080,
+        clip_start_ms=0,
+        clip_end_ms=5000,
+        subtitle_mode="off",
+        include_danmaku=True,
+        font_name="Noto Sans CJK SC",
+        transcript=[],
+        translations={},
+        danmaku=[
+            DanmakuEntry(
+                sequence=1,
+                timestamp_ms=500,
+                author="第一条",
+                text="较早弹幕",
+            ),
+            DanmakuEntry(
+                sequence=2,
+                timestamp_ms=1000,
+                author="第二条",
+                text="新弹幕",
+            ),
+        ],
+        output_layout="landscape",
+    )
+
+    assert r"\move(1337,943,1337,871,0,220)" in document.content
+    assert r"\move(1348,952,1348,880,0,220)" in document.content

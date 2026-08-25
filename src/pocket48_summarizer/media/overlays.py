@@ -11,11 +11,26 @@ from ..security import strip_control_chars
 from .layouts import (
     LANDSCAPE_CANVAS_WIDTH,
     LANDSCAPE_CANVAS_HEIGHT,
+    LANDSCAPE_DANMAKU_AUTHOR_LINE_HEIGHT,
+    LANDSCAPE_DANMAKU_AUTHOR_SIZE,
     LANDSCAPE_DANMAKU_AUTHOR_COLOR,
     LANDSCAPE_DANMAKU_BACKGROUND_COLOR,
+    LANDSCAPE_DANMAKU_BODY_LINE_HEIGHT,
+    LANDSCAPE_DANMAKU_BODY_SIZE,
+    LANDSCAPE_DANMAKU_BOTTOM,
+    LANDSCAPE_DANMAKU_GAP,
+    LANDSCAPE_DANMAKU_PADDING_X,
+    LANDSCAPE_DANMAKU_PADDING_Y,
+    LANDSCAPE_DANMAKU_RADIUS,
+    LANDSCAPE_DANMAKU_RIGHT,
     LANDSCAPE_DANMAKU_TEXT_COLOR,
+    LANDSCAPE_DANMAKU_TEXT_GAP,
+    LANDSCAPE_DANMAKU_WIDTH,
     LANDSCAPE_SUBTITLE_COLOR,
-    LANDSCAPE_VIDEO_WIDTH,
+    LANDSCAPE_SUBTITLE_EN_SIZE,
+    LANDSCAPE_SUBTITLE_LEFT,
+    LANDSCAPE_SUBTITLE_WIDTH,
+    LANDSCAPE_SUBTITLE_ZH_SIZE,
     DEFAULT_LANDSCAPE_SUBTITLE_FONT,
     ClipOutputLayout,
     LandscapeSubtitleFont,
@@ -23,9 +38,9 @@ from .layouts import (
 )
 
 SubtitleMode = Literal["off", "zh", "en", "bilingual"]
-DANMAKU_LIFETIME_MS = 5000
 DANMAKU_MIN_GAP_MS = 450
-DANMAKU_SLOT_COUNT = 5
+DANMAKU_MAX_VISIBLE = 5
+DANMAKU_RISE_MS = 220
 SUBTITLE_FONT_SCALE_MIN = 70
 SUBTITLE_FONT_SCALE_MAX = 160
 DEFAULT_SUBTITLE_FONT_SCALE = 100
@@ -33,6 +48,7 @@ DEFAULT_SUBTITLE_TEXT_COLOR = "#E43D12"
 DEFAULT_SUBTITLE_BACKGROUND_COLOR = "#EBE9E1"
 MIN_SUBTITLE_CONTRAST_RATIO = 3.0
 HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+CJK_CLOSING_PUNCTUATION = frozenset("，。！？；：、）》】」』”’")
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +57,14 @@ class ClipOverlayDocument:
     subtitle_event_count: int
     danmaku_event_count: int
     warning_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedDanmaku:
+    relative_ms: int
+    author: str
+    body: str
+    body_lines: int
 
 
 def build_clip_overlay(
@@ -88,8 +112,9 @@ def build_clip_overlay(
         transcript=transcript,
         translations=translations,
         output_layout=output_layout,
+        subtitle_font_scale=subtitle_font_scale,
     )
-    danmaku_events = (
+    danmaku_events, danmaku_count = (
         _danmaku_events(
             width=width,
             height=height,
@@ -99,11 +124,11 @@ def build_clip_overlay(
             output_layout=output_layout,
         )
         if include_danmaku
-        else []
+        else ([], 0)
     )
     warning = (
         "所选范围没有可渲染的弹幕"
-        if include_danmaku and not danmaku_events
+        if include_danmaku and not danmaku_count
         else None
     )
     header = _ass_header(
@@ -120,7 +145,7 @@ def build_clip_overlay(
     return ClipOverlayDocument(
         content="\n".join([header, *subtitle_events, *danmaku_events, ""]),
         subtitle_event_count=len(subtitle_events),
-        danmaku_event_count=len(danmaku_events),
+        danmaku_event_count=danmaku_count,
         warning_message=warning,
     )
 
@@ -133,6 +158,7 @@ def _subtitle_events(
     transcript: list[TranscriptSegment],
     translations: dict[int, str],
     output_layout: ClipOutputLayout,
+    subtitle_font_scale: int,
 ) -> list[str]:
     if subtitle_mode == "off":
         return []
@@ -161,6 +187,19 @@ def _subtitle_events(
                 True,
             )
     events: list[str] = []
+    scale = subtitle_font_scale / 100
+    landscape_zh_width = max(
+        8,
+        LANDSCAPE_SUBTITLE_WIDTH
+        // max(1, round(LANDSCAPE_SUBTITLE_ZH_SIZE * scale)),
+    )
+    landscape_en_width = max(
+        12,
+        round(
+            LANDSCAPE_SUBTITLE_WIDTH
+            / max(1, LANDSCAPE_SUBTITLE_EN_SIZE * scale * 0.58)
+        ),
+    )
     for segment in selected:
         start_ms = max(0, segment.start_ms - clip_start_ms)
         end_ms = min(
@@ -169,8 +208,18 @@ def _subtitle_events(
         )
         if end_ms <= start_ms:
             continue
-        zh = _ass_text(segment.text)
-        en = _ass_text(translations.get(segment.sequence, ""))
+        if output_layout == "landscape":
+            zh = _ass_wrapped_text(
+                segment.text,
+                width=landscape_zh_width,
+            )
+            en = _ass_wrapped_text(
+                translations.get(segment.sequence, ""),
+                width=landscape_en_width,
+            )
+        else:
+            zh = _ass_text(segment.text)
+            en = _ass_text(translations.get(segment.sequence, ""))
         style_prefix = (
             "LandscapeSubtitle"
             if output_layout == "landscape"
@@ -211,7 +260,7 @@ def _danmaku_events(
     clip_end_ms: int,
     danmaku: list[DanmakuEntry],
     output_layout: ClipOutputLayout,
-) -> list[str]:
+) -> tuple[list[str], int]:
     selected = sorted(
         (
             entry
@@ -220,62 +269,173 @@ def _danmaku_events(
         ),
         key=lambda entry: (entry.timestamp_ms, entry.sequence),
     )
-    slot_available_ms = [0] * DANMAKU_SLOT_COUNT
-    events: list[str] = []
+    prepared: list[_PreparedDanmaku] = []
     last_accepted_ms = -DANMAKU_MIN_GAP_MS
     landscape = output_layout == "landscape"
-    right_margin = 58 if landscape else max(14, round(width * 0.025))
-    top_margin = 70 if landscape else max(14, round(height * 0.035))
-    slot_step = 180 if landscape else max(48, round(height * 0.115))
+    right_margin = max(14, round(width * 0.025))
+    top_margin = max(14, round(height * 0.035))
+    slot_step = max(48, round(height * 0.115))
     x = width - right_margin
-    author_size = 18 if landscape else max(13, round(height * 0.016))
+    author_size = max(13, round(height * 0.016))
     for entry in selected:
         relative_ms = entry.timestamp_ms - clip_start_ms
         if relative_ms - last_accepted_ms < DANMAKU_MIN_GAP_MS:
             continue
-        slot = next(
-            (
-                index
-                for index, available_ms in enumerate(slot_available_ms)
-                if available_ms <= relative_ms
-            ),
-            None,
-        )
-        if slot is None:
-            continue
-        event_end_ms = min(
-            clip_end_ms - clip_start_ms,
-            relative_ms + DANMAKU_LIFETIME_MS,
-        )
-        if event_end_ms <= relative_ms:
-            continue
         author = _ass_text(_truncate(_plain_text(entry.author), 18))
         body = _wrapped_ass_text(
             _plain_text(entry.text),
-            width=17 if landscape else 18,
+            width=26 if landscape else 18,
             lines=3,
         )
         if not body:
             continue
-        y = top_margin + slot * slot_step
-        style = "LandscapeDanmakuAuthor" if landscape else "Danmaku"
-        body_style = "LandscapeDanmaku" if landscape else "Danmaku"
-        text = (
-            f"{{\\an9\\pos({x},{y})\\fs{author_size}}}"
-            f"{author or '匿名'}\\N{{\\r{body_style}}}{body}"
-        )
-        events.append(
-            _dialogue(
-                layer=10,
-                start_ms=relative_ms,
-                end_ms=event_end_ms,
-                style=style,
-                text=text,
+        prepared.append(
+            _PreparedDanmaku(
+                relative_ms=relative_ms,
+                author=author or "匿名",
+                body=body,
+                body_lines=body.count(r"\N") + 1,
             )
         )
-        slot_available_ms[slot] = event_end_ms
         last_accepted_ms = relative_ms
-    return events
+
+    events: list[str] = []
+    clip_duration_ms = clip_end_ms - clip_start_ms
+    bottom_y = top_margin + (DANMAKU_MAX_VISIBLE - 1) * slot_step
+    # Mirror the browser's variable-height, bottom-anchored card stack.
+    landscape_heights = (
+        [
+            (
+                LANDSCAPE_DANMAKU_PADDING_Y * 2
+                + LANDSCAPE_DANMAKU_AUTHOR_LINE_HEIGHT
+                + LANDSCAPE_DANMAKU_TEXT_GAP
+                + item.body_lines * LANDSCAPE_DANMAKU_BODY_LINE_HEIGHT
+            )
+            for item in prepared
+        ]
+        if landscape
+        else []
+    )
+    for index, item in enumerate(prepared):
+        style = "LandscapeDanmakuAuthor" if landscape else "Danmaku"
+        body_style = "LandscapeDanmaku" if landscape else "Danmaku"
+        maximum_age = min(
+            DANMAKU_MAX_VISIBLE - 1,
+            len(prepared) - index - 1,
+        )
+        for age in range(maximum_age + 1):
+            latest_index = index + age
+            segment_start_ms = prepared[latest_index].relative_ms
+            segment_end_ms = (
+                prepared[latest_index + 1].relative_ms
+                if latest_index + 1 < len(prepared)
+                else clip_duration_ms
+            )
+            if segment_end_ms <= segment_start_ms:
+                continue
+            rise_ms = min(
+                DANMAKU_RISE_MS,
+                segment_end_ms - segment_start_ms,
+            )
+            if landscape:
+                bubble_x = (
+                    width
+                    - LANDSCAPE_DANMAKU_RIGHT
+                    - LANDSCAPE_DANMAKU_WIDTH
+                )
+                bubble_y = (
+                    height
+                    - LANDSCAPE_DANMAKU_BOTTOM
+                    - sum(landscape_heights[index : latest_index + 1])
+                    - age * LANDSCAPE_DANMAKU_GAP
+                )
+                if age == 0:
+                    bubble_position = (
+                        f"\\pos({bubble_x},{bubble_y})\\fad(120,0)"
+                    )
+                    text_position = (
+                        "\\pos("
+                        f"{bubble_x + LANDSCAPE_DANMAKU_PADDING_X},"
+                        f"{bubble_y + LANDSCAPE_DANMAKU_PADDING_Y}"
+                        ")\\fad(120,0)"
+                    )
+                else:
+                    previous_bubble_y = (
+                        height
+                        - LANDSCAPE_DANMAKU_BOTTOM
+                        - sum(
+                            landscape_heights[index:latest_index]
+                        )
+                        - (age - 1) * LANDSCAPE_DANMAKU_GAP
+                    )
+                    bubble_position = (
+                        f"\\move({bubble_x},{previous_bubble_y},"
+                        f"{bubble_x},{bubble_y},0,{rise_ms})"
+                    )
+                    text_x = (
+                        bubble_x + LANDSCAPE_DANMAKU_PADDING_X
+                    )
+                    text_position = (
+                        f"\\move({text_x},"
+                        f"{previous_bubble_y + LANDSCAPE_DANMAKU_PADDING_Y},"
+                        f"{text_x},"
+                        f"{bubble_y + LANDSCAPE_DANMAKU_PADDING_Y},"
+                        f"0,{rise_ms})"
+                    )
+                box = _ass_rounded_rect(
+                    LANDSCAPE_DANMAKU_WIDTH,
+                    landscape_heights[index],
+                    LANDSCAPE_DANMAKU_RADIUS,
+                )
+                # Fixed-width ASS cards need a vector box behind the text.
+                events.append(
+                    _dialogue(
+                        layer=9,
+                        start_ms=segment_start_ms,
+                        end_ms=segment_end_ms,
+                        style="LandscapeDanmakuBox",
+                        text=(
+                            f"{{\\an7{bubble_position}\\p1}}"
+                            f"{box}{{\\p0}}"
+                        ),
+                    )
+                )
+                events.append(
+                    _dialogue(
+                        layer=10,
+                        start_ms=segment_start_ms,
+                        end_ms=segment_end_ms,
+                        style=style,
+                        text=(
+                            f"{{\\an7{text_position}}}"
+                            f"{item.author}\\N"
+                            f"{{\\r{body_style}}}{item.body}"
+                        ),
+                    )
+                )
+                continue
+            y = bottom_y - age * slot_step
+            if age == 0:
+                position = f"\\pos({x},{y})\\fad(120,0)"
+            else:
+                previous_y = y + slot_step
+                position = (
+                    f"\\move({x},{previous_y},{x},{y},0,{rise_ms})"
+                )
+            events.append(
+                _dialogue(
+                    layer=10,
+                    start_ms=segment_start_ms,
+                    end_ms=segment_end_ms,
+                    style=style,
+                    text=(
+                        f"{{\\an9{position}\\fs{author_size}}}"
+                        f"{item.author}\\N"
+                        f"{{\\r{body_style}}}{item.body}"
+                    ),
+                )
+            )
+    return events, len(prepared)
 
 
 def _ass_header(
@@ -327,10 +487,6 @@ def _ass_header(
             LANDSCAPE_DANMAKU_BACKGROUND_COLOR,
             alpha=12,
         )
-        landscape_danmaku_shadow = _ass_color(
-            LANDSCAPE_DANMAKU_BACKGROUND_COLOR,
-            alpha=44,
-        )
     except ValueError as exc:
         raise AppError(
             "clip_subtitle_style_invalid",
@@ -351,9 +507,14 @@ def _ass_header(
     zh_size = max(14, round(max(20, height * 0.034) * scale))
     en_size = max(12, round(max(16, height * 0.025) * scale))
     danmaku_size = max(15, round(height * 0.020))
-    landscape_zh_size = max(26, round(height * 0.032 * scale))
-    landscape_en_size = max(20, round(height * 0.024 * scale))
-    landscape_danmaku_size = max(18, round(height * 0.020))
+    landscape_zh_size = max(
+        16,
+        round(LANDSCAPE_SUBTITLE_ZH_SIZE * scale),
+    )
+    landscape_en_size = max(
+        13,
+        round(LANDSCAPE_SUBTITLE_EN_SIZE * scale),
+    )
     margin_v = max(12, round(height * 0.025))
     margin_l = max(12, round(width * 0.04))
     margin_r = (
@@ -361,18 +522,23 @@ def _ass_header(
         if reserve_danmaku
         else margin_l
     )
-    landscape_side_width = (
-        LANDSCAPE_CANVAS_WIDTH - LANDSCAPE_VIDEO_WIDTH
-    ) // 2
-    landscape_margin_l = 72
-    landscape_margin_r = width - (
-        landscape_side_width - landscape_margin_l
+    landscape_margin_l = LANDSCAPE_SUBTITLE_LEFT
+    landscape_margin_r = (
+        width - LANDSCAPE_SUBTITLE_LEFT - LANDSCAPE_SUBTITLE_WIDTH
+    )
+    landscape_danmaku_border = _ass_color(
+        LANDSCAPE_DANMAKU_AUTHOR_COLOR,
+        alpha=168,
+    )
+    landscape_danmaku_box_shadow = _ass_color(
+        LANDSCAPE_DANMAKU_TEXT_COLOR,
+        alpha=224,
     )
     return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
 PlayResY: {height}
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
 
@@ -383,8 +549,9 @@ Style: SubtitleEn,{font_name},{en_size},{text_color},{text_color},{background_co
 Style: Danmaku,{font_name},{danmaku_size},&H00FFFFFF,&H00FFFFFF,&H40000000,&HA8000000,0,0,0,0,100,100,0,0,3,1,1,9,0,0,0,1
 Style: LandscapeSubtitleZh,{landscape_font_name},{landscape_zh_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,4,{landscape_margin_l},{landscape_margin_r},0,1
 Style: LandscapeSubtitleEn,{landscape_font_name},{landscape_en_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,4,{landscape_margin_l},{landscape_margin_r},0,1
-Style: LandscapeDanmaku,{font_name},{landscape_danmaku_size},{landscape_danmaku_text},{landscape_danmaku_text},{landscape_danmaku_background},{landscape_danmaku_shadow},0,0,0,0,100,100,0,0,3,2,0,9,0,0,0,1
-Style: LandscapeDanmakuAuthor,{font_name},{max(18, landscape_danmaku_size - 4)},{landscape_danmaku_author},{landscape_danmaku_author},{landscape_danmaku_background},{landscape_danmaku_shadow},-1,0,0,0,100,100,0,0,3,2,0,9,0,0,0,1
+Style: LandscapeDanmaku,{font_name},{LANDSCAPE_DANMAKU_BODY_SIZE},{landscape_danmaku_text},{landscape_danmaku_text},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: LandscapeDanmakuAuthor,{font_name},{LANDSCAPE_DANMAKU_AUTHOR_SIZE},{landscape_danmaku_author},{landscape_danmaku_author},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: LandscapeDanmakuBox,{font_name},1,{landscape_danmaku_background},{landscape_danmaku_background},{landscape_danmaku_border},{landscape_danmaku_box_shadow},0,0,0,0,100,100,0,0,1,2,3,7,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"""
@@ -435,6 +602,24 @@ def _relative_luminance(value: str) -> float:
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
 
 
+def _ass_rounded_rect(width: int, height: int, radius: int) -> str:
+    radius = max(0, min(radius, width // 2, height // 2))
+    right = width
+    bottom = height
+    return (
+        f"m {radius} 0 "
+        f"l {right - radius} 0 "
+        f"b {right} 0 {right} 0 {right} {radius} "
+        f"l {right} {bottom - radius} "
+        f"b {right} {bottom} {right} {bottom} "
+        f"{right - radius} {bottom} "
+        f"l {radius} {bottom} "
+        f"b 0 {bottom} 0 {bottom} 0 {bottom - radius} "
+        f"l 0 {radius} "
+        f"b 0 0 0 0 {radius} 0"
+    )
+
+
 def _dialogue(
     *,
     layer: int,
@@ -473,18 +658,49 @@ def _ass_text(value: str) -> str:
 
 
 def _wrapped_ass_text(value: str, *, width: int, lines: int) -> str:
-    wrapped = textwrap.wrap(
-        value,
-        width=width,
-        break_long_words=True,
-        break_on_hyphens=False,
-    )
+    wrapped = _wrapped_text(value, width=width)
     if not wrapped:
         return ""
     if len(wrapped) > lines:
         wrapped = wrapped[:lines]
         wrapped[-1] = _truncate(wrapped[-1], max(1, width - 1)) + "…"
     return r"\N".join(_ass_text(line) for line in wrapped)
+
+
+def _ass_wrapped_text(value: str, *, width: int) -> str:
+    return r"\N".join(
+        _ass_text(line)
+        for line in _wrapped_text(value, width=width)
+    )
+
+
+def _wrapped_text(value: str, *, width: int) -> list[str]:
+    normalized = _plain_text(value)
+    wrapped = textwrap.wrap(
+        normalized,
+        width=width,
+        break_long_words=True,
+        break_on_hyphens=False,
+    )
+    for index in range(1, len(wrapped)):
+        while (
+            wrapped[index]
+            and wrapped[index][0] in CJK_CLOSING_PUNCTUATION
+            and wrapped[index - 1]
+        ):
+            wrapped[index] = wrapped[index - 1][-1] + wrapped[index]
+            wrapped[index - 1] = wrapped[index - 1][:-1]
+    if (
+        len(wrapped) > 1
+        and " " not in normalized
+        and re.search(r"[\u3400-\u9fff]", normalized)
+        and len(wrapped[-1]) < 4
+    ):
+        move_count = min(4 - len(wrapped[-1]), len(wrapped[-2]) - 1)
+        if move_count > 0:
+            wrapped[-1] = wrapped[-2][-move_count:] + wrapped[-1]
+            wrapped[-2] = wrapped[-2][:-move_count]
+    return [line for line in wrapped if line]
 
 
 def _truncate(value: str, limit: int) -> str:

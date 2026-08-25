@@ -365,6 +365,7 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'id="clip-lyric-previous-2"' in page.text
     assert 'id="clip-lyric-next-2"' in page.text
     assert 'id="clip-hover-marker"' in page.text
+    assert 'id="clip-marker-time"' in page.text
     assert 'id="clip-subtitle-font-scale"' in page.text
     assert 'id="clip-subtitle-font-family"' in page.text
     assert 'id="clip-subtitle-text-color"' in page.text
@@ -1156,9 +1157,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260825-12" in page.text
-    assert "styles.css?v=20260825-17" in page.text
-    assert "app.js?v=20260825-11" in page.text
+    assert "i18n.js?v=20260825-13" in page.text
+    assert "styles.css?v=20260825-19" in page.text
+    assert "app.js?v=20260825-13" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text
@@ -1172,6 +1173,12 @@ def test_playback_track_is_public_and_user_can_request_translation(
         styles.text
     )
     assert ".clip-preview-stage.is-landscape-layout" in styles.text
+    assert "container-type: size" in styles.text
+    assert "padding: .83cqh .57cqw" in styles.text
+    assert "left: 3.75%" in styles.text
+    assert "width: 26.5%" in styles.text
+    assert "right: 3.4%" in styles.text
+    assert "width: 27%" in styles.text
     assert ".mobile-danmaku-overlay" in styles.text
     assert ".mobile-history-nav" in styles.text
     assert "safe-area-inset-bottom" in styles.text
@@ -1185,7 +1192,14 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "mobileDensityProfiles" in javascript.text
     assert "setPointerCapture" in javascript.text
     assert "CLIP_SNAP_RELEASE_PX" in javascript.text
+    assert "CLIP_DANMAKU_MAX_VISIBLE" in javascript.text
+    assert "renderClipDanmakuPreview" in javascript.text
+    assert "milliseconds - 5000" not in javascript.text
+    assert "2.13 * scale" in javascript.text
     assert "clipLyricHoverFrame" in javascript.text
+    assert "pinClipTimelineMarker" in javascript.text
+    assert "nearestClipMarker" in javascript.text
+    assert 'locked?.kind === "sentence"' in javascript.text
     assert "clipLyricPreviousTwo" in javascript.text
     assert "subtitle_font_scale" in javascript.text
     assert "output_layout" in javascript.text

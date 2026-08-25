@@ -841,6 +841,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   min-height: 0;
   aspect-ratio: 16 / 9;
   background: #ebe9e1;
+  container-type: size;
   isolation: isolate;
 }
 .clip-preview-stage.is-landscape-layout video {
@@ -915,6 +916,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   );
   font-size: var(--clip-landscape-subtitle-zh-size);
   line-height: 1.55;
+  overflow-wrap: anywhere;
   text-align: left;
   box-shadow: none;
 }
@@ -933,15 +935,18 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   flex-direction: column;
   justify-content: end;
   gap: 4px;
+  overflow: hidden;
   pointer-events: none;
 }
 .clip-preview-danmaku article {
+  flex: 0 0 auto;
   padding: 5px 7px;
   border: 1px solid rgba(255, 255, 255, .06);
   border-radius: 10px 10px 10px 3px;
   background: rgba(10, 12, 18, .24);
   box-shadow: 0 3px 10px rgba(0, 0, 0, .1);
   backdrop-filter: blur(2px);
+  will-change: transform, opacity;
 }
 .clip-preview-danmaku strong {
   display: block;
@@ -968,21 +973,27 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   right: 3.4%;
   bottom: 7%;
   width: 27%;
-  justify-content: center;
-  gap: 7px;
+  justify-content: end;
+  gap: 1.02cqh;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku article {
+  padding: .83cqh .57cqw;
   border-color: rgba(214, 83, 109, .34);
-  border-radius: 11px 11px 11px 4px;
+  border-radius: 1.67cqh 1.67cqh 1.67cqh .6cqh;
   background: rgba(255, 248, 246, .96);
   box-shadow: 0 4px 12px rgba(91, 58, 66, .1);
   backdrop-filter: none;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku strong {
   color: #d6536d;
+  font-size: 1.39cqh;
+  line-height: 1.2;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku p {
+  margin-top: .19cqh;
   color: #5b3a42;
+  font-size: 1.67cqh;
+  line-height: 1.3;
   text-shadow: none;
 }
 .clip-output-layout {
@@ -1364,6 +1375,15 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     0 0 0 4px rgba(112, 231, 194, .14),
     0 5px 15px rgba(0, 0, 0, .38);
 }
+.clip-boundary-handle.is-marker-snapped > span {
+  border-color: #e43d12;
+  box-shadow:
+    0 0 0 4px rgba(228, 61, 18, .16),
+    0 5px 15px rgba(0, 0, 0, .38);
+}
+.clip-boundary-handle.is-marker-snapped output {
+  opacity: 0;
+}
 .clip-preview-playhead,
 .clip-raw-marker,
 .clip-snap-marker,
@@ -1393,6 +1413,31 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   left: var(--clip-hover-position);
   border-left: 1px solid rgba(228, 61, 18, .9);
   box-shadow: 0 0 8px rgba(228, 61, 18, .46);
+}
+.clip-hover-marker output {
+  position: absolute;
+  top: -20px;
+  left: -1px;
+  padding: 3px 6px;
+  border: 1px solid rgba(228, 61, 18, .4);
+  border-radius: 6px;
+  background: rgba(8, 10, 15, .92);
+  color: #ffad98;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.clip-hover-marker.is-marked {
+  border-left-width: 2px;
+  box-shadow: 0 0 10px rgba(228, 61, 18, .62);
+}
+.clip-hover-marker.is-marked output {
+  border-color: rgba(228, 61, 18, .72);
+  background: #b83211;
+  color: #fff8f4;
+  font-weight: 700;
 }
 .clip-range-control.is-dragging .clip-boundary-handle,
 .clip-range-control.is-dragging .clip-selection {

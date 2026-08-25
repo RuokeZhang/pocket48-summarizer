@@ -374,6 +374,6 @@ async def test_landscape_export_uses_fixed_canvas_overlay(
     assert completed.subtitle_font_family == "serif"
     assert ffmpeg.output_layout == "landscape"
     assert "PlayResX: 1920" in ffmpeg.ass_content
-    assert "Style: LandscapeSubtitleZh,Noto Serif CJK SC,35," in (
+    assert "Style: LandscapeSubtitleZh,Noto Serif CJK SC,23," in (
         ffmpeg.ass_content
     )
