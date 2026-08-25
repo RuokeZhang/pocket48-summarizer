@@ -287,6 +287,11 @@ class VideoClipExportRecord(BaseModel):
     end_ms: int
     subtitle_mode: Literal["off", "zh", "en", "bilingual"]
     include_danmaku: bool
+    subtitle_font_scale: int
+    subtitle_text_color: str
+    subtitle_background_color: str
+    output_layout: Literal["portrait", "landscape"]
+    subtitle_font_family: Literal["wenkai", "serif", "sans"]
     render_version: str
     filename: str
     status: Literal["running", "completed", "failed"]

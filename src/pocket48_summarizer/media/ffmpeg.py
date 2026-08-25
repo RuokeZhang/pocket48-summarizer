@@ -13,6 +13,10 @@ from pathlib import Path
 from ..config import Settings
 from ..errors import AppError, ConfigurationError
 from ..security import MEDIA_HOSTS, redact_url, validate_https_url
+from .layouts import (
+    ClipOutputLayout,
+    landscape_video_filters,
+)
 
 Heartbeat = Callable[[], Awaitable[None]]
 SILENCE_START_RE = re.compile(r"silence_start:\s*(-?\d+(?:\.\d+)?)")
@@ -184,6 +188,7 @@ class FFmpegRunner:
         start_ms: int,
         end_ms: int,
         ass_path: Path | None = None,
+        output_layout: ClipOutputLayout = "portrait",
     ) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -242,11 +247,24 @@ class FFmpegRunner:
             "-map",
             "0:a:0?",
         ]
+        filters: list[str] = []
+        if output_layout == "landscape":
+            filters.extend(landscape_video_filters())
+        elif output_layout != "portrait":
+            raise AppError(
+                "clip_layout_invalid",
+                "视频画面方向无效",
+                False,
+            )
         if ass_path is not None:
+            filters.append(
+                f"ass=filename='{self._escape_filter_path(ass_path)}'"
+            )
+        if filters:
             command.extend(
                 [
                     "-vf",
-                    f"ass=filename='{self._escape_filter_path(ass_path)}'",
+                    ",".join(filters),
                 ]
             )
         command.extend(
@@ -464,6 +482,7 @@ class FFmpegRunner:
         start_ms: int,
         end_ms: int,
         ass_path: Path | None = None,
+        output_layout: ClipOutputLayout = "portrait",
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = output_path.with_suffix(".part.mp4")
@@ -476,6 +495,7 @@ class FFmpegRunner:
                     start_ms,
                     end_ms,
                     ass_path,
+                    output_layout,
                 ),
                 timeout_seconds=max(
                     15 * 60, int((end_ms - start_ms) / 1000 * 2 + 300)

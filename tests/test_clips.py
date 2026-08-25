@@ -16,7 +16,10 @@ class FakeFFmpeg:
         output_path: Path,
         start_ms: int,
         end_ms: int,
+        ass_path: Path | None = None,
+        output_layout: str = "portrait",
     ) -> Path:
+        del ass_path, output_layout
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"video")
         return output_path
@@ -55,6 +58,7 @@ class FlakyOSS(FakeOSS):
 class OverlayFFmpeg(FakeFFmpeg):
     def __init__(self):
         self.ass_content = ""
+        self.output_layout = ""
 
     async def supports_ass_filter(self) -> bool:
         return True
@@ -71,11 +75,17 @@ class OverlayFFmpeg(FakeFFmpeg):
         start_ms: int,
         end_ms: int,
         ass_path: Path | None = None,
+        output_layout: str = "portrait",
     ) -> Path:
         assert ass_path is not None
         self.ass_content = ass_path.read_text(encoding="utf-8")
+        self.output_layout = output_layout
         return await super().clip_video(
-            manifest_url, output_path, start_ms, end_ms
+            manifest_url,
+            output_path,
+            start_ms,
+            end_ms,
+            output_layout=output_layout,
         )
 
 
@@ -294,6 +304,9 @@ async def test_overlay_export_keeps_warning_across_upload_retry(
         end_ms=5000,
         subtitle_mode="zh",
         include_danmaku=True,
+        subtitle_font_scale=125,
+        subtitle_text_color="#123456",
+        subtitle_background_color="#F0EEDD",
     )
     await service._tasks[record.id]
 
@@ -304,3 +317,63 @@ async def test_overlay_export_keeps_warning_across_upload_retry(
     assert oss.attempts == 2
     assert "[Events]" in ffmpeg.ass_content
     assert "测试字幕" in ffmpeg.ass_content
+    assert (
+        "Style: SubtitleZh,Noto Sans CJK SC,82,"
+        "&H00563412,&H00563412,&H18DDEEF0,&H38DDEEF0"
+        in ffmpeg.ass_content
+    )
+
+
+@pytest.mark.asyncio
+async def test_landscape_export_uses_fixed_canvas_overlay(
+    settings, repository
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=991105",
+        "991105",
+    )
+    repository.replace_transcript(
+        job.id,
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=1000,
+                end_ms=4000,
+                text="横屏字幕",
+            )
+        ],
+    )
+    ffmpeg = OverlayFFmpeg()
+    service = VideoClipService(
+        settings,
+        repository,
+        FakeOSS(),  # type: ignore[arg-type]
+        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+    )
+
+    record = service.start_export(
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="横屏测试",
+        requested_by_user_id=None,
+        request_id="landscape-request",
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+        output_layout="landscape",
+        subtitle_font_family="serif",
+    )
+    await service._tasks[record.id]
+
+    completed = repository.get_video_clip_export(job.id, record.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.output_layout == "landscape"
+    assert completed.subtitle_font_family == "serif"
+    assert ffmpeg.output_layout == "landscape"
+    assert "PlayResX: 1920" in ffmpeg.ass_content
+    assert "Style: LandscapeSubtitleZh,Noto Serif CJK SC,35," in (
+        ffmpeg.ass_content
+    )

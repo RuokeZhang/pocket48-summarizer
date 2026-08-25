@@ -18,15 +18,27 @@ from .boundaries import (
     BoundarySuggestion,
     ClipBoundaryService,
 )
-from .ffmpeg import FFmpegRunner
-from .overlays import build_clip_overlay
+from .ffmpeg import FFmpegRunner, VideoDimensions
+from .layouts import (
+    DEFAULT_LANDSCAPE_SUBTITLE_FONT,
+    LANDSCAPE_CANVAS_HEIGHT,
+    LANDSCAPE_CANVAS_WIDTH,
+    ClipOutputLayout,
+    LandscapeSubtitleFont,
+)
+from .overlays import (
+    DEFAULT_SUBTITLE_BACKGROUND_COLOR,
+    DEFAULT_SUBTITLE_FONT_SCALE,
+    DEFAULT_SUBTITLE_TEXT_COLOR,
+    build_clip_overlay,
+)
 
 ClipStatus = Literal["running", "completed", "failed"]
 LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v1"
+RENDER_VERSION = "ass-v4"
 
 
 @dataclass(slots=True)
@@ -105,10 +117,13 @@ class VideoClipService:
         end_ms: int,
         subtitle_mode: str,
         include_danmaku: bool,
+        output_layout: ClipOutputLayout,
     ) -> str:
         overlay = subtitle_mode
         if include_danmaku:
             overlay += "-danmaku"
+        if output_layout == "landscape":
+            overlay = f"landscape-{overlay}"
         return (
             f"timeline-{timeline_index + 1:02d}-"
             f"{start_ms}-{end_ms}-{overlay}-{clip_id[:8]}.mp4"
@@ -127,6 +142,15 @@ class VideoClipService:
         end_ms: int,
         subtitle_mode: str,
         include_danmaku: bool,
+        subtitle_font_scale: int = DEFAULT_SUBTITLE_FONT_SCALE,
+        subtitle_text_color: str = DEFAULT_SUBTITLE_TEXT_COLOR,
+        subtitle_background_color: str = (
+            DEFAULT_SUBTITLE_BACKGROUND_COLOR
+        ),
+        output_layout: ClipOutputLayout = "portrait",
+        subtitle_font_family: LandscapeSubtitleFont = (
+            DEFAULT_LANDSCAPE_SUBTITLE_FONT
+        ),
     ) -> VideoClipExportRecord:
         clip_id = str(uuid.uuid4())
         filename = self.output_filename(
@@ -136,6 +160,7 @@ class VideoClipService:
             end_ms=end_ms,
             subtitle_mode=subtitle_mode,
             include_danmaku=include_danmaku,
+            output_layout=output_layout,
         )
         record, created = self.repository.begin_video_clip_export(
             clip_id=clip_id,
@@ -148,6 +173,11 @@ class VideoClipService:
             end_ms=end_ms,
             subtitle_mode=subtitle_mode,
             include_danmaku=include_danmaku,
+            subtitle_font_scale=subtitle_font_scale,
+            subtitle_text_color=subtitle_text_color,
+            subtitle_background_color=subtitle_background_color,
+            output_layout=output_layout,
+            subtitle_font_family=subtitle_font_family,
             render_version=RENDER_VERSION,
             filename=filename,
         )
@@ -315,7 +345,12 @@ class VideoClipService:
                             ):
                                 await self._require_ass_support()
                                 dimensions = (
-                                    await self.ffmpeg.probe_video_dimensions(
+                                    VideoDimensions(
+                                        width=LANDSCAPE_CANVAS_WIDTH,
+                                        height=LANDSCAPE_CANVAS_HEIGHT,
+                                    )
+                                    if record.output_layout == "landscape"
+                                    else await self.ffmpeg.probe_video_dimensions(
                                         manifest_url
                                     )
                                 )
@@ -343,6 +378,19 @@ class VideoClipService:
                                             record.job_id
                                         )
                                     ),
+                                    subtitle_font_scale=(
+                                        record.subtitle_font_scale
+                                    ),
+                                    subtitle_text_color=(
+                                        record.subtitle_text_color
+                                    ),
+                                    subtitle_background_color=(
+                                        record.subtitle_background_color
+                                    ),
+                                    output_layout=record.output_layout,
+                                    subtitle_font_family=(
+                                        record.subtitle_font_family
+                                    ),
                                 )
                                 ass_path.parent.mkdir(
                                     parents=True, exist_ok=True
@@ -358,6 +406,7 @@ class VideoClipService:
                                     state.output_path,
                                     record.start_ms,
                                     record.end_ms,
+                                    output_layout=record.output_layout,
                                 )
                             else:
                                 await self.ffmpeg.clip_video(
@@ -366,6 +415,7 @@ class VideoClipService:
                                     record.start_ms,
                                     record.end_ms,
                                     ass_input,
+                                    output_layout=record.output_layout,
                                 )
                         object_key = self.oss.clip_object_key(
                             record.job_id, state.output_path.name

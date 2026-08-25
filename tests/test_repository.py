@@ -66,7 +66,12 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
         end_ms=5000,
         subtitle_mode="zh",
         include_danmaku=False,
-        render_version="ass-v1",
+        subtitle_font_scale=125,
+        subtitle_text_color="#E43D12",
+        subtitle_background_color="#EBE9E1",
+        output_layout="landscape",
+        subtitle_font_family="serif",
+        render_version="ass-v2",
         filename="clip-1.mp4",
     )
     duplicate, duplicate_created = repository.begin_video_clip_export(
@@ -103,6 +108,11 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
     assert second_created
     assert duplicate.id == first.id
     assert duplicate.start_ms == first.start_ms
+    assert duplicate.subtitle_font_scale == 125
+    assert duplicate.subtitle_text_color == "#E43D12"
+    assert duplicate.subtitle_background_color == "#EBE9E1"
+    assert duplicate.output_layout == "landscape"
+    assert duplicate.subtitle_font_family == "serif"
     assert [item.id for item in repository.list_video_clip_exports(job.id)] == [
         second.id,
         first.id,

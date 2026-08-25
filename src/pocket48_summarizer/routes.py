@@ -13,11 +13,21 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .auth import AuthContext
 from .errors import AppError
 from .media.clips import ClipState
+from .media.overlays import (
+    DEFAULT_SUBTITLE_BACKGROUND_COLOR,
+    DEFAULT_SUBTITLE_FONT_SCALE,
+    DEFAULT_SUBTITLE_TEXT_COLOR,
+    MIN_SUBTITLE_CONTRAST_RATIO,
+    SUBTITLE_FONT_SCALE_MAX,
+    SUBTITLE_FONT_SCALE_MIN,
+    normalize_subtitle_color,
+    subtitle_contrast_ratio,
+)
 from .models import (
     FinalSummary,
     GlossaryTermType,
@@ -56,6 +66,43 @@ class CreateClipExportRequest(BaseModel):
     end_ms: int = Field(ge=1)
     subtitle_mode: Literal["off", "zh", "en", "bilingual"]
     include_danmaku: bool = False
+    subtitle_font_scale: int = Field(
+        default=DEFAULT_SUBTITLE_FONT_SCALE,
+        ge=SUBTITLE_FONT_SCALE_MIN,
+        le=SUBTITLE_FONT_SCALE_MAX,
+    )
+    subtitle_text_color: str = Field(
+        default=DEFAULT_SUBTITLE_TEXT_COLOR,
+        pattern=r"^#[0-9A-Fa-f]{6}$",
+    )
+    subtitle_background_color: str = Field(
+        default=DEFAULT_SUBTITLE_BACKGROUND_COLOR,
+        pattern=r"^#[0-9A-Fa-f]{6}$",
+    )
+    output_layout: Literal["portrait", "landscape"] = "portrait"
+    subtitle_font_family: Literal["wenkai", "serif", "sans"] = "wenkai"
+
+    @field_validator(
+        "subtitle_text_color",
+        "subtitle_background_color",
+    )
+    @classmethod
+    def normalize_color(cls, value: str) -> str:
+        return normalize_subtitle_color(value)
+
+    @model_validator(mode="after")
+    def validate_color_contrast(self) -> CreateClipExportRequest:
+        if (
+            self.subtitle_mode != "off"
+            and self.output_layout == "portrait"
+            and subtitle_contrast_ratio(
+                self.subtitle_text_color,
+                self.subtitle_background_color,
+            )
+            < MIN_SUBTITLE_CONTRAST_RATIO
+        ):
+            raise ValueError("subtitle colors need at least 3:1 contrast")
+        return self
 
 
 def format_china_datetime(value: str | None) -> str:
@@ -361,6 +408,11 @@ def clip_export_payload(
         "duration_ms": record.end_ms - record.start_ms,
         "subtitle_mode": record.subtitle_mode,
         "include_danmaku": record.include_danmaku,
+        "subtitle_font_scale": record.subtitle_font_scale,
+        "subtitle_text_color": record.subtitle_text_color,
+        "subtitle_background_color": record.subtitle_background_color,
+        "output_layout": record.output_layout,
+        "subtitle_font_family": record.subtitle_font_family,
         "filename": record.filename,
         "status": record.status,
         "error": record.error_message,
@@ -915,6 +967,13 @@ async def create_clip_export(
             end_ms=payload.end_ms,
             subtitle_mode=payload.subtitle_mode,
             include_danmaku=payload.include_danmaku,
+            subtitle_font_scale=payload.subtitle_font_scale,
+            subtitle_text_color=payload.subtitle_text_color,
+            subtitle_background_color=(
+                payload.subtitle_background_color
+            ),
+            output_layout=payload.output_layout,
+            subtitle_font_family=payload.subtitle_font_family,
         )
     return JSONResponse(
         clip_export_payload(job.id, record),

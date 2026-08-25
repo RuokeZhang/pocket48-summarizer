@@ -67,6 +67,7 @@ prepare_runtime_locks() {
 
 verify_clip_overlay_dependencies() {
   local font_name="${CLIP_FONT_NAME:-Noto Sans CJK SC}"
+  local required_font
   local matched_font
   if ! command -v ffprobe >/dev/null 2>&1; then
     echo "ffprobe is required for clip overlays." >&2
@@ -81,11 +82,35 @@ verify_clip_overlay_dependencies() {
     echo "fontconfig is required to validate the clip font." >&2
     return 1
   fi
-  matched_font="$(fc-match --format='%{family}\n' "$font_name" | head -n 1)"
-  if [[ "$matched_font" != *"$font_name"* ]]; then
-    echo "Configured clip font '$font_name' is unavailable (matched '$matched_font')." >&2
-    return 1
+  for required_font in \
+    "$font_name" \
+    "Noto Sans CJK SC" \
+    "Noto Serif CJK SC" \
+    "LXGW WenKai"; do
+    matched_font="$(
+      fc-match --format='%{family}\n' "$required_font" | head -n 1
+    )"
+    if [[ "$matched_font" != *"$required_font"* ]]; then
+      echo "Required clip font '$required_font' is unavailable (matched '$matched_font')." >&2
+      return 1
+    fi
+  done
+}
+
+ensure_clip_overlay_font_packages() {
+  local installed_packages
+  installed_packages="$(
+    dpkg-query -W -f='${Status}\n' \
+      fontconfig fonts-lxgw-wenkai fonts-noto-cjk 2>/dev/null \
+      | grep -c '^install ok installed$' \
+      || true
+  )"
+  if [[ "$installed_packages" == "3" ]]; then
+    return 0
   fi
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y fontconfig fonts-lxgw-wenkai fonts-noto-cjk
 }
 
 activate_clip_maintenance() {

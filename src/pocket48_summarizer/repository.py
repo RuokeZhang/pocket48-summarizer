@@ -1069,6 +1069,11 @@ class JobRepository:
         include_danmaku: bool,
         render_version: str,
         filename: str,
+        subtitle_font_scale: int = 100,
+        subtitle_text_color: str = "#FFFFFF",
+        subtitle_background_color: str = "#000000",
+        output_layout: str = "portrait",
+        subtitle_font_family: str = "sans",
     ) -> tuple[VideoClipExportRecord, bool]:
         now = utcnow()
         with self.database.connect() as connection:
@@ -1078,9 +1083,15 @@ class JobRepository:
                 INSERT OR IGNORE INTO video_clip_exports (
                     id, job_id, timeline_index, timeline_title,
                     requested_by_user_id, request_id, start_ms, end_ms,
-                    subtitle_mode, include_danmaku, render_version, filename,
+                    subtitle_mode, include_danmaku, subtitle_font_scale,
+                    subtitle_text_color, subtitle_background_color,
+                    output_layout, subtitle_font_family,
+                    render_version, filename,
                     status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    'running', ?, ?
+                )
                 """,
                 (
                     clip_id,
@@ -1093,6 +1104,11 @@ class JobRepository:
                     end_ms,
                     subtitle_mode,
                     int(include_danmaku),
+                    subtitle_font_scale,
+                    subtitle_text_color,
+                    subtitle_background_color,
+                    output_layout,
+                    subtitle_font_family,
                     render_version,
                     filename,
                     now,

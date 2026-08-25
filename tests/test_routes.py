@@ -14,7 +14,10 @@ from pocket48_summarizer.models import (
     TimelineItem,
     TranscriptSegment,
 )
-from pocket48_summarizer.routes import format_china_datetime
+from pocket48_summarizer.routes import (
+    CreateClipExportRequest,
+    format_china_datetime,
+)
 from pocket48_summarizer.services import ApplicationServices
 
 
@@ -30,6 +33,34 @@ class DummyWorker:
 
     def notify(self):
         self.notified += 1
+
+
+def test_clip_export_request_uses_vibrant_calm_defaults():
+    payload = CreateClipExportRequest(
+        request_id="request-default-style",
+        timeline_index=0,
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="zh",
+    )
+
+    assert payload.subtitle_font_scale == 100
+    assert payload.subtitle_text_color == "#E43D12"
+    assert payload.subtitle_background_color == "#EBE9E1"
+    assert payload.output_layout == "portrait"
+    assert payload.subtitle_font_family == "wenkai"
+
+    landscape = CreateClipExportRequest(
+        request_id="request-landscape-style",
+        timeline_index=0,
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="zh",
+        subtitle_text_color="#FFFFFF",
+        subtitle_background_color="#FFFFFF",
+        output_layout="landscape",
+    )
+    assert landscape.output_layout == "landscape"
 
 
 class DummyClipper:
@@ -59,7 +90,14 @@ class DummyClipper:
             end_ms=kwargs["end_ms"],
             subtitle_mode=kwargs["subtitle_mode"],
             include_danmaku=kwargs["include_danmaku"],
-            render_version="ass-v1",
+            subtitle_font_scale=kwargs["subtitle_font_scale"],
+            subtitle_text_color=kwargs["subtitle_text_color"],
+            subtitle_background_color=(
+                kwargs["subtitle_background_color"]
+            ),
+            output_layout=kwargs["output_layout"],
+            subtitle_font_family=kwargs["subtitle_font_family"],
+            render_version="ass-v2",
             filename=self.state.output_path.name,
         )
         self.repository.complete_video_clip_export(
@@ -318,9 +356,23 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'id="clip-zoom-in"' in page.text
     assert 'id="clip-start-range"' not in page.text
     assert 'id="clip-end-range"' not in page.text
+    assert 'id="clip-start-input"' not in page.text
+    assert 'id="clip-end-input"' not in page.text
     assert 'id="clip-subtitle-mode"' in page.text
     assert 'id="clip-danmaku-enabled"' in page.text
     assert 'id="clip-preview-player"' in page.text
+    assert 'id="clip-lyric-preview"' in page.text
+    assert 'id="clip-lyric-previous-2"' in page.text
+    assert 'id="clip-lyric-next-2"' in page.text
+    assert 'id="clip-hover-marker"' in page.text
+    assert 'id="clip-subtitle-font-scale"' in page.text
+    assert 'id="clip-subtitle-font-family"' in page.text
+    assert 'id="clip-subtitle-text-color"' in page.text
+    assert 'id="clip-subtitle-background-color"' in page.text
+    assert 'id="clip-theme-vibrant-calm"' in page.text
+    assert 'id="clip-output-layout"' in page.text
+    assert 'value="landscape"' in page.text
+    assert 'id="clip-landscape-style-note"' in page.text
     assert blocked.status_code == 503
     assert blocked.json()["error"]["code"] == "clipper_maintenance"
     assert response.status_code == 200
@@ -402,6 +454,11 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "end_ms": 60_500,
                 "subtitle_mode": "zh",
                 "include_danmaku": False,
+                "subtitle_font_scale": 125,
+                "subtitle_text_color": "#E43D12",
+                "subtitle_background_color": "#EBE9E1",
+                "output_layout": "landscape",
+                "subtitle_font_family": "serif",
             },
             headers=csrf_headers(alice),
         )
@@ -414,6 +471,25 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "end_ms": 60_500,
                 "subtitle_mode": "zh",
                 "include_danmaku": False,
+                "subtitle_font_scale": 125,
+                "subtitle_text_color": "#E43D12",
+                "subtitle_background_color": "#EBE9E1",
+                "output_layout": "landscape",
+                "subtitle_font_family": "serif",
+            },
+            headers=csrf_headers(alice),
+        )
+        low_contrast = alice.post(
+            f"/api/jobs/{job.id}/clip-exports",
+            json={
+                "request_id": "request-low-contrast",
+                "timeline_index": 0,
+                "start_ms": 30_000,
+                "end_ms": 60_000,
+                "subtitle_mode": "zh",
+                "include_danmaku": False,
+                "subtitle_text_color": "#FFFFFF",
+                "subtitle_background_color": "#FFFFFF",
             },
             headers=csrf_headers(alice),
         )
@@ -466,7 +542,16 @@ def test_configurable_clip_export_routes_preserve_versions(
     assert created.status_code == 200
     assert repeated.json()["id"] == created.json()["id"]
     assert created.json()["subtitle_mode"] == "zh"
+    assert created.json()["subtitle_font_scale"] == 125
+    assert created.json()["subtitle_text_color"] == "#E43D12"
+    assert created.json()["subtitle_background_color"] == "#EBE9E1"
+    assert created.json()["output_layout"] == "landscape"
+    assert created.json()["subtitle_font_family"] == "serif"
     assert clipper.started_export_with["start_ms"] == 29_850
+    assert clipper.started_export_with["subtitle_font_scale"] == 125
+    assert clipper.started_export_with["output_layout"] == "landscape"
+    assert clipper.started_export_with["subtitle_font_family"] == "serif"
+    assert low_contrast.status_code == 422
     assert english_blocked.status_code == 409
     assert (
         english_blocked.json()["error"]["code"]
@@ -1071,15 +1156,22 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260825-8" in page.text
-    assert "styles.css?v=20260825-11" in page.text
-    assert "app.js?v=20260825-6" in page.text
+    assert "i18n.js?v=20260825-12" in page.text
+    assert "styles.css?v=20260825-17" in page.text
+    assert "app.js?v=20260825-11" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text
     assert "(prefers-reduced-motion: reduce)" in styles.text
     assert ".clip-timeline-viewport" in styles.text
     assert ".clip-boundary-handle" in styles.text
+    assert ".clip-lyric-preview" in styles.text
+    assert ".clip-style-panel" in styles.text
+    assert ".clip-output-layout" in styles.text
+    assert ".clip-editor.is-landscape-layout .clip-editor-content" in (
+        styles.text
+    )
+    assert ".clip-preview-stage.is-landscape-layout" in styles.text
     assert ".mobile-danmaku-overlay" in styles.text
     assert ".mobile-history-nav" in styles.text
     assert "safe-area-inset-bottom" in styles.text
@@ -1093,6 +1185,11 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "mobileDensityProfiles" in javascript.text
     assert "setPointerCapture" in javascript.text
     assert "CLIP_SNAP_RELEASE_PX" in javascript.text
+    assert "clipLyricHoverFrame" in javascript.text
+    assert "clipLyricPreviousTwo" in javascript.text
+    assert "subtitle_font_scale" in javascript.text
+    assert "output_layout" in javascript.text
+    assert "subtitle_font_family" in javascript.text
     assert "clipStartRange" not in javascript.text
     assert "window.history.back()" in javascript.text
     assert "window.history.forward()" in javascript.text

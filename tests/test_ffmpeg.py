@@ -115,3 +115,25 @@ def test_clip_command_adds_escaped_ass_filter(settings):
         r"ass=filename='/tmp/clip\'s\,overlay.ass'"
     )
     assert command.index("-vf") < command.index("-c:v")
+
+
+def test_clip_command_builds_landscape_canvas_before_ass(settings):
+    runner = FFmpegRunner(settings)
+
+    command = runner.build_clip_command(
+        MANIFEST_URL,
+        Path("/tmp/clip.mp4"),
+        start_ms=1000,
+        end_ms=5000,
+        ass_path=Path("/tmp/overlay.ass"),
+        output_layout="landscape",
+    )
+
+    assert command[command.index("-vf") + 1] == (
+        "scale=608:1080:force_original_aspect_ratio=decrease,"
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+        "pad=608:1080:(ow-iw)/2:(oh-ih)/2:color=0x08090C,"
+        "pad=1920:1080:(ow-iw)/2:0:color=0xEBE9E1,"
+        "setsar=1,"
+        "ass=filename='/tmp/overlay.ass'"
+    )

@@ -112,6 +112,7 @@ if [[ -f /etc/pocket48-summarizer/app.env ]]; then
   source /etc/pocket48-summarizer/app.env
   set +a
 fi
+ensure_clip_overlay_font_packages
 verify_clip_overlay_dependencies
 
 active_slot="$(read_active_slot)"

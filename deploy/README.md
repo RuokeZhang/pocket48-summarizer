@@ -26,16 +26,23 @@ sudo /opt/pocket48-summarizer/scripts/install-server.sh
 sudoedit /etc/pocket48-summarizer/app.env
 ```
 
-安装脚本会安装 FFmpeg/ffprobe 和 `fonts-noto-cjk`。填写 OSS、DashScope 和 LLM 凭证。`ALIYUN_OSS_ENDPOINT` 使用香港内网 Endpoint 上传；`ALIYUN_OSS_PUBLIC_ENDPOINT` 必须使用公网 Endpoint，供 DashScope 和浏览器读取短期签名 URL。剪辑上传到独立的 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
+安装脚本会安装 FFmpeg/ffprobe、`fonts-noto-cjk` 和
+`fonts-lxgw-wenkai`。填写 OSS、DashScope 和 LLM 凭证。
+`ALIYUN_OSS_ENDPOINT` 使用香港内网 Endpoint 上传；
+`ALIYUN_OSS_PUBLIC_ENDPOINT` 必须使用公网 Endpoint，供 DashScope
+和浏览器读取短期签名 URL。剪辑上传到独立的
+`ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
 
 首次发布带烧录字幕的剪辑功能前，确认生产依赖：
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y fontconfig fonts-noto-cjk
+sudo apt-get install -y fontconfig fonts-lxgw-wenkai fonts-noto-cjk
 ffprobe -version
 ffmpeg -hide_banner -filters | grep -E '(^|[[:space:]])ass([[:space:]]|$)'
 fc-match 'Noto Sans CJK SC'
+fc-match 'Noto Serif CJK SC'
+fc-match 'LXGW WenKai'
 ```
 
 `MAX_REPLAY_HOURS=0` 表示不设置回放小时上限。若已有服务器配置仍为 `3`，部署新版本前需要在 `/etc/pocket48-summarizer/app.env` 中改为 `0`。

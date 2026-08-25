@@ -274,6 +274,37 @@
                 hidden
               ></div>
             </div>
+            <fieldset
+              id="clip-output-layout"
+              class="clip-output-layout"
+            >
+              <legend data-i18n="clipOutputLayout">导出画面</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="clip-output-layout"
+                  value="portrait"
+                  checked
+                >
+                <span class="clip-layout-icon is-portrait" aria-hidden="true"></span>
+                <span>
+                  <strong data-i18n="clipPortraitLayout">竖屏 9:16</strong>
+                  <small data-i18n="clipPortraitLayoutHint">保持原视频与字幕样式</small>
+                </span>
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="clip-output-layout"
+                  value="landscape"
+                >
+                <span class="clip-layout-icon is-landscape" aria-hidden="true"></span>
+                <span>
+                  <strong data-i18n="clipLandscapeLayout">横屏 16:9</strong>
+                  <small data-i18n="clipLandscapeLayoutHint">米白画布 · 中间视频 · 两侧信息</small>
+                </span>
+              </label>
+            </fieldset>
             <div class="clip-preview-actions">
               <button
                 id="clip-preview-selection"
@@ -311,6 +342,23 @@
               </div>
             </div>
             <div
+              id="clip-lyric-preview"
+              class="clip-lyric-preview"
+              aria-live="polite"
+            >
+              <div class="clip-lyric-preview-heading">
+                <span data-i18n="timelineLyricPreview">时间轴字幕预览</span>
+                <time id="clip-lyric-time">00:00:00.0</time>
+              </div>
+              <div id="clip-lyric-stack" class="clip-lyric-stack">
+                <p id="clip-lyric-previous-2"></p>
+                <p id="clip-lyric-previous"></p>
+                <p id="clip-lyric-current"></p>
+                <p id="clip-lyric-next"></p>
+                <p id="clip-lyric-next-2"></p>
+              </div>
+            </div>
+            <div
               id="clip-timeline-viewport"
               class="clip-timeline-viewport"
             >
@@ -341,6 +389,11 @@
                   <div
                     id="clip-snap-marker"
                     class="clip-snap-marker"
+                    hidden
+                  ></div>
+                  <div
+                    id="clip-hover-marker"
+                    class="clip-hover-marker"
                     hidden
                   ></div>
                 </div>
@@ -380,41 +433,6 @@
               data-i18n="clipKeyboardHint"
             >聚焦边界后用 ←/→ 微调 0.1 秒，按住 Shift 调整 1 秒。</div>
 
-            <div class="clip-boundary-grid">
-              <fieldset class="clip-boundary-field">
-                <legend data-i18n="clipStart">开始</legend>
-                <input
-                  id="clip-start-input"
-                  type="text"
-                  inputmode="decimal"
-                  autocomplete="off"
-                  aria-label="剪辑开始时间"
-                  data-i18n-aria-label="clipStart"
-                >
-                <div class="clip-step-buttons">
-                  <button type="button" data-clip-adjust="start:-100">−0.1s</button>
-                  <button type="button" data-clip-adjust="start:100">+0.1s</button>
-                </div>
-                <small id="clip-start-snap"></small>
-              </fieldset>
-              <fieldset class="clip-boundary-field">
-                <legend data-i18n="clipEnd">结束</legend>
-                <input
-                  id="clip-end-input"
-                  type="text"
-                  inputmode="decimal"
-                  autocomplete="off"
-                  aria-label="剪辑结束时间"
-                  data-i18n-aria-label="clipEnd"
-                >
-                <div class="clip-step-buttons">
-                  <button type="button" data-clip-adjust="end:-100">−0.1s</button>
-                  <button type="button" data-clip-adjust="end:100">+0.1s</button>
-                </div>
-                <small id="clip-end-snap"></small>
-              </fieldset>
-            </div>
-
             <div class="clip-option-grid">
               <label class="toggle-control">
                 <input id="clip-snap-enabled" type="checkbox" checked>
@@ -440,6 +458,88 @@
                 <span data-i18n="burnDanmaku">烧录弹幕</span>
               </label>
             </div>
+
+            <section
+              id="clip-style-panel"
+              class="clip-style-panel"
+              aria-labelledby="clip-style-title"
+            >
+              <header class="clip-style-heading">
+                <div>
+                  <strong id="clip-style-title" data-i18n="subtitleStyle">字幕样式</strong>
+                  <small data-i18n="subtitleStyleHint">实时预览会与最终导出保持一致</small>
+                </div>
+                <button
+                  id="clip-theme-vibrant-calm"
+                  class="clip-theme-preset is-selected"
+                  type="button"
+                  aria-pressed="true"
+                >
+                  <span class="clip-theme-swatches" aria-hidden="true">
+                    <i style="--swatch: #E43D12"></i>
+                    <i style="--swatch: #D6536D"></i>
+                    <i style="--swatch: #FFA2B6"></i>
+                    <i style="--swatch: #EFB11D"></i>
+                    <i style="--swatch: #EBE9E1"></i>
+                  </span>
+                  <span data-i18n="vibrantCalmTheme">活力柔和</span>
+                </button>
+              </header>
+              <p
+                id="clip-landscape-style-note"
+                class="clip-landscape-style-note"
+                hidden
+                data-i18n="clipLandscapeStyleNote"
+              >横屏固定使用米白画布、红色字幕和玫瑰粉弹幕；字号和字体可调整。</p>
+              <div class="clip-style-controls">
+                <label class="clip-font-scale-control">
+                  <span data-i18n="subtitleFontSize">字幕字号</span>
+                  <input
+                    id="clip-subtitle-font-scale"
+                    type="range"
+                    min="70"
+                    max="160"
+                    step="5"
+                    value="100"
+                  >
+                  <output id="clip-subtitle-font-scale-value">100%</output>
+                </label>
+                <label
+                  id="clip-subtitle-font-family-control"
+                  class="clip-font-family-control"
+                  hidden
+                >
+                  <span data-i18n="subtitleFontFamily">横屏字幕字体</span>
+                  <select id="clip-subtitle-font-family">
+                    <option value="wenkai" data-i18n="subtitleFontWenkai">霞鹜文楷</option>
+                    <option value="serif" data-i18n="subtitleFontSerif">思源宋体</option>
+                    <option value="sans" data-i18n="subtitleFontSans">思源黑体</option>
+                  </select>
+                </label>
+                <label class="clip-color-control">
+                  <span data-i18n="subtitleTextColor">文字颜色</span>
+                  <input
+                    id="clip-subtitle-text-color"
+                    type="color"
+                    value="#e43d12"
+                  >
+                  <output id="clip-subtitle-text-color-value">#E43D12</output>
+                </label>
+                <label class="clip-color-control">
+                  <span data-i18n="subtitleBackgroundColor">字幕底色</span>
+                  <input
+                    id="clip-subtitle-background-color"
+                    type="color"
+                    value="#ebe9e1"
+                  >
+                  <output id="clip-subtitle-background-color-value">#EBE9E1</output>
+                </label>
+              </div>
+              <output
+                id="clip-subtitle-contrast"
+                class="clip-subtitle-contrast"
+              ></output>
+            </section>
 
             <p id="clip-editor-error" class="clip-editor-error" role="alert"></p>
           </section>

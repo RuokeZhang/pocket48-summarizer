@@ -31,6 +31,9 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "006_member_glossary.sql",
         "007_asr_vocabulary.sql",
         "008_configurable_video_clips.sql",
+        "009_clip_subtitle_styles.sql",
+        "010_clip_output_layout.sql",
+        "011_clip_subtitle_fonts.sql",
     ]
 
 
@@ -115,4 +118,9 @@ def test_configurable_clip_migration_backfills_legacy_rows_idempotently(
     assert exports[0].timeline_index == 2
     assert exports[0].request_id == "legacy:2"
     assert exports[0].subtitle_mode == "off"
+    assert exports[0].subtitle_font_scale == 100
+    assert exports[0].subtitle_text_color == "#FFFFFF"
+    assert exports[0].subtitle_background_color == "#000000"
+    assert exports[0].output_layout == "portrait"
+    assert exports[0].subtitle_font_family == "sans"
     assert exports[0].status == "completed"

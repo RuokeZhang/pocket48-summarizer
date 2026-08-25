@@ -24,6 +24,7 @@ apt-get install -y \
   debian-keyring \
   ffmpeg \
   fontconfig \
+  fonts-lxgw-wenkai \
   fonts-noto-cjk \
   git \
   gnupg \

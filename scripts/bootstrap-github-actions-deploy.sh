@@ -80,13 +80,14 @@ printf 'restrict,command="%s" %s\n' "$remote_command" "$public_key" \
 install -m 0600 -o root -g root "$temporary_keys" "$authorized_keys"
 
 installed_packages="$(
-  dpkg-query -W -f='${Status}\n' fontconfig fonts-noto-cjk 2>/dev/null \
+  dpkg-query -W -f='${Status}\n' \
+    fontconfig fonts-lxgw-wenkai fonts-noto-cjk 2>/dev/null \
     | grep -c '^install ok installed$' \
     || true
 )"
-if [[ "$installed_packages" != "2" ]]; then
+if [[ "$installed_packages" != "3" ]]; then
   apt-get update
-  apt-get install -y fontconfig fonts-noto-cjk
+  apt-get install -y fontconfig fonts-lxgw-wenkai fonts-noto-cjk
 fi
 command -v ffprobe >/dev/null
 ffmpeg -nostdin -hide_banner -filters 2>/dev/null \
@@ -94,6 +95,12 @@ ffmpeg -nostdin -hide_banner -filters 2>/dev/null \
 fc-match --format='%{family}\n' "Noto Sans CJK SC" \
   | head -n 1 \
   | grep -F "Noto Sans CJK SC"
+fc-match --format='%{family}\n' "Noto Serif CJK SC" \
+  | head -n 1 \
+  | grep -F "Noto Serif CJK SC"
+fc-match --format='%{family}\n' "LXGW WenKai" \
+  | head -n 1 \
+  | grep -F "LXGW WenKai"
 REMOTE
 
 known_hosts="$(
