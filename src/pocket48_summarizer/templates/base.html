@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}口袋48直播总结{% endblock %}</title>
     {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260825-6">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260825-7">
     {% block head_scripts %}{% endblock %}
-    <script defer src="{{ url_for('static', path='/i18n.js') }}?v=20260825-4"></script>
-    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260825-3"></script>
+    <script defer src="{{ url_for('static', path='/i18n.js') }}?v=20260825-5"></script>
+    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260825-4"></script>
   </head>
   <body>
     <header class="site-header">
@@ -53,5 +53,28 @@
     <main class="page-shell">
       {% block content %}{% endblock %}
     </main>
+    <nav
+      id="mobile-history-nav"
+      class="mobile-history-nav"
+      aria-label="页面导航"
+      data-i18n-aria-label="historyNavigation"
+    >
+      <button
+        id="history-back"
+        type="button"
+        aria-label="后退"
+        title="后退"
+        data-i18n-aria-label="goBack"
+        data-i18n-title="goBack"
+      ><span aria-hidden="true">&lsaquo;</span></button>
+      <button
+        id="history-forward"
+        type="button"
+        aria-label="前进"
+        title="前进"
+        data-i18n-aria-label="goForward"
+        data-i18n-title="goForward"
+      ><span aria-hidden="true">&rsaquo;</span></button>
+    </nav>
   </body>
 </html>

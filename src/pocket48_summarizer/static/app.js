@@ -29,6 +29,39 @@ function apiFetch(url, options = {}) {
   });
 }
 
+const historyBack = document.querySelector("#history-back");
+const historyForward = document.querySelector("#history-forward");
+
+if (historyBack && historyForward) {
+  const updateHistoryControls = () => {
+    historyBack.disabled = (
+      window.history.length <= 1
+      && window.location.pathname === "/"
+      && !window.location.search
+      && !window.location.hash
+    );
+  };
+
+  historyBack.addEventListener("click", () => {
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    if (
+      window.location.pathname !== "/"
+      || window.location.search
+      || window.location.hash
+    ) {
+      window.location.replace("/");
+    }
+  });
+  historyForward.addEventListener("click", () => {
+    window.history.forward();
+  });
+  window.addEventListener("pageshow", updateHistoryControls);
+  updateHistoryControls();
+}
+
 const createForm = document.querySelector("#create-job-form");
 
 if (createForm) {

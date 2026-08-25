@@ -71,6 +71,7 @@ button, input, select, textarea { font: inherit; }
   font-weight: 900;
   letter-spacing: .04em;
 }
+.mobile-history-nav { display: none; }
 .quota-copy { color: #9ea6b8; }
 .login-shell { display: grid; min-height: calc(100vh - 190px); place-items: center; }
 .login-panel { width: min(460px, 100%); }
@@ -607,6 +608,50 @@ code { color: #d4c8ff; }
 }
 
 @media (max-width: 760px), (max-width: 900px) and (pointer: coarse) {
+  .mobile-history-nav {
+    position: fixed;
+    z-index: 30;
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    gap: 3px;
+    padding: 4px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 15px;
+    background: rgba(15, 17, 25, .68);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .34);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  .mobile-history-nav button {
+    display: grid;
+    width: 42px;
+    height: 42px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 11px;
+    background: transparent;
+    color: rgba(255, 255, 255, .92);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-history-nav button:active {
+    background: rgba(124, 100, 255, .28);
+  }
+  .mobile-history-nav button:focus-visible {
+    outline: 2px solid #ff8bad;
+    outline-offset: 1px;
+  }
+  .mobile-history-nav button:disabled {
+    opacity: .28;
+  }
+  .mobile-history-nav span {
+    font-size: 32px;
+    font-weight: 500;
+    line-height: 1;
+    transform: translateY(-1px);
+  }
   .playback-layout {
     position: relative;
     grid-template-columns: minmax(0, 1fr);
