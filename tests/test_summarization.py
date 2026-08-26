@@ -9,7 +9,15 @@ from pocket48_summarizer.models import (
     TimelineItem,
     TranscriptSegment,
 )
-from pocket48_summarizer.summarization.prompts import final_prompt
+from pocket48_summarizer.summarization.chunking import (
+    build_transcript_chunks,
+)
+from pocket48_summarizer.summarization.prompts import (
+    MAX_TIMELINE_EVENT_DURATION_MS,
+    PROMPT_VERSION,
+    chunk_prompt,
+    final_prompt,
+)
 from pocket48_summarizer.summarization.service import SummarizationService
 
 
@@ -176,6 +184,78 @@ def test_final_prompt_reuses_window_transcript_and_keeps_danmaku_untrusted():
     assert "观众反应而不是事实" in prompt
 
 
+def test_transcript_chunks_respect_duration_limit_with_overlap():
+    segments = [
+        TranscriptSegment(
+            sequence=index,
+            start_ms=(index - 1) * 60_000,
+            end_ms=index * 60_000,
+            text=f"第 {index} 分钟",
+        )
+        for index in range(1, 9)
+    ]
+
+    chunks = build_transcript_chunks(
+        segments,
+        max_chars=100_000,
+        max_duration_ms=180_000,
+        overlap_segments=1,
+    )
+
+    assert chunks[0].segment_ids == (1, 2, 3)
+    assert chunks[1].segment_ids[0] == 3
+    assert chunks[-1].end_ms == 480_000
+    assert all(
+        chunk.end_ms - chunk.start_ms <= 180_000
+        for chunk in chunks
+    )
+
+
+def test_timeline_prompts_and_validation_reject_coarse_or_unlinked_events():
+    chunk = build_transcript_chunks(
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=360_000,
+                text="持续讨论一个主题。",
+            )
+        ],
+        max_chars=100_000,
+        max_duration_ms=360_000,
+        overlap_segments=0,
+    )[0]
+
+    assert "最长 5 分钟" in chunk_prompt(chunk)
+    assert "不得用十几分钟的宽泛区间" in final_prompt([], [])
+
+    with pytest.raises(ExternalServiceError, match="最多 5 分钟"):
+        SummarizationService._validate_timeline_granularity(
+            SummaryCandidate(
+                start_ms=0,
+                end_ms=MAX_TIMELINE_EVENT_DURATION_MS + 1,
+                title="过宽事件",
+                detail="时间范围过宽。",
+                evidence_segment_ids=[1],
+            ),
+            {1: (0, 360_000)},
+            "分段时间线",
+        )
+
+    with pytest.raises(ExternalServiceError, match="不重叠"):
+        SummarizationService._validate_timeline_granularity(
+            TimelineItem(
+                start_ms=0,
+                end_ms=60_000,
+                title="错误时间",
+                detail="证据在另一个时间段。",
+                evidence_segment_ids=[1],
+            ),
+            {1: (120_000, 180_000)},
+            "时间线",
+        )
+
+
 @pytest.mark.asyncio
 async def test_summarizes_with_evidence(settings, repository):
     job, _ = repository.create_or_get_job(
@@ -210,7 +290,7 @@ async def test_summarizes_with_evidence(settings, repository):
     assert summary.timeline[0].evidence_segment_ids == [1]
     assert "观众积极回应" in summary.danmaku_peak_summaries[0].summary
     assert "# 测试直播" in markdown
-    assert repository.get_summary_chunks(job.id, "v2")
+    assert repository.get_summary_chunks(job.id, PROMPT_VERSION)
 
 
 @pytest.mark.asyncio

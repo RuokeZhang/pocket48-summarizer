@@ -6,7 +6,7 @@ import pytest
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.media.clips import VideoClipService
 from pocket48_summarizer.media.ffmpeg import VideoDimensions
-from pocket48_summarizer.models import TranscriptSegment
+from pocket48_summarizer.models import ClipRange, TranscriptSegment
 
 
 class FakeFFmpeg:
@@ -48,6 +48,16 @@ class FakeFFmpeg:
         del duration_ms
         output_path.write_bytes(
             cover_path.read_bytes() + clip_path.read_bytes()
+        )
+        return output_path
+
+    async def concat_clips(
+        self,
+        input_paths: list[Path],
+        output_path: Path,
+    ) -> Path:
+        output_path.write_bytes(
+            b"".join(path.read_bytes() for path in input_paths)
         )
         return output_path
 
@@ -152,6 +162,46 @@ class OverlayFFmpeg(FakeFFmpeg):
             output_path,
             duration_ms=duration_ms,
         )
+
+
+class MultiRangeFFmpeg(OverlayFFmpeg):
+    def __init__(self):
+        super().__init__()
+        self.clip_calls = []
+        self.ass_documents = []
+        self.concat_inputs = []
+
+    async def clip_video(
+        self,
+        manifest_url: str,
+        output_path: Path,
+        start_ms: int,
+        end_ms: int,
+        ass_path: Path | None = None,
+        output_layout: str = "portrait",
+    ) -> Path:
+        self.clip_calls.append((start_ms, end_ms))
+        if ass_path is not None:
+            self.ass_documents.append(
+                ass_path.read_text(encoding="utf-8")
+            )
+        return await FakeFFmpeg.clip_video(
+            self,
+            manifest_url,
+            output_path,
+            start_ms,
+            end_ms,
+            ass_path,
+            output_layout,
+        )
+
+    async def concat_clips(
+        self,
+        input_paths: list[Path],
+        output_path: Path,
+    ) -> Path:
+        self.concat_inputs = list(input_paths)
+        return await super().concat_clips(input_paths, output_path)
 
 
 class SlowFFmpeg:
@@ -492,3 +542,69 @@ async def test_landscape_export_prepends_selected_custom_cover(
     assert "灯光亮起时" in ffmpeg.cover_ass_content
     assert r"\pos(692,670)\p1" in ffmpeg.cover_ass_content
     assert oss.uploads[0][2] == b"covervideo"
+
+
+@pytest.mark.asyncio
+async def test_multi_range_export_renders_and_concatenates_kept_ranges(
+    settings, repository
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=991107",
+        "991107",
+    )
+    repository.replace_transcript(
+        job.id,
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=1000,
+                end_ms=2500,
+                text="第一段字幕",
+            ),
+            TranscriptSegment(
+                sequence=2,
+                start_ms=6000,
+                end_ms=7500,
+                text="第二段字幕",
+            ),
+        ],
+    )
+    ffmpeg = MultiRangeFFmpeg()
+    oss = FakeOSS()
+    service = VideoClipService(
+        settings,
+        repository,
+        oss,  # type: ignore[arg-type]
+        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+    )
+    ranges = [
+        ClipRange(start_ms=1000, end_ms=3000),
+        ClipRange(start_ms=6000, end_ms=8000),
+    ]
+
+    record = service.start_export(
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="删除中段",
+        requested_by_user_id=None,
+        request_id="multi-range-request",
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=8000,
+        kept_ranges=ranges,
+        subtitle_mode="zh",
+        include_danmaku=False,
+    )
+    await service._tasks[record.id]
+
+    completed = repository.get_video_clip_export(job.id, record.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.kept_ranges == ranges
+    assert ffmpeg.clip_calls == [(1000, 3000), (6000, 8000)]
+    assert len(ffmpeg.concat_inputs) == 2
+    assert "第一段字幕" in ffmpeg.ass_documents[0]
+    assert "第二段字幕" in ffmpeg.ass_documents[1]
+    assert "0:00:00.00,0:00:01.50" in ffmpeg.ass_documents[0]
+    assert "0:00:00.00,0:00:01.50" in ffmpeg.ass_documents[1]
+    assert oss.uploads[0][2] == b"videovideo"

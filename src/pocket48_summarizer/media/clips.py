@@ -11,7 +11,7 @@ from typing import Literal
 from ..clients.oss_store import OSSStore
 from ..config import Settings
 from ..errors import AppError
-from ..models import VideoClipExportRecord
+from ..models import ClipRange, VideoClipExportRecord
 from ..repository import JobRepository
 from .boundaries import (
     BoundaryKind,
@@ -42,7 +42,7 @@ LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v8"
+RENDER_VERSION = "ass-v9"
 
 
 @dataclass(slots=True)
@@ -123,6 +123,7 @@ class VideoClipService:
         include_danmaku: bool,
         output_layout: ClipOutputLayout,
         cover_enabled: bool = False,
+        kept_range_count: int = 1,
     ) -> str:
         overlay = subtitle_mode
         if include_danmaku:
@@ -131,6 +132,8 @@ class VideoClipService:
             overlay = f"landscape-{overlay}"
         if cover_enabled:
             overlay = f"cover-{overlay}"
+        if kept_range_count > 1:
+            overlay = f"cut-{overlay}"
         return (
             f"timeline-{timeline_index + 1:02d}-"
             f"{start_ms}-{end_ms}-{overlay}-{clip_id[:8]}.mp4"
@@ -147,6 +150,7 @@ class VideoClipService:
         manifest_url: str,
         start_ms: int,
         end_ms: int,
+        kept_ranges: list[ClipRange] | None = None,
         subtitle_mode: str,
         include_danmaku: bool,
         subtitle_font_scale: int = DEFAULT_SUBTITLE_FONT_SCALE,
@@ -173,6 +177,7 @@ class VideoClipService:
             include_danmaku=include_danmaku,
             output_layout=output_layout,
             cover_enabled=cover_enabled,
+            kept_range_count=len(kept_ranges or []),
         )
         record, created = self.repository.begin_video_clip_export(
             clip_id=clip_id,
@@ -183,6 +188,7 @@ class VideoClipService:
             request_id=request_id,
             start_ms=start_ms,
             end_ms=end_ms,
+            kept_ranges=kept_ranges,
             subtitle_mode=subtitle_mode,
             include_danmaku=include_danmaku,
             subtitle_font_scale=subtitle_font_scale,
@@ -338,7 +344,14 @@ class VideoClipService:
         state: ClipState,
         manifest_url: str | None,
     ) -> None:
-        ass_path = state.output_path.with_suffix(".ass")
+        ass_paths = [
+            state.output_path.with_suffix(f".range-{index + 1}.ass")
+            for index in range(len(record.kept_ranges))
+        ]
+        part_paths = [
+            state.output_path.with_suffix(f".range-{index + 1}.mp4")
+            for index in range(len(record.kept_ranges))
+        ]
         cover_ass_path = state.output_path.with_suffix(".cover.ass")
         cover_frame_path = state.output_path.with_suffix(".cover.png")
         main_output_path = state.output_path.with_suffix(".main.mp4")
@@ -374,58 +387,85 @@ class VideoClipService:
                                         manifest_url
                                     )
                                 )
-                            ass_input: Path | None = None
+                            overlay_documents = []
                             if needs_clip_overlay:
                                 if dimensions is None:
                                     raise RuntimeError(
                                         "clip overlay dimensions missing"
                                     )
-                                document = build_clip_overlay(
-                                    width=dimensions.width,
-                                    height=dimensions.height,
-                                    clip_start_ms=record.start_ms,
-                                    clip_end_ms=record.end_ms,
-                                    subtitle_mode=record.subtitle_mode,
-                                    include_danmaku=record.include_danmaku,
-                                    font_name=self.settings.clip_font_name,
-                                    transcript=(
-                                        self.repository.get_all_transcript(
-                                            record.job_id
-                                        )
-                                    ),
-                                    translations=(
-                                        self.repository
-                                        .get_transcript_translations(
-                                            record.job_id, "en"
-                                        )
-                                    ),
-                                    danmaku=(
-                                        self.repository.get_all_danmaku(
-                                            record.job_id
-                                        )
-                                    ),
-                                    subtitle_font_scale=(
-                                        record.subtitle_font_scale
-                                    ),
-                                    subtitle_text_color=(
-                                        record.subtitle_text_color
-                                    ),
-                                    subtitle_background_color=(
-                                        record.subtitle_background_color
-                                    ),
-                                    output_layout=record.output_layout,
-                                    subtitle_font_family=(
-                                        record.subtitle_font_family
-                                    ),
+                                transcript = (
+                                    self.repository.get_all_transcript(
+                                        record.job_id
+                                    )
                                 )
-                                ass_path.parent.mkdir(
-                                    parents=True, exist_ok=True
+                                translations = (
+                                    self.repository
+                                    .get_transcript_translations(
+                                        record.job_id, "en"
+                                    )
                                 )
-                                ass_path.write_text(
-                                    document.content, encoding="utf-8"
+                                danmaku = self.repository.get_all_danmaku(
+                                    record.job_id
                                 )
-                                ass_input = ass_path
-                                warning = document.warning_message
+                                for clip_range in record.kept_ranges:
+                                    overlay_documents.append(
+                                        build_clip_overlay(
+                                            width=dimensions.width,
+                                            height=dimensions.height,
+                                            clip_start_ms=clip_range.start_ms,
+                                            clip_end_ms=clip_range.end_ms,
+                                            subtitle_mode=record.subtitle_mode,
+                                            include_danmaku=(
+                                                record.include_danmaku
+                                            ),
+                                            font_name=(
+                                                self.settings.clip_font_name
+                                            ),
+                                            transcript=transcript,
+                                            translations=translations,
+                                            danmaku=danmaku,
+                                            subtitle_font_scale=(
+                                                record.subtitle_font_scale
+                                            ),
+                                            subtitle_text_color=(
+                                                record.subtitle_text_color
+                                            ),
+                                            subtitle_background_color=(
+                                                record
+                                                .subtitle_background_color
+                                            ),
+                                            output_layout=(
+                                                record.output_layout
+                                            ),
+                                            subtitle_font_family=(
+                                                record.subtitle_font_family
+                                            ),
+                                            allow_empty_subtitles=True,
+                                        )
+                                    )
+                                subtitle_count = sum(
+                                    document.subtitle_event_count
+                                    for document in overlay_documents
+                                )
+                                danmaku_count = sum(
+                                    document.danmaku_event_count
+                                    for document in overlay_documents
+                                )
+                                if (
+                                    record.subtitle_mode != "off"
+                                    and subtitle_count == 0
+                                ):
+                                    raise AppError(
+                                        "clip_subtitles_empty",
+                                        "所选范围没有可渲染的字幕",
+                                        False,
+                                    )
+                                warning = (
+                                    "所选范围没有可渲染的弹幕"
+                                    if record.include_danmaku
+                                    and danmaku_count == 0
+                                    else None
+                                )
                             if record.cover_enabled:
                                 if (
                                     dimensions is None
@@ -458,27 +498,42 @@ class VideoClipService:
                                     cover_ass_path,
                                     output_layout=record.output_layout,
                                 )
-                            clip_output_path = (
+                            rendered_output_path = (
                                 main_output_path
                                 if record.cover_enabled
                                 else state.output_path
                             )
-                            if ass_input is None:
-                                await self.ffmpeg.clip_video(
-                                    manifest_url,
-                                    clip_output_path,
-                                    record.start_ms,
-                                    record.end_ms,
-                                    output_layout=record.output_layout,
+                            for index, clip_range in enumerate(
+                                record.kept_ranges
+                            ):
+                                ass_input: Path | None = None
+                                if overlay_documents:
+                                    ass_input = ass_paths[index]
+                                    ass_input.parent.mkdir(
+                                        parents=True,
+                                        exist_ok=True,
+                                    )
+                                    ass_input.write_text(
+                                        overlay_documents[index].content,
+                                        encoding="utf-8",
+                                    )
+                                clip_output_path = (
+                                    rendered_output_path
+                                    if len(record.kept_ranges) == 1
+                                    else part_paths[index]
                                 )
-                            else:
                                 await self.ffmpeg.clip_video(
                                     manifest_url,
                                     clip_output_path,
-                                    record.start_ms,
-                                    record.end_ms,
+                                    clip_range.start_ms,
+                                    clip_range.end_ms,
                                     ass_input,
                                     output_layout=record.output_layout,
+                                )
+                            if len(record.kept_ranges) > 1:
+                                await self.ffmpeg.concat_clips(
+                                    part_paths,
+                                    rendered_output_path,
                                 )
                             if record.cover_enabled:
                                 await self.ffmpeg.prepend_cover(
@@ -531,7 +586,10 @@ class VideoClipService:
                                 "attempt": attempt,
                             },
                         )
-                    ass_path.unlink(missing_ok=True)
+                    for path in ass_paths:
+                        path.unlink(missing_ok=True)
+                    for path in part_paths:
+                        path.unlink(missing_ok=True)
                     cover_ass_path.unlink(missing_ok=True)
                     cover_frame_path.unlink(missing_ok=True)
                     main_output_path.unlink(missing_ok=True)
@@ -560,7 +618,10 @@ class VideoClipService:
                 record.id, state.error
             )
         finally:
-            ass_path.unlink(missing_ok=True)
+            for path in ass_paths:
+                path.unlink(missing_ok=True)
+            for path in part_paths:
+                path.unlink(missing_ok=True)
             cover_ass_path.unlink(missing_ok=True)
             cover_frame_path.unlink(missing_ok=True)
             main_output_path.unlink(missing_ok=True)

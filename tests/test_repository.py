@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from pocket48_summarizer.models import JobStage, JobStatus
+from pocket48_summarizer.models import ClipRange, JobStage, JobStatus
 
 
 def test_job_claim_failure_and_retry(repository):
@@ -64,6 +64,10 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
         request_id="request-1",
         start_ms=1000,
         end_ms=5000,
+        kept_ranges=[
+            ClipRange(start_ms=1000, end_ms=2500),
+            ClipRange(start_ms=3500, end_ms=5000),
+        ],
         subtitle_mode="zh",
         include_danmaku=False,
         subtitle_font_scale=125,
@@ -121,6 +125,10 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
     assert duplicate.cover_timestamp_ms == 2500
     assert duplicate.cover_title == "第一段封面"
     assert duplicate.cover_style == "display"
+    assert duplicate.kept_ranges == [
+        ClipRange(start_ms=1000, end_ms=2500),
+        ClipRange(start_ms=3500, end_ms=5000),
+    ]
     with repository.database.connect() as connection:
         stored_scale = connection.execute(
             """

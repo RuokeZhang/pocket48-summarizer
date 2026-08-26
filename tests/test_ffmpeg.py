@@ -177,3 +177,18 @@ def test_prepend_cover_command_delays_audio_until_cover_finishes(settings):
     assert "trim=duration=1.500" in filter_complex
     assert "2:a:0?" in command
     assert command[-1] == "/tmp/final.mp4"
+
+
+def test_concat_command_uses_internal_manifest_without_reencoding(settings):
+    runner = FFmpegRunner(settings)
+
+    command = runner.build_concat_clips_command(
+        Path("/tmp/clip.concat.txt"),
+        Path("/tmp/clip.mp4"),
+    )
+
+    assert command[command.index("-f") + 1] == "concat"
+    assert command[command.index("-safe") + 1] == "0"
+    assert command[command.index("-i") + 1] == "/tmp/clip.concat.txt"
+    assert command[command.index("-c") + 1] == "copy"
+    assert command[-1] == "/tmp/clip.mp4"

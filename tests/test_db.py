@@ -37,7 +37,76 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "011_clip_subtitle_fonts.sql",
         "012_clip_covers.sql",
         "013_resummarize_incomplete_timelines.sql",
+        "014_clip_ranges.sql",
+        "015_resummarize_coarse_timelines.sql",
     ]
+
+
+def test_clip_ranges_migration_backfills_existing_exports(tmp_path):
+    database_path = tmp_path / "clip-ranges.sqlite3"
+    migration_dir = (
+        Path(__file__).parents[1]
+        / "src"
+        / "pocket48_summarizer"
+        / "migrations"
+    )
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE schema_migrations (
+            version TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    for migration in sorted(migration_dir.glob("*.sql")):
+        if migration.name == "014_clip_ranges.sql":
+            break
+        connection.executescript(migration.read_text(encoding="utf-8"))
+        connection.execute(
+            """
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?, datetime('now'))
+            """,
+            (migration.name,),
+        )
+    connection.execute(
+        """
+        INSERT INTO jobs (
+            id, source_url, live_id, status, stage, created_at, updated_at
+        ) VALUES (
+            'job-clip-ranges', 'https://example.com/live', 'clip-ranges',
+            'completed', 'completed', datetime('now'), datetime('now')
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO video_clip_exports (
+            id, job_id, timeline_index, request_id, start_ms, end_ms,
+            subtitle_mode, render_version, filename, status,
+            created_at, updated_at
+        ) VALUES (
+            'clip-before-ranges', 'job-clip-ranges', 0, 'request-before',
+            1000, 5000, 'off', 'ass-v8', 'clip.mp4', 'completed',
+            datetime('now'), datetime('now')
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    database = Database(database_path)
+    database.initialize()
+    record = JobRepository(database).get_video_clip_export(
+        "job-clip-ranges",
+        "clip-before-ranges",
+    )
+
+    assert record is not None
+    assert [
+        item.model_dump() for item in record.kept_ranges
+    ] == [{"start_ms": 1000, "end_ms": 5000}]
 
 
 def test_cover_migration_normalizes_existing_font_scale(tmp_path):
@@ -215,12 +284,14 @@ def test_incomplete_long_timelines_are_queued_for_resummarization(tmp_path):
             """,
             (migration.name,),
         )
-    for job_id, timeline_end in (
-        ("incomplete-timeline", 4_000_000),
-        ("covered-timeline", 11_000_000),
+    for job_id, timeline_start, timeline_end in (
+        ("incomplete-timeline", 0, 4_000_000),
+        ("covered-timeline", 10_500_000, 11_000_000),
+        ("coarse-timeline", 0, 11_000_000),
     ):
         summary_json = (
-            '{"overview":"测试","timeline":[{"start_ms":0,'
+            '{"overview":"测试","timeline":[{"start_ms":'
+            f"{timeline_start},"
             f'"end_ms":{timeline_end},"title":"测试","detail":"测试",'
             '"evidence_segment_ids":[1]}],"topics":[],"highlights":[]}'
         )
@@ -258,6 +329,9 @@ def test_incomplete_long_timelines_are_queued_for_resummarization(tmp_path):
         covered = migrated.execute(
             "SELECT * FROM jobs WHERE id = 'covered-timeline'"
         ).fetchone()
+        coarse = migrated.execute(
+            "SELECT * FROM jobs WHERE id = 'coarse-timeline'"
+        ).fetchone()
 
     assert incomplete["status"] == "queued"
     assert incomplete["stage"] == "queued"
@@ -266,6 +340,9 @@ def test_incomplete_long_timelines_are_queued_for_resummarization(tmp_path):
     assert incomplete["completed_at"] is None
     assert covered["status"] == "completed"
     assert covered["summary_json"] is not None
+    assert coarse["status"] == "queued"
+    assert coarse["summary_json"] is None
+    assert coarse["progress_message"] == "等待细化长直播时间线"
 
 
 def test_configurable_clip_migration_backfills_legacy_rows_idempotently(

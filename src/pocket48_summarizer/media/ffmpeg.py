@@ -422,6 +422,31 @@ class FFmpegRunner:
             str(output_path),
         ]
 
+    def build_concat_clips_command(
+        self,
+        manifest_path: Path,
+        output_path: Path,
+    ) -> list[str]:
+        return [
+            self.require_executable(),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(manifest_path),
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "-y",
+            str(output_path),
+        ]
+
     def build_probe_command(self, manifest_url: str) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -692,6 +717,73 @@ class FFmpegRunner:
         except BaseException:
             temporary_path.unlink(missing_ok=True)
             raise
+        return output_path
+
+    async def concat_clips(
+        self,
+        input_paths: list[Path],
+        output_path: Path,
+    ) -> Path:
+        if len(input_paths) < 2:
+            raise AppError(
+                "clip_concat_invalid",
+                "至少需要两个视频片段才能拼接",
+                False,
+            )
+        if any(not path.is_file() for path in input_paths):
+            raise AppError(
+                "clip_concat_input_missing",
+                "待拼接的视频片段不存在",
+                True,
+            )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path = output_path.with_suffix(".concat.txt")
+        temporary_path = output_path.with_suffix(".part.mp4")
+        manifest_path.unlink(missing_ok=True)
+        temporary_path.unlink(missing_ok=True)
+        try:
+            lines: list[str] = []
+            for path in input_paths:
+                resolved = str(path.resolve())
+                if "\n" in resolved or "\r" in resolved:
+                    raise AppError(
+                        "clip_concat_invalid",
+                        "视频片段路径无效",
+                        False,
+                    )
+                lines.append(
+                    "file '" + resolved.replace("'", "'\\''") + "'"
+                )
+            manifest_path.write_text(
+                "\n".join(lines) + "\n",
+                encoding="utf-8",
+            )
+            await self._run_command(
+                self.build_concat_clips_command(
+                    manifest_path,
+                    temporary_path,
+                ),
+                timeout_seconds=15 * 60,
+                heartbeat=None,
+                error_code="clip_concat_failed",
+                error_message="拼接视频片段失败",
+                redact_value=None,
+            )
+            if (
+                not temporary_path.is_file()
+                or temporary_path.stat().st_size == 0
+            ):
+                raise AppError(
+                    "clip_concat_output_missing",
+                    "FFmpeg 未生成拼接视频",
+                    True,
+                )
+            temporary_path.replace(output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        finally:
+            manifest_path.unlink(missing_ok=True)
         return output_path
 
     async def prepend_cover(

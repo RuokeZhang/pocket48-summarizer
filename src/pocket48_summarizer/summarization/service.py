@@ -19,7 +19,13 @@ from ..models import (
 )
 from ..repository import JobRepository
 from .chunking import build_transcript_chunks
-from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, chunk_prompt, final_prompt
+from .prompts import (
+    MAX_TIMELINE_EVENT_DURATION_MS,
+    PROMPT_VERSION,
+    SYSTEM_PROMPT,
+    chunk_prompt,
+    final_prompt,
+)
 from .renderer import render_summary_markdown
 
 ProgressCallback = Callable[[int, int], Awaitable[None]]
@@ -50,14 +56,25 @@ class SummarizationService:
         chunks = build_transcript_chunks(
             segments,
             max_chars=self.settings.llm_max_input_chars,
+            max_duration_ms=round(
+                self.settings.llm_chunk_max_duration_minutes * 60 * 1000
+            ),
             overlap_segments=self.settings.llm_chunk_overlap_segments,
         )
+        segment_windows = {
+            segment.sequence: (segment.start_ms, segment.end_ms)
+            for segment in segments
+        }
         saved = self.repository.get_summary_chunks(job_id, PROMPT_VERSION)
         chunk_summaries: list[ChunkSummary] = []
         for chunk in chunks:
             prompt = chunk_prompt(chunk)
             input_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
             valid_chunk_ids = set(chunk.segment_ids)
+            chunk_segment_windows = {
+                sequence: segment_windows[sequence]
+                for sequence in chunk.segment_ids
+            }
             existing = saved.get(chunk.index)
             if existing and existing[0] == input_hash:
                 try:
@@ -65,6 +82,7 @@ class SummarizationService:
                     self._validate_chunk_evidence(
                         chunk_summary,
                         valid_chunk_ids,
+                        chunk_segment_windows,
                         expected_start_ms=chunk.start_ms,
                         expected_end_ms=chunk.end_ms,
                     )
@@ -78,6 +96,7 @@ class SummarizationService:
             chunk_summary = await self._request_chunk(
                 prompt,
                 valid_chunk_ids,
+                chunk_segment_windows,
                 expected_start_ms=chunk.start_ms,
                 expected_end_ms=chunk.end_ms,
             )
@@ -95,7 +114,10 @@ class SummarizationService:
                 await on_progress(len(chunk_summaries), len(chunks))
         valid_segment_ids = {segment.sequence for segment in segments}
         summary = await self._request_final(
-            chunk_summaries, peaks, valid_segment_ids
+            chunk_summaries,
+            peaks,
+            valid_segment_ids,
+            segment_windows,
         )
         summary = summary.model_copy(
             update={
@@ -117,6 +139,7 @@ class SummarizationService:
         self,
         prompt: str,
         valid_ids: set[int],
+        segment_windows: dict[int, tuple[int, int]],
         *,
         expected_start_ms: int,
         expected_end_ms: int,
@@ -134,6 +157,7 @@ class SummarizationService:
                 self._validate_chunk_evidence(
                     summary,
                     valid_ids,
+                    segment_windows,
                     expected_start_ms=expected_start_ms,
                     expected_end_ms=expected_end_ms,
                 )
@@ -155,6 +179,7 @@ class SummarizationService:
         chunks: list[ChunkSummary],
         peaks: list[DanmakuPeak],
         valid_ids: set[int],
+        segment_windows: dict[int, tuple[int, int]],
     ) -> FinalSummary:
         prompt = final_prompt(chunks, peaks)
         last_error: Exception | None = None
@@ -170,6 +195,11 @@ class SummarizationService:
                 for item in summary.timeline:
                     self._validate_evidence(
                         item.evidence_segment_ids, valid_ids, "时间线"
+                    )
+                    self._validate_timeline_granularity(
+                        item,
+                        segment_windows,
+                        "时间线",
                     )
                 for item in summary.highlights:
                     self._validate_evidence(
@@ -253,6 +283,7 @@ class SummarizationService:
         cls,
         summary: ChunkSummary,
         valid_ids: set[int],
+        segment_windows: dict[int, tuple[int, int]],
         *,
         expected_start_ms: int,
         expected_end_ms: int,
@@ -277,6 +308,11 @@ class SummarizationService:
                 item,
                 expected_start_ms,
                 expected_end_ms,
+                "分段时间线",
+            )
+            cls._validate_timeline_granularity(
+                item,
+                segment_windows,
                 "分段时间线",
             )
         for item in summary.highlight_candidates:
@@ -305,6 +341,34 @@ class SummarizationService:
             raise ExternalServiceError(
                 "llm_invalid_chunk_window",
                 f"模型{label}超出了输入时间窗口",
+                True,
+            )
+
+    @staticmethod
+    def _validate_timeline_granularity(
+        item: SummaryCandidate | TimelineItem,
+        segment_windows: dict[int, tuple[int, int]],
+        label: str,
+    ) -> None:
+        if (
+            item.end_ms <= item.start_ms
+            or item.end_ms - item.start_ms
+            > MAX_TIMELINE_EVENT_DURATION_MS
+        ):
+            raise ExternalServiceError(
+                "llm_timeline_too_coarse",
+                f"模型{label}时间范围过宽或无效（每条最多 5 分钟）",
+                True,
+            )
+        if not any(
+            segment_windows[evidence_id][1] > item.start_ms
+            and segment_windows[evidence_id][0] < item.end_ms
+            for evidence_id in item.evidence_segment_ids
+            if evidence_id in segment_windows
+        ):
+            raise ExternalServiceError(
+                "llm_timeline_evidence_mismatch",
+                f"模型{label}时间范围与引用字幕证据不重叠",
                 True,
             )
 

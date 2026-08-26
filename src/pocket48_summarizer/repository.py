@@ -12,6 +12,7 @@ from typing import Iterable
 from .db import Database
 from .errors import AppError
 from .models import (
+    ClipRange,
     ClipBoundarySuggestionRecord,
     DanmakuEntry,
     DanmakuPeak,
@@ -84,6 +85,19 @@ class JobRepository:
             payload["subtitle_font_scale"] = payload[
                 "subtitle_font_percent"
             ]
+        ranges_payload = payload.pop("kept_ranges_json", "[]")
+        try:
+            ranges = json.loads(ranges_payload)
+        except (TypeError, json.JSONDecodeError):
+            ranges = []
+        if not ranges:
+            ranges = [
+                {
+                    "start_ms": payload["start_ms"],
+                    "end_ms": payload["end_ms"],
+                }
+            ]
+        payload["kept_ranges"] = ranges
         return VideoClipExportRecord.model_validate(payload)
 
     @staticmethod
@@ -1070,6 +1084,7 @@ class JobRepository:
         request_id: str,
         start_ms: int,
         end_ms: int,
+        kept_ranges: list[ClipRange] | None = None,
         subtitle_mode: str,
         include_danmaku: bool,
         render_version: str,
@@ -1089,6 +1104,9 @@ class JobRepository:
             70,
             min(160, round(subtitle_font_scale * 1.6)),
         )
+        normalized_ranges = kept_ranges or [
+            ClipRange(start_ms=start_ms, end_ms=end_ms)
+        ]
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             inserted = connection.execute(
@@ -1096,6 +1114,7 @@ class JobRepository:
                 INSERT OR IGNORE INTO video_clip_exports (
                     id, job_id, timeline_index, timeline_title,
                     requested_by_user_id, request_id, start_ms, end_ms,
+                    kept_ranges_json,
                     subtitle_mode, include_danmaku,
                     subtitle_font_scale, subtitle_font_percent,
                     subtitle_text_color, subtitle_background_color,
@@ -1105,7 +1124,7 @@ class JobRepository:
                     render_version, filename,
                     status, created_at, updated_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     'running', ?, ?
                 )
@@ -1119,6 +1138,13 @@ class JobRepository:
                     request_id,
                     start_ms,
                     end_ms,
+                    json.dumps(
+                        [
+                            item.model_dump()
+                            for item in normalized_ranges
+                        ],
+                        separators=(",", ":"),
+                    ),
                     subtitle_mode,
                     int(include_danmaku),
                     legacy_font_scale,

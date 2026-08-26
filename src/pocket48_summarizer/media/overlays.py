@@ -102,6 +102,7 @@ def build_clip_overlay(
     subtitle_font_family: LandscapeSubtitleFont = (
         DEFAULT_LANDSCAPE_SUBTITLE_FONT
     ),
+    allow_empty_subtitles: bool = False,
 ) -> ClipOverlayDocument:
     if width <= 0 or height <= 0 or clip_end_ms <= clip_start_ms:
         raise AppError(
@@ -129,6 +130,7 @@ def build_clip_overlay(
         translations=translations,
         output_layout=output_layout,
         subtitle_font_scale=subtitle_font_scale,
+        allow_empty=allow_empty_subtitles,
     )
     danmaku_events, danmaku_count = (
         _danmaku_events(
@@ -339,6 +341,7 @@ def _subtitle_events(
     translations: dict[int, str],
     output_layout: ClipOutputLayout,
     subtitle_font_scale: int,
+    allow_empty: bool,
 ) -> list[str]:
     if subtitle_mode == "off":
         return []
@@ -349,6 +352,8 @@ def _subtitle_events(
         and segment.start_ms < clip_end_ms
     ]
     if not selected:
+        if allow_empty:
+            return []
         raise AppError(
             "clip_subtitles_empty",
             "所选范围没有可渲染的字幕",
@@ -424,6 +429,8 @@ def _subtitle_events(
             )
         )
     if not events:
+        if allow_empty:
+            return []
         raise AppError(
             "clip_subtitles_empty",
             "所选范围没有可渲染的字幕",

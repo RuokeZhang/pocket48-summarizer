@@ -18,10 +18,13 @@ def build_transcript_chunks(
     segments: list[TranscriptSegment],
     *,
     max_chars: int,
+    max_duration_ms: int,
     overlap_segments: int,
 ) -> list[TranscriptChunk]:
     if not segments:
         return []
+    if max_chars <= 0 or max_duration_ms <= 0:
+        raise ValueError("chunk limits must be positive")
     chunks: list[TranscriptChunk] = []
     current: list[TranscriptSegment] = []
     current_length = 0
@@ -46,8 +49,17 @@ def build_transcript_chunks(
 
     for segment in segments:
         line_length = len(_format_segment(segment)) + 1
-        if current and current_length + line_length > max_chars:
+        if current and (
+            current_length + line_length > max_chars
+            or segment.end_ms - current[0].start_ms > max_duration_ms
+        ):
             emit()
+            while current and (
+                current_length + line_length > max_chars
+                or segment.end_ms - current[0].start_ms > max_duration_ms
+            ):
+                removed = current.pop(0)
+                current_length -= len(_format_segment(removed)) + 1
         current.append(segment)
         current_length += line_length
     if current:

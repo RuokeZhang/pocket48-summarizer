@@ -258,6 +258,7 @@ const clipEditorError = document.querySelector("#clip-editor-error");
 const clipTimelineViewport = document.querySelector("#clip-timeline-viewport");
 const clipRangeControl = document.querySelector("#clip-range-control");
 const clipTimelineCues = document.querySelector("#clip-transcript-cues");
+const clipSegmentTrack = document.querySelector("#clip-segment-track");
 const clipStartHandle = document.querySelector("#clip-start-handle");
 const clipEndHandle = document.querySelector("#clip-end-handle");
 const clipStartHandleTime = document.querySelector("#clip-start-handle-time");
@@ -284,6 +285,11 @@ const clipPreviewSubtitles = document.querySelector("#clip-preview-subtitles");
 const clipPreviewZh = document.querySelector("#clip-preview-zh");
 const clipPreviewEn = document.querySelector("#clip-preview-en");
 const clipPreviewDanmaku = document.querySelector("#clip-preview-danmaku");
+const clipPreviewCutNotice = document.querySelector("#clip-preview-cut-notice");
+const clipCutSummary = document.querySelector("#clip-cut-summary");
+const clipSplitAtMarker = document.querySelector("#clip-split-at-marker");
+const clipToggleSegment = document.querySelector("#clip-toggle-segment");
+const clipSegmentList = document.querySelector("#clip-segment-list");
 const clipCoverPreview = document.querySelector("#clip-cover-preview");
 const clipCoverPreviewTitle = document.querySelector("#clip-cover-preview-title");
 const clipLyricPreview = document.querySelector("#clip-lyric-preview");
@@ -336,6 +342,7 @@ let clipLyricHoverFrame = null;
 let clipLyricHoverClientX = 0;
 let clipLyricHoverMs = null;
 let clipLyricHovering = false;
+let clipSegmentSequence = 0;
 
 const CLIP_MIN_ZOOM = 1;
 const CLIP_MAX_ZOOM = 64;
@@ -346,6 +353,9 @@ const CLIP_DANMAKU_MIN_GAP_MS = 450;
 const CLIP_DANMAKU_RISE_MS = 220;
 const CLIP_AUTO_SCROLL_EDGE_PX = 52;
 const CLIP_AUTO_SCROLL_MAX_PX = 24;
+const CLIP_MIN_SEGMENT_MS = 100;
+const CLIP_MAX_SEGMENTS = 63;
+const CLIP_MAX_KEPT_RANGES = 32;
 const CLIP_SUBTITLE_FONT_SCALE_MIN = 50;
 const CLIP_SUBTITLE_FONT_SCALE_MAX = 150;
 const CLIP_DEFAULT_FONT_SCALE = 100;
@@ -387,6 +397,282 @@ const clipCoverTitleValue = () => (
     .trim()
     .slice(0, CLIP_COVER_TITLE_MAX_LENGTH)
 );
+
+const createClipSegment = (
+  startMs,
+  endMs,
+  kept = true,
+  manualBoundaryBefore = false
+) => ({
+  id: `clip-segment-${++clipSegmentSequence}`,
+  startMs,
+  endMs,
+  kept,
+  manualBoundaryBefore
+});
+
+const selectedClipSegment = () => (
+  clipEditorState?.segments?.find(
+    (segment) => segment.id === clipEditorState.selectedSegmentId
+  ) || null
+);
+
+const clipKeptRanges = () => {
+  const keptRanges = [];
+  for (const segment of clipEditorState?.segments || []) {
+    if (!segment.kept || segment.endMs <= segment.startMs) continue;
+    const previous = keptRanges[keptRanges.length - 1];
+    if (previous && segment.startMs <= previous.end_ms) {
+      previous.end_ms = Math.max(previous.end_ms, segment.endMs);
+      continue;
+    }
+    keptRanges.push({
+      start_ms: segment.startMs,
+      end_ms: segment.endMs
+    });
+  }
+  return keptRanges;
+};
+
+const clipKeptDurationMs = () => (
+  clipKeptRanges().reduce(
+    (total, clipRange) => (
+      total + clipRange.end_ms - clipRange.start_ms
+    ),
+    0
+  )
+);
+
+const clipSegmentAt = (milliseconds, { keptOnly = false } = {}) => {
+  const segments = clipEditorState?.segments || [];
+  const targetMs = Number(milliseconds);
+  return segments.find((segment, index) => (
+    (!keptOnly || segment.kept)
+    && targetMs >= segment.startMs
+    && (
+      targetMs < segment.endMs
+      || (
+        index === segments.length - 1
+        && targetMs === segment.endMs
+      )
+    )
+  )) || null;
+};
+
+const clipTimeIsKept = (milliseconds, { includeFinalEnd = false } = {}) => {
+  const targetMs = Number(milliseconds);
+  const ranges = clipKeptRanges();
+  return ranges.some((clipRange, index) => (
+    targetMs >= clipRange.start_ms
+    && (
+      targetMs < clipRange.end_ms
+      || (
+        includeFinalEnd
+        && index === ranges.length - 1
+        && targetMs === clipRange.end_ms
+      )
+    )
+  ));
+};
+
+const nearestClipKeptFrameMs = (milliseconds) => {
+  const ranges = clipKeptRanges();
+  if (!ranges.length) return null;
+  const targetMs = Number(milliseconds);
+  for (const clipRange of ranges) {
+    if (targetMs < clipRange.start_ms) return clipRange.start_ms;
+    if (targetMs < clipRange.end_ms) return targetMs;
+  }
+  const last = ranges[ranges.length - 1];
+  return Math.max(last.start_ms, last.end_ms - CLIP_MIN_SEGMENT_MS);
+};
+
+const clipSplitCandidate = () => {
+  if (
+    !clipEditorState
+    || !Number.isFinite(clipEditorState.markerMs)
+    || clipEditorState.segments.length >= CLIP_MAX_SEGMENTS
+  ) return null;
+  const markerMs = clipEditorState.markerMs;
+  const segment = clipEditorState.segments.find((item) => (
+    item.kept
+    && markerMs - item.startMs >= CLIP_MIN_SEGMENT_MS
+    && item.endMs - markerMs >= CLIP_MIN_SEGMENT_MS
+  ));
+  return segment ? { segment, markerMs } : null;
+};
+
+const syncClipSegmentsToBounds = () => {
+  if (!clipEditorState) return;
+  const existing = [...(clipEditorState.segments || [])]
+    .sort((left, right) => left.startMs - right.startMs);
+  const normalized = [];
+  let cursor = clipEditorState.startMs;
+  for (const segment of existing) {
+    const startMs = Math.max(cursor, clipEditorState.startMs, segment.startMs);
+    const endMs = Math.min(clipEditorState.endMs, segment.endMs);
+    if (endMs <= startMs) continue;
+    if (startMs > cursor) {
+      normalized.push(createClipSegment(cursor, startMs));
+    }
+    normalized.push({
+      ...segment,
+      startMs,
+      endMs,
+      manualBoundaryBefore: (
+        startMs === segment.startMs
+        && Boolean(segment.manualBoundaryBefore)
+      )
+    });
+    cursor = endMs;
+    if (cursor >= clipEditorState.endMs) break;
+  }
+  if (cursor < clipEditorState.endMs) {
+    normalized.push(createClipSegment(cursor, clipEditorState.endMs));
+  }
+  if (!normalized.length) {
+    normalized.push(
+      createClipSegment(clipEditorState.startMs, clipEditorState.endMs)
+    );
+  }
+  const merged = [];
+  for (const segment of normalized) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous
+      && previous.endMs === segment.startMs
+      && previous.kept === segment.kept
+      && !segment.manualBoundaryBefore
+    ) {
+      previous.endMs = segment.endMs;
+      continue;
+    }
+    merged.push(segment);
+  }
+  clipEditorState.segments = merged;
+  if (!selectedClipSegment()) {
+    clipEditorState.selectedSegmentId = (
+      (
+        Number.isFinite(clipEditorState.markerMs)
+          ? clipSegmentAt(clipEditorState.markerMs)?.id
+          : null
+      )
+      || merged[0].id
+    );
+  }
+};
+
+const reconcileClipCoverAfterCut = ({ showNotice = true } = {}) => {
+  if (
+    !clipEditorState
+    || !Number.isFinite(clipEditorState.coverTimestampMs)
+    || clipTimeIsKept(clipEditorState.coverTimestampMs)
+  ) return;
+  clipEditorState.coverTimestampMs = null;
+  clipEditorState.coverPreviewing = false;
+  clipEditorState.coverReturnMs = null;
+  if (showNotice && clipCoverEnabled?.checked) {
+    clipEditorState.notice = t("coverFrameRemovedByCut");
+  }
+};
+
+const selectClipSegment = (segmentID, { seek = true } = {}) => {
+  if (!clipEditorState) return;
+  const segment = clipEditorState.segments.find(
+    (item) => item.id === segmentID
+  );
+  if (!segment) return;
+  clipEditorState.selectedSegmentId = segment.id;
+  if (seek) seekClipPreview(segment.startMs);
+  updateClipRangeUI({ renderPreview: true });
+};
+
+const renderClipSegments = () => {
+  if (!clipEditorState) return;
+  const segments = clipEditorState.segments || [];
+  const selected = selectedClipSegment();
+  const keptRanges = clipKeptRanges();
+  const deletedCount = segments.filter((segment) => !segment.kept).length;
+  if (clipCutSummary) {
+    clipCutSummary.textContent = t("clipCutSummary", {
+      duration: formatFineClock(clipKeptDurationMs()),
+      kept: keptRanges.length,
+      deleted: deletedCount
+    });
+  }
+  if (clipSplitAtMarker) {
+    clipSplitAtMarker.disabled = !clipSplitCandidate();
+  }
+  if (clipToggleSegment) {
+    const onlyKeptSegment = (
+      selected?.kept
+      && segments.filter((segment) => segment.kept).length === 1
+    );
+    clipToggleSegment.disabled = !selected || onlyKeptSegment;
+    clipToggleSegment.textContent = selected?.kept
+      ? t("deleteSelectedSegment")
+      : t("restoreSelectedSegment");
+  }
+
+  const bindSelection = (element, segment) => {
+    element.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectClipSegment(segment.id);
+    });
+  };
+
+  if (clipSegmentTrack) {
+    const fragment = document.createDocumentFragment();
+    for (const [index, segment] of segments.entries()) {
+      const block = document.createElement("span");
+      block.className = "clip-segment-block";
+      block.setAttribute("aria-hidden", "true");
+      block.classList.toggle("is-deleted", !segment.kept);
+      block.classList.toggle("is-selected", segment.id === selected?.id);
+      block.style.left = `${clipPercent(segment.startMs)}%`;
+      block.style.width = `${Math.max(
+        .08,
+        clipPercent(segment.endMs) - clipPercent(segment.startMs)
+      )}%`;
+      block.setAttribute(
+        "title",
+        t(segment.kept ? "keptSegmentLabel" : "deletedSegmentLabel", {
+          index: index + 1,
+          start: formatFineClock(segment.startMs),
+          end: formatFineClock(segment.endMs)
+        })
+      );
+      bindSelection(block, segment);
+      fragment.append(block);
+    }
+    clipSegmentTrack.replaceChildren(fragment);
+  }
+
+  if (clipSegmentList) {
+    const fragment = document.createDocumentFragment();
+    for (const [index, segment] of segments.entries()) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "clip-segment-card";
+      card.classList.toggle("is-deleted", !segment.kept);
+      card.classList.toggle("is-selected", segment.id === selected?.id);
+      const number = document.createElement("strong");
+      number.textContent = String(index + 1).padStart(2, "0");
+      const range = document.createElement("span");
+      range.textContent = (
+        `${formatFineClock(segment.startMs)}–${formatFineClock(segment.endMs)}`
+      );
+      const state = document.createElement("small");
+      state.textContent = t(
+        segment.kept ? "clipSegmentKept" : "clipSegmentDeleted"
+      );
+      card.append(number, range, state);
+      bindSelection(card, segment);
+      fragment.append(card);
+    }
+    clipSegmentList.replaceChildren(fragment);
+  }
+};
 
 const normalizeClipColor = (value, fallback) => {
   const normalized = String(value || "").trim().toUpperCase();
@@ -550,19 +836,16 @@ const applyClipOutputLayout = ({ resetRequest = true } = {}) => {
 
 const currentClipCoverFrameMs = () => {
   if (!clipEditorState) return null;
-  const maximum = Math.max(
-    clipEditorState.startMs,
-    clipEditorState.endMs - 100
-  );
   const current = (
     clipPreviewPlayer?.readyState >= 1
     && Number.isFinite(clipPreviewPlayer.currentTime)
   )
     ? clipPreviewPlayer.currentTime * 1000
     : clipEditorState.startMs;
-  return Math.round(
-    Math.max(clipEditorState.startMs, Math.min(current, maximum)) / 100
-  ) * 100;
+  const keptFrameMs = nearestClipKeptFrameMs(current);
+  return Number.isFinite(keptFrameMs)
+    ? Math.round(keptFrameMs / 100) * 100
+    : null;
 };
 
 const renderClipCoverState = () => {
@@ -663,6 +946,14 @@ const captureClipCoverFrame = () => {
   if (clipCoverTitleInput && !clipCoverTitleValue()) {
     clipCoverTitleInput.value = clipEditorState.title;
   }
+  if (
+    Number.isFinite(clipEditorState.coverTimestampMs)
+    && clipPreviewPlayer?.readyState >= 1
+  ) {
+    clipPreviewPlayer.currentTime = (
+      clipEditorState.coverTimestampMs / 1000
+    );
+  }
   setClipCoverPreviewing(true);
 };
 
@@ -754,7 +1045,18 @@ const renderClipExports = () => {
       const copy = document.createElement("div");
       copy.className = "clip-export-copy";
       const title = document.createElement("strong");
-      title.textContent = `${formatFineClock(clip.start_ms)}–${formatFineClock(clip.end_ms)} · ${clipOverlayLabel(clip)}`;
+      const keptRangeCount = Math.max(
+        1,
+        Array.isArray(clip.kept_ranges) ? clip.kept_ranges.length : 1
+      );
+      title.textContent = (
+        `${formatFineClock(clip.start_ms)}–${formatFineClock(clip.end_ms)}`
+        + ` · ${t("clipExportDurationSummary", {
+          duration: formatFineClock(Number(clip.duration_ms) || 0),
+          count: keptRangeCount
+        })}`
+        + ` · ${clipOverlayLabel(clip)}`
+      );
       if (clip.subtitle_mode !== "off") {
         const landscape = clip.output_layout === "landscape";
         const textColor = landscape
@@ -837,16 +1139,27 @@ async function loadClipExports() {
 
 const clipValidationMessage = () => {
   if (!clipEditorState) return "";
+  const keptRanges = clipKeptRanges();
+  if (!keptRanges.length) {
+    return t("clipNoKeptSegments");
+  }
   if (
-    clipEditorState.startMs < clipEditorState.minMs
-    || clipEditorState.endMs > clipEditorState.maxMs
+    keptRanges[0].start_ms < clipEditorState.minMs
+    || keptRanges[keptRanges.length - 1].end_ms > clipEditorState.maxMs
   ) {
     return t("clipOutsideWindow");
   }
-  if (clipEditorState.endMs <= clipEditorState.startMs) {
+  if (keptRanges.some((clipRange) => (
+    clipRange.end_ms <= clipRange.start_ms
+  ))) {
     return t("clipInvalidRange");
   }
-  if (clipEditorState.endMs - clipEditorState.startMs > clipEditorState.maxDurationMs) {
+  if (keptRanges.length > CLIP_MAX_KEPT_RANGES) {
+    return t("clipTooManyKeptSegments", {
+      count: CLIP_MAX_KEPT_RANGES
+    });
+  }
+  if (clipKeptDurationMs() > clipEditorState.maxDurationMs) {
     return t("clipDurationTooLong", {
       minutes: Math.round(clipEditorState.maxDurationMs / 60000)
     });
@@ -874,8 +1187,7 @@ const clipValidationMessage = () => {
     }
     if (
       !Number.isFinite(clipEditorState.coverTimestampMs)
-      || clipEditorState.coverTimestampMs < clipEditorState.startMs
-      || clipEditorState.coverTimestampMs >= clipEditorState.endMs
+      || !clipTimeIsKept(clipEditorState.coverTimestampMs)
     ) {
       return t("coverFrameRequired");
     }
@@ -982,8 +1294,12 @@ const updateClipRangeUI = ({ renderPreview = false } = {}) => {
   if (clipWindowStart) clipWindowStart.textContent = formatFineClock(minMs);
   if (clipWindowEnd) clipWindowEnd.textContent = formatFineClock(maxMs);
   if (clipSelectedDuration) {
-    clipSelectedDuration.textContent = formatFineClock(endMs - startMs);
+    clipSelectedDuration.textContent = t("clipKeptDuration", {
+      duration: formatFineClock(clipKeptDurationMs()),
+      count: clipKeptRanges().length
+    });
   }
+  renderClipSegments();
   const error = clipValidationMessage();
   if (clipEditorError) {
     clipEditorError.textContent = error || clipEditorState.notice || "";
@@ -1016,6 +1332,8 @@ const setClipBoundary = (
   } = {}
 ) => {
   if (!clipEditorState || !Number.isFinite(Number(value))) return null;
+  const previousStartMs = clipEditorState.startMs;
+  const previousEndMs = clipEditorState.endMs;
   const rounded = Math.round(Number(value) / 100) * 100;
   let clamped = Math.max(
     clipEditorState.minMs,
@@ -1033,6 +1351,13 @@ const setClipBoundary = (
   if (invalidateSuggestion) clipSuggestionTokens[boundary] += 1;
   if (resetRequest) clipEditorState.requestId = null;
   if (clearNotice) clipEditorState.notice = "";
+  if (
+    previousStartMs !== clipEditorState.startMs
+    || previousEndMs !== clipEditorState.endMs
+  ) {
+    syncClipSegmentsToBounds();
+    reconcileClipCoverAfterCut();
+  }
   updateClipRangeUI({ renderPreview });
   return clamped;
 };
@@ -1358,6 +1683,10 @@ const pinClipTimelineMarker = (clientX) => {
     clipEditorState.minMs,
     Math.min(milliseconds, clipEditorState.maxMs)
   );
+  const markedSegment = clipSegmentAt(clipEditorState.markerMs);
+  if (markedSegment) {
+    clipEditorState.selectedSegmentId = markedSegment.id;
+  }
   for (const boundary of ["start", "end"]) {
     const value = clipEditorState[`${boundary}Ms`];
     if (
@@ -1373,6 +1702,77 @@ const pinClipTimelineMarker = (clientX) => {
   renderClipTimelineMarkedMarker(clipEditorState.markerMs);
   renderClipLyricPreview(clipEditorState.markerMs, { hovering: true });
   updateClipRangeUI();
+};
+
+const splitClipAtMarkedTime = () => {
+  if (!clipEditorState) return;
+  const candidate = clipSplitCandidate();
+  if (!candidate) {
+    clipEditorState.notice = t("clipSplitUnavailable");
+    updateClipRangeUI();
+    return;
+  }
+  const index = clipEditorState.segments.findIndex(
+    (segment) => segment.id === candidate.segment.id
+  );
+  if (index < 0) return;
+  const left = {
+    ...candidate.segment,
+    endMs: candidate.markerMs
+  };
+  const right = createClipSegment(
+    candidate.markerMs,
+    candidate.segment.endMs,
+    candidate.segment.kept,
+    true
+  );
+  clipEditorState.segments.splice(index, 1, left, right);
+  clipEditorState.selectedSegmentId = right.id;
+  clipEditorState.requestId = null;
+  clipEditorState.notice = t("clipSplitComplete", {
+    time: formatFineClock(candidate.markerMs)
+  });
+  updateClipRangeUI({ renderPreview: true });
+};
+
+const toggleSelectedClipSegment = () => {
+  if (!clipEditorState) return;
+  const segment = selectedClipSegment();
+  if (!segment) {
+    clipEditorState.notice = t("clipSelectSegmentFirst");
+    updateClipRangeUI();
+    return;
+  }
+  if (
+    segment.kept
+    && clipEditorState.segments.filter((item) => item.kept).length === 1
+  ) {
+    clipEditorState.notice = t("clipMustKeepOneSegment");
+    updateClipRangeUI();
+    return;
+  }
+  segment.kept = !segment.kept;
+  clipEditorState.requestId = null;
+  clipEditorState.notice = t(
+    segment.kept ? "clipSegmentRestoredNotice" : "clipSegmentDeletedNotice"
+  );
+  reconcileClipCoverAfterCut();
+  const currentMs = (
+    clipPreviewPlayer?.readyState >= 1
+    && Number.isFinite(clipPreviewPlayer.currentTime)
+  )
+    ? clipPreviewPlayer.currentTime * 1000
+    : null;
+  if (
+    !segment.kept
+    && currentMs !== null
+    && currentMs >= segment.startMs
+    && currentMs < segment.endMs
+  ) {
+    const nextFrameMs = nearestClipKeptFrameMs(currentMs);
+    if (Number.isFinite(nextFrameMs)) seekClipPreview(nextFrameMs);
+  }
+  updateClipRangeUI({ renderPreview: true });
 };
 
 const clipSnapThresholdForPixels = (
@@ -1707,35 +2107,39 @@ const renderClipLyricPreview = (
 const clipDanmakuStream = () => {
   if (!clipEditorState) return [];
   const entries = playbackTrack?.danmaku || [];
+  const keptRanges = clipKeptRanges();
   const cacheKey = [
-    clipEditorState.startMs,
-    clipEditorState.endMs,
+    keptRanges.map(
+      (clipRange) => `${clipRange.start_ms}-${clipRange.end_ms}`
+    ).join(","),
     entries.length,
     entries[entries.length - 1]?.timestamp_ms || 0
   ].join(":");
   if (clipEditorState.danmakuCacheKey === cacheKey) {
     return clipEditorState.danmakuStream;
   }
-  const startIndex = lowerBoundByTime(
-    entries,
-    clipEditorState.startMs,
-    "timestamp_ms"
-  );
-  const endIndex = lowerBoundByTime(
-    entries,
-    clipEditorState.endMs,
-    "timestamp_ms"
-  );
   const stream = [];
   let lastTimestamp = Number.NEGATIVE_INFINITY;
-  for (let index = startIndex; index < endIndex; index += 1) {
-    const entry = entries[index];
-    if (
-      entry.timestamp_ms - lastTimestamp < CLIP_DANMAKU_MIN_GAP_MS
-      || !String(entry.text || "").trim()
-    ) continue;
-    stream.push(entry);
-    lastTimestamp = entry.timestamp_ms;
+  for (const clipRange of keptRanges) {
+    const startIndex = lowerBoundByTime(
+      entries,
+      clipRange.start_ms,
+      "timestamp_ms"
+    );
+    const endIndex = lowerBoundByTime(
+      entries,
+      clipRange.end_ms,
+      "timestamp_ms"
+    );
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const entry = entries[index];
+      if (
+        entry.timestamp_ms - lastTimestamp < CLIP_DANMAKU_MIN_GAP_MS
+        || !String(entry.text || "").trim()
+      ) continue;
+      stream.push(entry);
+      lastTimestamp = entry.timestamp_ms;
+    }
   }
   clipEditorState.danmakuCacheKey = cacheKey;
   clipEditorState.danmakuStream = stream;
@@ -1840,7 +2244,9 @@ const renderClipPreview = () => {
     && Number.isFinite(clipPreviewPlayer.currentTime)
   )
     ? clipPreviewPlayer.currentTime * 1000
-    : clipEditorState.startMs;
+    : Number.isFinite(clipPendingSeekMs)
+      ? clipPendingSeekMs
+      : clipEditorState.startMs;
   if (
     milliseconds < clipEditorState.minMs
     || milliseconds > clipEditorState.maxMs
@@ -1849,6 +2255,8 @@ const renderClipPreview = () => {
   }
   renderClipCoverState();
   if (clipEditorState.coverPreviewing) {
+    clipPreviewStage?.classList.remove("is-deleted-frame");
+    if (clipPreviewCutNotice) clipPreviewCutNotice.hidden = true;
     if (clipPreviewSubtitles) clipPreviewSubtitles.hidden = true;
     if (clipPreviewDanmaku) {
       clipPreviewDanmaku.hidden = true;
@@ -1857,6 +2265,12 @@ const renderClipPreview = () => {
     }
     return;
   }
+  const deletedFrame = !clipTimeIsKept(
+    milliseconds,
+    { includeFinalEnd: true }
+  );
+  clipPreviewStage?.classList.toggle("is-deleted-frame", deletedFrame);
+  if (clipPreviewCutNotice) clipPreviewCutNotice.hidden = !deletedFrame;
   if (clipRangeControl) {
     clipRangeControl.style.setProperty(
       "--clip-preview-position",
@@ -1864,6 +2278,16 @@ const renderClipPreview = () => {
     );
   }
   if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = false;
+  if (deletedFrame) {
+    if (clipPreviewSubtitles) clipPreviewSubtitles.hidden = true;
+    if (clipPreviewDanmaku) {
+      clipPreviewDanmaku.hidden = true;
+      clipPreviewDanmaku.replaceChildren();
+      delete clipPreviewDanmaku.dataset.stackKey;
+    }
+    if (!clipLyricHovering) renderClipLyricPreview(milliseconds);
+    return;
+  }
   const mode = clipSubtitleMode?.value || "zh";
   const subtitle = mode === "off" ? null : clipSubtitleAt(milliseconds);
   if (clipPreviewSubtitles && clipPreviewZh && clipPreviewEn) {
@@ -1902,9 +2326,31 @@ const startClipPreviewClock = () => {
       clipPreviewFrame = null;
       return;
     }
-    if (clipPreviewPlayer.currentTime * 1000 >= clipEditorState.endMs) {
+    const keptRanges = clipKeptRanges();
+    if (!keptRanges.length) {
       clipPreviewPlayer.pause();
-      clipPreviewPlayer.currentTime = clipEditorState.endMs / 1000;
+      renderClipPreview();
+      clipPreviewFrame = null;
+      return;
+    }
+    const currentMs = clipPreviewPlayer.currentTime * 1000;
+    const currentRangeIndex = keptRanges.findIndex((clipRange) => (
+      currentMs >= clipRange.start_ms
+      && currentMs < clipRange.end_ms
+    ));
+    if (currentRangeIndex < 0) {
+      const nextRange = keptRanges.find(
+        (clipRange) => clipRange.start_ms > currentMs
+      );
+      if (nextRange) {
+        clipPreviewPlayer.currentTime = nextRange.start_ms / 1000;
+        renderClipPreview();
+        clipPreviewFrame = window.requestAnimationFrame(tick);
+        return;
+      }
+      const lastRange = keptRanges[keptRanges.length - 1];
+      clipPreviewPlayer.pause();
+      clipPreviewPlayer.currentTime = lastRange.end_ms / 1000;
       renderClipPreview();
       clipPreviewFrame = null;
       return;
@@ -1960,6 +2406,8 @@ const destroyClipPreview = () => {
   clipPendingSeekMs = null;
   clipPendingPlay = false;
   if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = true;
+  if (clipPreviewCutNotice) clipPreviewCutNotice.hidden = true;
+  clipPreviewStage?.classList.remove("is-deleted-frame");
 };
 
 const closeClipEditor = () => {
@@ -1981,6 +2429,8 @@ const openClipEditor = async (row, button) => {
     : mediaDurationMs > 0
     ? mediaDurationMs
     : aiEndMs + contextMs;
+  clipSegmentSequence = 0;
+  const initialSegment = createClipSegment(aiStartMs, aiEndMs);
   clipEditorState = {
     timelineIndex: Number(row.dataset.clipIndex),
     title: row.dataset.clipTitle || "",
@@ -1992,6 +2442,8 @@ const openClipEditor = async (row, button) => {
     snapThresholdMs: Number(clipEditor.dataset.snapThresholdMs || 1000),
     startMs: aiStartMs,
     endMs: aiEndMs,
+    segments: [initialSegment],
+    selectedSegmentId: initialSegment.id,
     markerMs: null,
     coverEnabled: false,
     coverTimestampMs: null,
@@ -2160,16 +2612,27 @@ clipResetRange?.addEventListener("click", () => {
   clipSuggestionTokens.end += 1;
   clipEditorState.startMs = clipEditorState.aiStartMs;
   clipEditorState.endMs = clipEditorState.aiEndMs;
+  const initialSegment = createClipSegment(
+    clipEditorState.aiStartMs,
+    clipEditorState.aiEndMs
+  );
+  clipEditorState.segments = [initialSegment];
+  clipEditorState.selectedSegmentId = initialSegment.id;
+  clipEditorState.markerMs = null;
   clipEditorState.startSource = "manual";
   clipEditorState.endSource = "manual";
   clipEditorState.requestId = null;
   clipEditorState.notice = "";
+  reconcileClipCoverAfterCut();
   updateClipRangeUI();
   seekClipPreview(clipEditorState.startMs);
   scrollClipTimelineTo(
     (clipEditorState.startMs + clipEditorState.endMs) / 2
   );
 });
+
+clipSplitAtMarker?.addEventListener("click", splitClipAtMarkedTime);
+clipToggleSegment?.addEventListener("click", toggleSelectedClipSegment);
 
 clipSubtitleMode?.addEventListener("change", () => {
   if (clipEditorState) clipEditorState.requestId = null;
@@ -2275,6 +2738,16 @@ clipPreviewPlayer?.addEventListener("play", () => {
     clipEditorState.coverReturnMs = null;
     renderClipCoverState();
   }
+  const keptRanges = clipKeptRanges();
+  if (clipEditorState && keptRanges.length) {
+    const currentMs = clipPreviewPlayer.currentTime * 1000;
+    if (!clipTimeIsKept(currentMs)) {
+      const nextRange = keptRanges.find(
+        (clipRange) => clipRange.start_ms >= currentMs
+      ) || keptRanges[0];
+      clipPreviewPlayer.currentTime = nextRange.start_ms / 1000;
+    }
+  }
   startClipPreviewClock();
 });
 clipPreviewPlayer?.addEventListener("pause", () => {
@@ -2289,13 +2762,19 @@ clipPreviewPlayer?.addEventListener("error", () => {
 });
 clipPreviewSelection?.addEventListener("click", () => {
   if (!clipEditorState || !clipPreviewPlayer) return;
+  const keptRanges = clipKeptRanges();
+  if (!keptRanges.length) {
+    clipEditorState.notice = t("clipNoKeptSegments");
+    updateClipRangeUI();
+    return;
+  }
   if (clipEditorState.coverPreviewing) {
     clipEditorState.coverPreviewing = false;
     clipEditorState.coverReturnMs = null;
     renderClipCoverState();
   }
   const seekAndPlay = () => {
-    clipPreviewPlayer.currentTime = clipEditorState.startMs / 1000;
+    clipPreviewPlayer.currentTime = keptRanges[0].start_ms / 1000;
     clipPreviewPlayer.play().catch(() => {
       if (clipEditorError) clipEditorError.textContent = t("clipPreviewFailed");
     });
@@ -2303,7 +2782,7 @@ clipPreviewSelection?.addEventListener("click", () => {
   if (clipPreviewPlayer.readyState >= 1) {
     seekAndPlay();
   } else {
-    clipPendingSeekMs = clipEditorState.startMs;
+    clipPendingSeekMs = keptRanges[0].start_ms;
     clipPendingPlay = true;
     if (clipPreviewUsesNativeHls) clipPreviewPlayer.load();
   }
@@ -2329,6 +2808,8 @@ clipEditor?.addEventListener("close", () => {
   clipPreviewStage?.classList.remove("is-cover-preview");
   if (clipPreviewPlayer) clipPreviewPlayer.controls = true;
   clipTimelineCues?.replaceChildren();
+  clipSegmentTrack?.replaceChildren();
+  clipSegmentList?.replaceChildren();
   destroyClipPreview();
   clipEditorState = null;
   clipSuggestionTokens.start += 1;
@@ -2365,6 +2846,7 @@ clipEditorSubmit?.addEventListener("click", async () => {
     backgroundColor,
     fontFamily
   } = clipStyleValues();
+  const keptRanges = clipKeptRanges();
   try {
     const response = await apiFetch(
       `/api/jobs/${encodeURIComponent(jobHero.dataset.jobId)}/clip-exports`,
@@ -2374,8 +2856,9 @@ clipEditorSubmit?.addEventListener("click", async () => {
         body: JSON.stringify({
           request_id: clipEditorState.requestId,
           timeline_index: clipEditorState.timelineIndex,
-          start_ms: clipEditorState.startMs,
-          end_ms: clipEditorState.endMs,
+          start_ms: keptRanges[0].start_ms,
+          end_ms: keptRanges[keptRanges.length - 1].end_ms,
+          kept_ranges: keptRanges,
           subtitle_mode: clipSubtitleMode?.value || "zh",
           include_danmaku: Boolean(clipDanmakuEnabled?.checked),
           subtitle_font_scale: fontScale,

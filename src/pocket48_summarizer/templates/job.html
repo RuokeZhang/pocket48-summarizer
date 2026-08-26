@@ -287,6 +287,12 @@
                 hidden
               ></div>
               <div
+                id="clip-preview-cut-notice"
+                class="clip-preview-cut-notice"
+                hidden
+                data-i18n="clipDeletedPreview"
+              >此片段不会出现在导出视频中</div>
+              <div
                 id="clip-cover-preview"
                 class="clip-cover-preview"
                 data-cover-style="scrim"
@@ -404,6 +410,10 @@
                   <div id="clip-ai-range" class="clip-ai-range"></div>
                   <div id="clip-selection" class="clip-selection"></div>
                   <div
+                    id="clip-segment-track"
+                    class="clip-segment-track"
+                  ></div>
+                  <div
                     id="clip-preview-playhead"
                     class="clip-preview-playhead"
                     hidden
@@ -464,6 +474,42 @@
               class="clip-keyboard-hint"
               data-i18n="clipKeyboardHint"
             >聚焦边界后用 ←/→ 微调 0.1 秒，按住 Shift 调整 1 秒。</div>
+
+            <section
+              id="clip-cut-panel"
+              class="clip-cut-panel"
+              aria-labelledby="clip-cut-title"
+            >
+              <header class="clip-cut-heading">
+                <div>
+                  <strong id="clip-cut-title" data-i18n="manualCutEditing">手动删减片段</strong>
+                  <small data-i18n="manualCutEditingHint">先单击时间轴留下标记，再分割并删除不需要的片段；导出时会按原顺序自动拼接。</small>
+                </div>
+                <output id="clip-cut-summary"></output>
+              </header>
+              <div class="clip-cut-actions">
+                <button
+                  id="clip-split-at-marker"
+                  class="secondary-button"
+                  type="button"
+                  data-i18n="splitAtMarker"
+                >在标记处分割</button>
+                <button
+                  id="clip-toggle-segment"
+                  class="secondary-button"
+                  type="button"
+                  disabled
+                  data-i18n="deleteSelectedSegment"
+                >删除选中片段</button>
+              </div>
+              <div
+                id="clip-segment-list"
+                class="clip-segment-list"
+                role="group"
+                aria-label="剪辑片段"
+                data-i18n-aria-label="clipSegments"
+              ></div>
+            </section>
 
             <div class="clip-option-grid">
               <label class="toggle-control">

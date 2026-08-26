@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from pocket48_summarizer.app import create_app
@@ -5,6 +6,7 @@ from pocket48_summarizer.auth import AuthRepository, hash_password
 from pocket48_summarizer.media.boundaries import BoundarySuggestion
 from pocket48_summarizer.media.clips import ClipState
 from pocket48_summarizer.models import (
+    ClipRange,
     DanmakuEntry,
     DanmakuPeak,
     DanmakuPeakSummary,
@@ -49,6 +51,9 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
     assert payload.subtitle_background_color == "#EBE9E1"
     assert payload.output_layout == "portrait"
     assert payload.subtitle_font_family == "wenkai"
+    assert payload.kept_ranges == [
+        ClipRange(start_ms=1000, end_ms=5000)
+    ]
 
     landscape = CreateClipExportRequest(
         request_id="request-landscape-style",
@@ -62,12 +67,29 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
     )
     assert landscape.output_layout == "landscape"
 
+    with pytest.raises(ValueError, match="kept range"):
+        CreateClipExportRequest(
+            request_id="request-cover-deleted",
+            timeline_index=0,
+            start_ms=1000,
+            end_ms=9000,
+            kept_ranges=[
+                ClipRange(start_ms=1000, end_ms=3000),
+                ClipRange(start_ms=6000, end_ms=9000),
+            ],
+            subtitle_mode="off",
+            cover_enabled=True,
+            cover_timestamp_ms=4500,
+            cover_title="已删除画面",
+        )
+
 
 class DummyClipper:
     def __init__(self, output_path, repository=None):
         self.state = ClipState("completed", output_path)
         self.started_with = None
         self.started_export_with = None
+        self.started_exports = []
         self.repository = repository
 
     def start(self, **kwargs):
@@ -79,8 +101,9 @@ class DummyClipper:
 
     def start_export(self, **kwargs):
         self.started_export_with = kwargs
+        self.started_exports.append(kwargs)
         record, _ = self.repository.begin_video_clip_export(
-            clip_id="clip-export-1",
+            clip_id=f"clip-export-{len(self.started_exports)}",
             job_id=kwargs["job_id"],
             timeline_index=kwargs["timeline_index"],
             timeline_title=kwargs["timeline_title"],
@@ -88,6 +111,7 @@ class DummyClipper:
             request_id=kwargs["request_id"],
             start_ms=kwargs["start_ms"],
             end_ms=kwargs["end_ms"],
+            kept_ranges=kwargs["kept_ranges"],
             subtitle_mode=kwargs["subtitle_mode"],
             include_danmaku=kwargs["include_danmaku"],
             subtitle_font_scale=kwargs["subtitle_font_scale"],
@@ -370,6 +394,11 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'id="clip-lyric-next-2"' in page.text
     assert 'id="clip-hover-marker"' in page.text
     assert 'id="clip-marked-marker"' in page.text
+    assert 'id="clip-segment-track"' in page.text
+    assert 'id="clip-split-at-marker"' in page.text
+    assert 'id="clip-toggle-segment"' in page.text
+    assert 'id="clip-segment-list"' in page.text
+    assert 'id="clip-preview-cut-notice"' in page.text
     assert 'id="clip-marker-time"' not in page.text
     assert 'id="clip-subtitle-font-scale"' in page.text
     assert 'value="100"' in page.text
@@ -408,7 +437,7 @@ def test_configurable_clip_export_routes_preserve_versions(
     repository.set_media_details(
         job.id,
         "https://idol-vod.48.cn/path/replay.m3u8",
-        600_000,
+        1_200_000,
     )
     repository.replace_transcript(
         job.id,
@@ -539,6 +568,36 @@ def test_configurable_clip_export_routes_preserve_versions(
             },
             headers=csrf_headers(alice),
         )
+        cut_created = alice.post(
+            f"/api/jobs/{job.id}/clip-exports",
+            json={
+                "request_id": "request-cut-clip",
+                "timeline_index": 0,
+                "start_ms": 30_000,
+                "end_ms": 60_000,
+                "kept_ranges": [
+                    {"start_ms": 30_000, "end_ms": 40_000},
+                    {"start_ms": 50_000, "end_ms": 60_000},
+                ],
+                "subtitle_mode": "zh",
+            },
+            headers=csrf_headers(alice),
+        )
+        wide_cut_created = alice.post(
+            f"/api/jobs/{job.id}/clip-exports",
+            json={
+                "request_id": "request-wide-cut-clip",
+                "timeline_index": 0,
+                "start_ms": 30_000,
+                "end_ms": 660_000,
+                "kept_ranges": [
+                    {"start_ms": 30_000, "end_ms": 40_000},
+                    {"start_ms": 650_000, "end_ms": 660_000},
+                ],
+                "subtitle_mode": "off",
+            },
+            headers=csrf_headers(alice),
+        )
 
     newer, _ = repository.begin_video_clip_export(
         clip_id="clip-export-failed",
@@ -587,21 +646,39 @@ def test_configurable_clip_export_routes_preserve_versions(
     assert created.json()["cover_style"] == "badge"
     assert created.json()["cover_duration_ms"] == 1500
     assert created.json()["duration_ms"] == 32_150
-    assert clipper.started_export_with["start_ms"] == 29_850
-    assert clipper.started_export_with["subtitle_font_scale"] == 125
-    assert clipper.started_export_with["output_layout"] == "landscape"
-    assert clipper.started_export_with["subtitle_font_family"] == "serif"
-    assert clipper.started_export_with["cover_timestamp_ms"] == 45_000
-    assert clipper.started_export_with["cover_title"] == "灯光亮起时"
+    first_started = clipper.started_exports[0]
+    assert first_started["start_ms"] == 29_850
+    assert first_started["subtitle_font_scale"] == 125
+    assert first_started["output_layout"] == "landscape"
+    assert first_started["subtitle_font_family"] == "serif"
+    assert first_started["cover_timestamp_ms"] == 45_000
+    assert first_started["cover_title"] == "灯光亮起时"
+    cut_started = next(
+        item
+        for item in clipper.started_exports
+        if item["request_id"] == "request-cut-clip"
+    )
+    assert cut_started["kept_ranges"] == [
+        ClipRange(start_ms=30_000, end_ms=40_000),
+        ClipRange(start_ms=50_000, end_ms=60_000),
+    ]
     assert low_contrast.status_code == 422
     assert english_blocked.status_code == 409
     assert invalid_cover.status_code == 422
+    assert cut_created.status_code == 200
+    assert cut_created.json()["kept_ranges"] == [
+        {"start_ms": 30_000, "end_ms": 40_000},
+        {"start_ms": 50_000, "end_ms": 60_000},
+    ]
+    assert cut_created.json()["duration_ms"] == 20_000
+    assert wide_cut_created.status_code == 200
+    assert wide_cut_created.json()["duration_ms"] == 20_000
     assert (
         english_blocked.json()["error"]["code"]
         == "clip_english_subtitles_not_ready"
     )
     assert listed.status_code == 200
-    assert len(listed.json()["clips"]) == 2
+    assert len(listed.json()["clips"]) == 4
     assert status.json()["id"] == "clip-export-1"
     assert download.status_code == 303
     assert download.headers["location"].startswith("https://oss.example/")
@@ -1213,15 +1290,17 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260825-15" in page.text
-    assert "styles.css?v=20260825-21" in page.text
-    assert "app.js?v=20260826-16" in page.text
+    assert "i18n.js?v=20260826-16" in page.text
+    assert "styles.css?v=20260826-22" in page.text
+    assert "app.js?v=20260826-17" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text
     assert "(prefers-reduced-motion: reduce)" in styles.text
     assert ".clip-timeline-viewport" in styles.text
     assert ".clip-boundary-handle" in styles.text
+    assert ".clip-segment-block" in styles.text
+    assert ".clip-cut-panel" in styles.text
     assert ".clip-lyric-preview" in styles.text
     assert ".clip-style-panel" in styles.text
     assert ".clip-output-layout" in styles.text
@@ -1229,6 +1308,8 @@ def test_playback_track_is_public_and_user_can_request_translation(
         styles.text
     )
     assert ".clip-preview-stage.is-landscape-layout" in styles.text
+    assert "kept_ranges: keptRanges" in javascript.text
+    assert "splitClipAtMarkedTime" in javascript.text
     assert "container-type: size" in styles.text
     assert "padding: 1.11cqh .73cqw" in styles.text
     assert "font-size: 2.04cqh" in styles.text

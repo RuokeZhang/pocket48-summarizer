@@ -707,6 +707,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     "timeline timeline"
     "window window"
     "keyboard keyboard"
+    "cuts cuts"
     "lyrics style"
     "options options"
     "cover cover"
@@ -765,6 +766,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .clip-editor.is-landscape-layout .clip-keyboard-hint {
   grid-area: keyboard;
+}
+.clip-editor.is-landscape-layout .clip-cut-panel {
+  grid-area: cuts;
 }
 .clip-editor.is-landscape-layout .clip-lyric-preview {
   display: grid;
@@ -877,6 +881,25 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .clip-preview-subtitles.is-with-danmaku {
   right: 44%;
+}
+.clip-preview-cut-notice {
+  position: absolute;
+  z-index: 4;
+  right: 50%;
+  bottom: 18px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 143, 178, .5);
+  border-radius: 999px;
+  background: rgba(61, 17, 31, .88);
+  color: #ffd4e0;
+  font-size: 12px;
+  font-weight: 800;
+  pointer-events: none;
+  transform: translateX(50%);
+}
+.clip-preview-stage.is-deleted-frame video {
+  opacity: .62;
+  filter: saturate(.7);
 }
 .clip-preview-subtitles p {
   width: fit-content;
@@ -1406,6 +1429,49 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   );
   box-shadow: inset 0 0 16px rgba(255, 82, 139, .12);
 }
+.clip-segment-track {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.clip-segment-block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid rgba(8, 10, 15, .72);
+  border-left: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 0;
+  background: rgba(255, 116, 160, .34);
+  cursor: pointer;
+}
+.clip-segment-block.is-deleted {
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(69, 73, 84, .72) 0,
+      rgba(69, 73, 84, .72) 5px,
+      rgba(30, 33, 41, .82) 5px,
+      rgba(30, 33, 41, .82) 10px
+    );
+  box-shadow: inset 0 0 0 1px rgba(255, 120, 148, .18);
+  opacity: .92;
+}
+.clip-segment-block.is-selected {
+  z-index: 1;
+  box-shadow:
+    inset 0 0 0 2px #ffd0de,
+    0 0 10px rgba(255, 109, 157, .4);
+}
+.clip-segment-block:focus-visible {
+  z-index: 2;
+  outline: 2px solid #fff1f5;
+  outline-offset: -3px;
+}
 .clip-boundary-handle {
   position: absolute;
   z-index: 7;
@@ -1547,6 +1613,98 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   color: #767f92;
   font-size: 10px;
   line-height: 1.4;
+}
+.clip-cut-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #303746;
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(184, 50, 91, .1), transparent 46%),
+    #11151d;
+}
+.clip-cut-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.clip-cut-heading strong,
+.clip-cut-heading small {
+  display: block;
+}
+.clip-cut-heading small {
+  max-width: 620px;
+  margin-top: 3px;
+  color: #858da0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.clip-cut-heading output {
+  flex: none;
+  color: #ffacc4;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.clip-cut-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.clip-cut-actions button {
+  min-height: 40px;
+}
+.clip-segment-list {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 2px 1px 5px;
+  scrollbar-color: #525a6d transparent;
+  scrollbar-width: thin;
+}
+.clip-segment-card {
+  display: grid;
+  min-width: 200px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 3px 7px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #3a4150;
+  border-radius: 10px;
+  background: #171b24;
+  color: #e2e5ed;
+  text-align: left;
+}
+.clip-segment-card strong {
+  grid-row: 1 / 3;
+  color: #ff9fba;
+  font-size: 12px;
+}
+.clip-segment-card span {
+  overflow: hidden;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-segment-card small {
+  color: #8ee7cb;
+  font-size: 9px;
+}
+.clip-segment-card.is-deleted {
+  border-color: #4b4f5a;
+  background: #20232a;
+  color: #8d94a3;
+}
+.clip-segment-card.is-deleted strong,
+.clip-segment-card.is-deleted small {
+  color: #ff829f;
+}
+.clip-segment-card.is-selected {
+  border-color: #ff9fba;
+  box-shadow: 0 0 0 2px rgba(255, 109, 157, .14);
 }
 .clip-option-grid {
   display: grid;
@@ -2039,6 +2197,19 @@ code { color: #d4c8ff; }
   .clip-option-grid,
   .clip-style-controls {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .clip-cut-heading {
+    display: grid;
+  }
+  .clip-cut-heading output {
+    white-space: normal;
+  }
+  .clip-cut-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .clip-cut-actions button {
+    min-height: 44px;
   }
   .clip-style-heading {
     align-items: stretch;

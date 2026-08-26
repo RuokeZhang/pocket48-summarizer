@@ -33,6 +33,7 @@ from .media.overlays import (
     subtitle_contrast_ratio,
 )
 from .models import (
+    ClipRange,
     FinalSummary,
     GlossaryTermType,
     JobRecord,
@@ -68,6 +69,11 @@ class CreateClipExportRequest(BaseModel):
     timeline_index: int = Field(ge=0)
     start_ms: int = Field(ge=0)
     end_ms: int = Field(ge=1)
+    kept_ranges: list[ClipRange] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=32,
+    )
     subtitle_mode: Literal["off", "zh", "en", "bilingual"]
     include_danmaku: bool = False
     subtitle_font_scale: int = Field(
@@ -107,6 +113,20 @@ class CreateClipExportRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_clip_style(self) -> CreateClipExportRequest:
+        ranges = self.kept_ranges or [
+            ClipRange(start_ms=self.start_ms, end_ms=self.end_ms)
+        ]
+        previous_end: int | None = None
+        for item in ranges:
+            if previous_end is not None and item.start_ms < previous_end:
+                raise ValueError("clip ranges must be ordered and non-overlapping")
+            previous_end = item.end_ms
+        if (
+            ranges[0].start_ms != self.start_ms
+            or ranges[-1].end_ms != self.end_ms
+        ):
+            raise ValueError("clip range bounds must match start and end")
+        self.kept_ranges = ranges
         if (
             self.subtitle_mode != "off"
             and self.output_layout == "portrait"
@@ -122,10 +142,14 @@ class CreateClipExportRequest(BaseModel):
                 raise ValueError("cover title is required")
             if (
                 self.cover_timestamp_ms is None
-                or self.cover_timestamp_ms < self.start_ms
-                or self.cover_timestamp_ms >= self.end_ms
+                or not any(
+                    item.start_ms
+                    <= self.cover_timestamp_ms
+                    < item.end_ms
+                    for item in ranges
+                )
             ):
-                raise ValueError("cover frame must be inside the clip range")
+                raise ValueError("cover frame must be inside a kept range")
         else:
             self.cover_timestamp_ms = None
             self.cover_title = ""
@@ -297,12 +321,62 @@ def validate_clip_range(
         )
 
 
+def validate_clip_ranges(
+    request: Request,
+    job: JobRecord,
+    item: TimelineItem,
+    ranges: list[ClipRange],
+) -> None:
+    if not ranges:
+        raise AppError(
+            "invalid_clip_range",
+            "至少需要保留一个视频片段",
+            False,
+        )
+    lower_bound, upper_bound = clip_editor_bounds(request, job, item)
+    previous_end: int | None = None
+    selected_duration_ms = 0
+    for clip_range in ranges:
+        if (
+            clip_range.start_ms < lower_bound
+            or clip_range.end_ms > upper_bound
+            or clip_range.end_ms <= clip_range.start_ms
+        ):
+            raise AppError(
+                "invalid_clip_range",
+                "剪辑范围超出当前时间线条目的可编辑窗口",
+                False,
+            )
+        if (
+            previous_end is not None
+            and clip_range.start_ms < previous_end
+        ):
+            raise AppError(
+                "invalid_clip_range",
+                "保留片段必须按原始时间排序且不能重叠",
+                False,
+            )
+        previous_end = clip_range.end_ms
+        selected_duration_ms += clip_range.end_ms - clip_range.start_ms
+    max_duration_ms = round(
+        request.app.state.settings.max_clip_minutes * 60 * 1000
+    )
+    if selected_duration_ms > max_duration_ms:
+        raise AppError(
+            "clip_too_long",
+            (
+                "单个视频片段最长 "
+                f"{request.app.state.settings.max_clip_minutes:g} 分钟"
+            ),
+            False,
+        )
+
+
 def validate_clip_subtitles(
     request: Request,
     job_id: str,
     *,
-    start_ms: int,
-    end_ms: int,
+    ranges: list[ClipRange],
     subtitle_mode: str,
 ) -> None:
     if subtitle_mode == "off":
@@ -311,7 +385,11 @@ def validate_clip_subtitles(
     selected = [
         segment
         for segment in repository.get_all_transcript(job_id)
-        if segment.end_ms > start_ms and segment.start_ms < end_ms
+        if any(
+            segment.end_ms > clip_range.start_ms
+            and segment.start_ms < clip_range.end_ms
+            for clip_range in ranges
+        )
     ]
     if not selected:
         raise AppError(
@@ -433,9 +511,14 @@ def clip_export_payload(
         "timeline_title": record.timeline_title,
         "start_ms": record.start_ms,
         "end_ms": record.end_ms,
+        "kept_ranges": [
+            item.model_dump() for item in record.kept_ranges
+        ],
         "duration_ms": (
-            record.end_ms
-            - record.start_ms
+            sum(
+                item.end_ms - item.start_ms
+                for item in record.kept_ranges
+            )
             + (COVER_DURATION_MS if record.cover_enabled else 0)
         ),
         "subtitle_mode": record.subtitle_mode,
@@ -974,14 +1057,16 @@ async def create_clip_export(
     job, item = timeline_clip_context(
         request, job_id, payload.timeline_index
     )
-    validate_clip_range(
-        request, job, item, payload.start_ms, payload.end_ms
+    validate_clip_ranges(
+        request,
+        job,
+        item,
+        payload.kept_ranges,
     )
     validate_clip_subtitles(
         request,
         job.id,
-        start_ms=payload.start_ms,
-        end_ms=payload.end_ms,
+        ranges=payload.kept_ranges,
         subtitle_mode=payload.subtitle_mode,
     )
     clipper = request.app.state.services.clipper
@@ -1008,6 +1093,7 @@ async def create_clip_export(
             manifest_url=job.media_url,
             start_ms=payload.start_ms,
             end_ms=payload.end_ms,
+            kept_ranges=payload.kept_ranges,
             subtitle_mode=payload.subtitle_mode,
             include_danmaku=payload.include_danmaku,
             subtitle_font_scale=payload.subtitle_font_scale,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class JobStatus(StrEnum):
@@ -279,6 +279,17 @@ class VideoClipRecord(BaseModel):
     completed_at: str | None = None
 
 
+class ClipRange(BaseModel):
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> ClipRange:
+        if self.end_ms <= self.start_ms:
+            raise ValueError("clip range end must be after start")
+        return self
+
+
 class VideoClipExportRecord(BaseModel):
     id: str
     job_id: str
@@ -288,6 +299,7 @@ class VideoClipExportRecord(BaseModel):
     request_id: str
     start_ms: int
     end_ms: int
+    kept_ranges: list[ClipRange]
     subtitle_mode: Literal["off", "zh", "en", "bilingual"]
     include_danmaku: bool
     subtitle_font_scale: int
