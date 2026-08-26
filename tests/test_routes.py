@@ -1215,7 +1215,7 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="history-forward"' in page.text
     assert "i18n.js?v=20260825-15" in page.text
     assert "styles.css?v=20260825-21" in page.text
-    assert "app.js?v=20260825-15" in page.text
+    assert "app.js?v=20260826-16" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text
@@ -1260,7 +1260,12 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "CLIP_DEFAULT_FONT_SCALE = 100" in javascript.text
     assert "CLIP_SUBTITLE_BASE_SCALE = 1.6" in javascript.text
     assert "captureClipCoverFrame" in javascript.text
+    assert "coverReturnMs" in javascript.text
     assert "cover_timestamp_ms" in javascript.text
+    assert (
+        "renderClipLyricPreview(clipEditorState.coverTimestampMs)"
+        not in javascript.text
+    )
     assert "clipMarkerTime" not in javascript.text
     assert "nearestClipMarker" in javascript.text
     assert 'locked?.kind === "sentence"' in javascript.text

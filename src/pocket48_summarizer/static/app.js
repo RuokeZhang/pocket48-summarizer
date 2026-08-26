@@ -611,28 +611,44 @@ const renderClipCoverState = () => {
   }
 };
 
-const setClipCoverPreviewing = (active, { seek = true } = {}) => {
+const setClipCoverPreviewing = (active) => {
   if (!clipEditorState) return;
   const enabled = clipCoverAvailable() && Boolean(clipCoverEnabled?.checked);
   if (active && enabled && !Number.isFinite(clipEditorState.coverTimestampMs)) {
     clipEditorState.coverTimestampMs = currentClipCoverFrameMs();
   }
-  clipEditorState.coverPreviewing = Boolean(
+  const wasPreviewing = clipEditorState.coverPreviewing;
+  const previewing = Boolean(
     active
     && enabled
     && Number.isFinite(clipEditorState.coverTimestampMs)
   );
-  if (clipEditorState.coverPreviewing && clipPreviewPlayer) {
+  if (previewing && !wasPreviewing) {
+    clipEditorState.coverReturnMs = currentClipCoverFrameMs();
+  }
+  clipEditorState.coverPreviewing = previewing;
+  if (previewing && clipPreviewPlayer) {
     clipPreviewPlayer.pause();
-    if (seek) {
-      if (clipPreviewPlayer.readyState >= 1) {
-        clipPreviewPlayer.currentTime = (
-          clipEditorState.coverTimestampMs / 1000
-        );
-      } else {
-        clipPendingSeekMs = clipEditorState.coverTimestampMs;
-      }
+    if (clipPreviewPlayer.readyState >= 1) {
+      clipPreviewPlayer.currentTime = (
+        clipEditorState.coverTimestampMs / 1000
+      );
+    } else {
+      clipPendingSeekMs = clipEditorState.coverTimestampMs;
     }
+  } else if (
+    wasPreviewing
+    && clipPreviewPlayer
+    && Number.isFinite(clipEditorState.coverReturnMs)
+  ) {
+    if (clipPreviewPlayer.readyState >= 1) {
+      clipPreviewPlayer.currentTime = (
+        clipEditorState.coverReturnMs / 1000
+      );
+    } else {
+      clipPendingSeekMs = clipEditorState.coverReturnMs;
+    }
+    clipEditorState.coverReturnMs = null;
   }
   renderClipCoverState();
   renderClipPreview();
@@ -1831,13 +1847,6 @@ const renderClipPreview = () => {
   ) {
     milliseconds = clipEditorState.startMs;
   }
-  if (clipRangeControl) {
-    clipRangeControl.style.setProperty(
-      "--clip-preview-position",
-      `${clipPercent(milliseconds)}%`
-    );
-  }
-  if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = false;
   renderClipCoverState();
   if (clipEditorState.coverPreviewing) {
     if (clipPreviewSubtitles) clipPreviewSubtitles.hidden = true;
@@ -1846,11 +1855,15 @@ const renderClipPreview = () => {
       clipPreviewDanmaku.replaceChildren();
       delete clipPreviewDanmaku.dataset.stackKey;
     }
-    if (!clipLyricHovering) {
-      renderClipLyricPreview(clipEditorState.coverTimestampMs);
-    }
     return;
   }
+  if (clipRangeControl) {
+    clipRangeControl.style.setProperty(
+      "--clip-preview-position",
+      `${clipPercent(milliseconds)}%`
+    );
+  }
+  if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = false;
   const mode = clipSubtitleMode?.value || "zh";
   const subtitle = mode === "off" ? null : clipSubtitleAt(milliseconds);
   if (clipPreviewSubtitles && clipPreviewZh && clipPreviewEn) {
@@ -1982,6 +1995,7 @@ const openClipEditor = async (row, button) => {
     markerMs: null,
     coverEnabled: false,
     coverTimestampMs: null,
+    coverReturnMs: null,
     coverPreviewing: false,
     danmakuCacheKey: "",
     danmakuStream: [],
@@ -2219,7 +2233,7 @@ clipCoverEnabled?.addEventListener("change", () => {
   if (clipCoverEnabled.checked) {
     captureClipCoverFrame();
   } else {
-    setClipCoverPreviewing(false, { seek: false });
+    setClipCoverPreviewing(false);
   }
   updateClipRangeUI();
 });
@@ -2258,6 +2272,7 @@ clipPreviewPlayer?.addEventListener("loadedmetadata", () => {
 clipPreviewPlayer?.addEventListener("play", () => {
   if (clipEditorState?.coverPreviewing) {
     clipEditorState.coverPreviewing = false;
+    clipEditorState.coverReturnMs = null;
     renderClipCoverState();
   }
   startClipPreviewClock();
@@ -2276,6 +2291,7 @@ clipPreviewSelection?.addEventListener("click", () => {
   if (!clipEditorState || !clipPreviewPlayer) return;
   if (clipEditorState.coverPreviewing) {
     clipEditorState.coverPreviewing = false;
+    clipEditorState.coverReturnMs = null;
     renderClipCoverState();
   }
   const seekAndPlay = () => {
