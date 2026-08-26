@@ -264,7 +264,7 @@ const clipEndHandleTime = document.querySelector("#clip-end-handle-time");
 const clipRawMarker = document.querySelector("#clip-raw-marker");
 const clipSnapMarker = document.querySelector("#clip-snap-marker");
 const clipHoverMarker = document.querySelector("#clip-hover-marker");
-const clipMarkerTime = document.querySelector("#clip-marker-time");
+const clipMarkedMarker = document.querySelector("#clip-marked-marker");
 const clipPreviewPlayhead = document.querySelector("#clip-preview-playhead");
 const clipZoomOut = document.querySelector("#clip-zoom-out");
 const clipZoomIn = document.querySelector("#clip-zoom-in");
@@ -334,7 +334,7 @@ const CLIP_AUTO_SCROLL_EDGE_PX = 52;
 const CLIP_AUTO_SCROLL_MAX_PX = 24;
 const CLIP_SUBTITLE_FONT_SCALE_MIN = 70;
 const CLIP_SUBTITLE_FONT_SCALE_MAX = 160;
-const CLIP_DEFAULT_FONT_SCALE = 100;
+const CLIP_DEFAULT_FONT_SCALE = 160;
 const CLIP_DEFAULT_FONT_FAMILY = "wenkai";
 const CLIP_DEFAULT_TEXT_COLOR = "#E43D12";
 const CLIP_DEFAULT_BACKGROUND_COLOR = "#EBE9E1";
@@ -538,7 +538,7 @@ const clipStyleLabel = (clip) => {
       serif: t("subtitleFontSerif"),
       sans: t("subtitleFontSans")
     }[clip.subtitle_font_family] || t("subtitleFontSans");
-    return `${font} · ${t("landscapeFixedPalette")} · ${Number(clip.subtitle_font_scale) || 100}%`;
+    return `${font} · ${t("landscapeFixedPalette")} · ${Number(clip.subtitle_font_scale) || CLIP_DEFAULT_FONT_SCALE}%`;
   }
   const textColor = normalizeClipColor(
     clip.subtitle_text_color,
@@ -551,7 +551,7 @@ const clipStyleLabel = (clip) => {
   const theme = clipUsesDefaultTheme(textColor, backgroundColor)
     ? t("vibrantCalmTheme")
     : t("customSubtitleTheme");
-  return `${theme} · ${Number(clip.subtitle_font_scale) || 100}%`;
+  return `${theme} · ${Number(clip.subtitle_font_scale) || CLIP_DEFAULT_FONT_SCALE}%`;
 };
 
 const clipServerMessage = (message) => (
@@ -800,11 +800,9 @@ const updateClipRangeUI = ({ renderPreview = false } = {}) => {
     );
   }
   if (Number.isFinite(clipEditorState.markerMs)) {
-    renderClipTimelineMarker(clipEditorState.markerMs, { marked: true });
-  } else if (!clipLyricHovering && clipHoverMarker) {
-    clipHoverMarker.hidden = true;
-    clipHoverMarker.classList.remove("is-marked");
-    delete clipHoverMarker.dataset.markerMs;
+    renderClipTimelineMarkedMarker(clipEditorState.markerMs);
+  } else if (clipMarkedMarker) {
+    clipMarkedMarker.hidden = true;
   }
   clipStartHandle?.classList.toggle(
     "is-active",
@@ -1101,33 +1099,37 @@ const clipTimeFromClientX = (clientX) => {
     + fraction * (clipEditorState.maxMs - clipEditorState.minMs);
 };
 
-const renderClipTimelineMarker = (milliseconds, { marked = false } = {}) => {
+const renderClipTimelineLine = (milliseconds, marker, positionProperty) => {
   if (
     !clipEditorState
     || !Number.isFinite(Number(milliseconds))
-    || !clipHoverMarker
+    || !marker
   ) return;
   const boundedMs = Math.max(
     clipEditorState.minMs,
     Math.min(Number(milliseconds), clipEditorState.maxMs)
   );
   clipRangeControl?.style.setProperty(
-    "--clip-hover-position",
+    positionProperty,
     `${clipPercent(boundedMs)}%`
   );
-  clipHoverMarker.hidden = false;
-  clipHoverMarker.classList.toggle("is-marked", marked);
-  if (marked) {
-    clipHoverMarker.dataset.markerMs = String(Math.round(boundedMs));
-  } else {
-    delete clipHoverMarker.dataset.markerMs;
-  }
-  if (clipMarkerTime) {
-    const formatted = formatFineClock(boundedMs);
-    clipMarkerTime.textContent = marked
-      ? t("clipMarkerLabel", { time: formatted })
-      : formatted;
-  }
+  marker.hidden = false;
+};
+
+const renderClipTimelineHoverMarker = (milliseconds) => {
+  renderClipTimelineLine(
+    milliseconds,
+    clipHoverMarker,
+    "--clip-hover-position"
+  );
+};
+
+const renderClipTimelineMarkedMarker = (milliseconds) => {
+  renderClipTimelineLine(
+    milliseconds,
+    clipMarkedMarker,
+    "--clip-marked-position"
+  );
 };
 
 const resetClipLyricHover = () => {
@@ -1140,12 +1142,11 @@ const resetClipLyricHover = () => {
     ? clipEditorState.markerMs
     : null;
   clipLyricHoverMs = markedMs;
+  if (clipHoverMarker) clipHoverMarker.hidden = true;
   if (markedMs !== null) {
-    renderClipTimelineMarker(markedMs, { marked: true });
-  } else if (clipHoverMarker) {
-    clipHoverMarker.hidden = true;
-    clipHoverMarker.classList.remove("is-marked");
-    delete clipHoverMarker.dataset.markerMs;
+    renderClipTimelineMarkedMarker(markedMs);
+  } else if (clipMarkedMarker) {
+    clipMarkedMarker.hidden = true;
   }
   const currentMs = (
     markedMs
@@ -1167,9 +1168,7 @@ const renderClipLyricHoverFrame = () => {
   const milliseconds = clipTimeFromClientX(clipLyricHoverClientX);
   clipLyricHoverMs = milliseconds;
   clipLyricHovering = true;
-  if (!Number.isFinite(clipEditorState.markerMs)) {
-    renderClipTimelineMarker(milliseconds);
-  }
+  renderClipTimelineHoverMarker(milliseconds);
   renderClipLyricPreview(milliseconds, { hovering: true });
 };
 
@@ -1200,9 +1199,10 @@ const pinClipTimelineMarker = (clientX) => {
     }
   }
   clipLyricHoverMs = clipEditorState.markerMs;
-  clipLyricHovering = false;
-  renderClipTimelineMarker(clipEditorState.markerMs, { marked: true });
-  renderClipLyricPreview(clipEditorState.markerMs, { hovering: false });
+  clipLyricHovering = true;
+  renderClipTimelineHoverMarker(clipEditorState.markerMs);
+  renderClipTimelineMarkedMarker(clipEditorState.markerMs);
+  renderClipLyricPreview(clipEditorState.markerMs, { hovering: true });
   updateClipRangeUI();
 };
 
@@ -1850,6 +1850,8 @@ const openClipEditor = async (row, button) => {
   updateClipEnglishOptions();
   if (clipRangeControl) clipRangeControl.style.width = "100%";
   if (clipTimelineViewport) clipTimelineViewport.scrollLeft = 0;
+  if (clipHoverMarker) clipHoverMarker.hidden = true;
+  if (clipMarkedMarker) clipMarkedMarker.hidden = true;
   clipEditor.showModal();
   updateClipRangeUI({ renderPreview: true });
   renderClipTimelineCues();
@@ -2088,11 +2090,8 @@ clipEditor?.addEventListener("close", () => {
   resetClipLyricHover();
   if (clipRawMarker) clipRawMarker.hidden = true;
   if (clipSnapMarker) clipSnapMarker.hidden = true;
-  if (clipHoverMarker) {
-    clipHoverMarker.hidden = true;
-    clipHoverMarker.classList.remove("is-marked");
-    delete clipHoverMarker.dataset.markerMs;
-  }
+  if (clipHoverMarker) clipHoverMarker.hidden = true;
+  if (clipMarkedMarker) clipMarkedMarker.hidden = true;
   clipTimelineCues?.replaceChildren();
   destroyClipPreview();
   clipEditorState = null;

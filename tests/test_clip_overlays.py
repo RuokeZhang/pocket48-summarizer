@@ -227,14 +227,17 @@ def test_landscape_overlay_places_content_in_side_panels():
     assert "PlayResY: 1080" in document.content
     assert "WrapStyle: 0" in document.content
     assert (
-        "Style: LandscapeSubtitleZh,LXGW WenKai,23,"
+        "Style: LandscapeSubtitleZh,LXGW WenKai,52,"
         "&H00123DE4"
         in document.content
     )
     assert (
-        "Style: LandscapeDanmaku,Noto Sans CJK SC,18,"
+        "Style: LandscapeDanmaku,Noto Sans CJK SC,31,"
         "&H00423A5B"
         in document.content
+    )
+    assert "Style: LandscapeDanmakuAuthor,Noto Sans CJK SC,27," in (
+        document.content
     )
     assert (
         "Style: LandscapeDanmakuBox,Noto Sans CJK SC,1,"
@@ -242,9 +245,9 @@ def test_landscape_overlay_places_content_in_side_panels():
         in document.content
     )
     assert "&H006D53D6" in document.content
-    assert r"\pos(1337,943)" in document.content
-    assert r"\pos(1348,952)" in document.content
-    assert r"\p1}m 18 0 l 500 0" in document.content
+    assert r"\pos(1337,926)" in document.content
+    assert r"\pos(1351,938)" in document.content
+    assert r"\p1}m 20 0 l 498 0" in document.content
     assert ",LandscapeSubtitleZh," in document.content
 
 
@@ -301,7 +304,7 @@ def test_landscape_overlay_maps_selectable_fonts(font_family, font_name):
         subtitle_font_family=font_family,
     )
 
-    assert f"Style: LandscapeSubtitleZh,{font_name},23," in document.content
+    assert f"Style: LandscapeSubtitleZh,{font_name},52," in document.content
 
 
 def test_landscape_overlay_wraps_long_subtitle_inside_left_panel():
@@ -327,12 +330,12 @@ def test_landscape_overlay_wraps_long_subtitle_inside_left_panel():
     )
 
     assert (
-        "Style: LandscapeSubtitleZh,LXGW WenKai,23,"
+        "Style: LandscapeSubtitleZh,LXGW WenKai,52,"
         "&H00123DE4,&H00123DE4,&H00000000,&H00000000,"
         "-1,0,0,0,100,100,0,0,1,0,0,4,72,1339,0,1"
         in document.content
     )
-    assert r"我最近已经在开始反思自己了，我要走这种\N不那种。" in (
+    assert r"我最近已经在开始反思自己\N了，我要走这种不那种。" in (
         document.content
     )
 
@@ -365,5 +368,33 @@ def test_landscape_danmaku_card_moves_by_new_bubble_height():
         output_layout="landscape",
     )
 
-    assert r"\move(1337,943,1337,871,0,220)" in document.content
-    assert r"\move(1348,952,1348,880,0,220)" in document.content
+    assert r"\move(1337,926,1337,835,0,220)" in document.content
+    assert r"\move(1351,938,1351,847,0,220)" in document.content
+
+
+def test_landscape_english_wrap_uses_browser_equivalent_width():
+    document = build_clip_overlay(
+        width=1920,
+        height=1080,
+        clip_start_ms=0,
+        clip_end_ms=3000,
+        subtitle_mode="bilingual",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=3000,
+                text="我已经开始反思自己了。",
+            )
+        ],
+        translations={1: "I have started reflecting on myself."},
+        danmaku=[],
+        output_layout="landscape",
+    )
+
+    assert (
+        r"{\rLandscapeSubtitleEn}I have started reflecting on myself."
+        in document.content
+    )

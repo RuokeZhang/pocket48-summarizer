@@ -26,6 +26,8 @@ from .layouts import (
     LANDSCAPE_DANMAKU_TEXT_COLOR,
     LANDSCAPE_DANMAKU_TEXT_GAP,
     LANDSCAPE_DANMAKU_WIDTH,
+    LANDSCAPE_LIBASS_DANMAKU_AUTHOR_SCALE,
+    LANDSCAPE_LIBASS_FONT_SCALE,
     LANDSCAPE_SUBTITLE_COLOR,
     LANDSCAPE_SUBTITLE_EN_SIZE,
     LANDSCAPE_SUBTITLE_LEFT,
@@ -43,7 +45,7 @@ DANMAKU_MAX_VISIBLE = 5
 DANMAKU_RISE_MS = 220
 SUBTITLE_FONT_SCALE_MIN = 70
 SUBTITLE_FONT_SCALE_MAX = 160
-DEFAULT_SUBTITLE_FONT_SCALE = 100
+DEFAULT_SUBTITLE_FONT_SCALE = 160
 DEFAULT_SUBTITLE_TEXT_COLOR = "#E43D12"
 DEFAULT_SUBTITLE_BACKGROUND_COLOR = "#EBE9E1"
 MIN_SUBTITLE_CONTRAST_RATIO = 3.0
@@ -197,7 +199,7 @@ def _subtitle_events(
         12,
         round(
             LANDSCAPE_SUBTITLE_WIDTH
-            / max(1, LANDSCAPE_SUBTITLE_EN_SIZE * scale * 0.58)
+            / max(1, LANDSCAPE_SUBTITLE_EN_SIZE * scale * 0.48)
         ),
     )
     for segment in selected:
@@ -277,6 +279,14 @@ def _danmaku_events(
     slot_step = max(48, round(height * 0.115))
     x = width - right_margin
     author_size = max(13, round(height * 0.016))
+    landscape_body_width = max(
+        8,
+        (
+            LANDSCAPE_DANMAKU_WIDTH
+            - 2 * LANDSCAPE_DANMAKU_PADDING_X
+        )
+        // LANDSCAPE_DANMAKU_BODY_SIZE,
+    )
     for entry in selected:
         relative_ms = entry.timestamp_ms - clip_start_ms
         if relative_ms - last_accepted_ms < DANMAKU_MIN_GAP_MS:
@@ -284,7 +294,7 @@ def _danmaku_events(
         author = _ass_text(_truncate(_plain_text(entry.author), 18))
         body = _wrapped_ass_text(
             _plain_text(entry.text),
-            width=26 if landscape else 18,
+            width=landscape_body_width if landscape else 18,
             lines=3,
         )
         if not body:
@@ -509,11 +519,26 @@ def _ass_header(
     danmaku_size = max(15, round(height * 0.020))
     landscape_zh_size = max(
         16,
-        round(LANDSCAPE_SUBTITLE_ZH_SIZE * scale),
+        round(
+            LANDSCAPE_SUBTITLE_ZH_SIZE
+            * scale
+            * LANDSCAPE_LIBASS_FONT_SCALE
+        ),
     )
     landscape_en_size = max(
         13,
-        round(LANDSCAPE_SUBTITLE_EN_SIZE * scale),
+        round(
+            LANDSCAPE_SUBTITLE_EN_SIZE
+            * scale
+            * LANDSCAPE_LIBASS_FONT_SCALE
+        ),
+    )
+    landscape_danmaku_size = round(
+        LANDSCAPE_DANMAKU_BODY_SIZE * LANDSCAPE_LIBASS_FONT_SCALE
+    )
+    landscape_danmaku_author_size = round(
+        LANDSCAPE_DANMAKU_AUTHOR_SIZE
+        * LANDSCAPE_LIBASS_DANMAKU_AUTHOR_SCALE
     )
     margin_v = max(12, round(height * 0.025))
     margin_l = max(12, round(width * 0.04))
@@ -549,8 +574,8 @@ Style: SubtitleEn,{font_name},{en_size},{text_color},{text_color},{background_co
 Style: Danmaku,{font_name},{danmaku_size},&H00FFFFFF,&H00FFFFFF,&H40000000,&HA8000000,0,0,0,0,100,100,0,0,3,1,1,9,0,0,0,1
 Style: LandscapeSubtitleZh,{landscape_font_name},{landscape_zh_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,4,{landscape_margin_l},{landscape_margin_r},0,1
 Style: LandscapeSubtitleEn,{landscape_font_name},{landscape_en_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,4,{landscape_margin_l},{landscape_margin_r},0,1
-Style: LandscapeDanmaku,{font_name},{LANDSCAPE_DANMAKU_BODY_SIZE},{landscape_danmaku_text},{landscape_danmaku_text},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-Style: LandscapeDanmakuAuthor,{font_name},{LANDSCAPE_DANMAKU_AUTHOR_SIZE},{landscape_danmaku_author},{landscape_danmaku_author},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: LandscapeDanmaku,{font_name},{landscape_danmaku_size},{landscape_danmaku_text},{landscape_danmaku_text},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: LandscapeDanmakuAuthor,{font_name},{landscape_danmaku_author_size},{landscape_danmaku_author},{landscape_danmaku_author},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: LandscapeDanmakuBox,{font_name},1,{landscape_danmaku_background},{landscape_danmaku_background},{landscape_danmaku_border},{landscape_danmaku_box_shadow},0,0,0,0,100,100,0,0,1,2,3,7,0,0,0,1
 
 [Events]

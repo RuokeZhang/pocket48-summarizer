@@ -44,7 +44,7 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
         subtitle_mode="zh",
     )
 
-    assert payload.subtitle_font_scale == 100
+    assert payload.subtitle_font_scale == 160
     assert payload.subtitle_text_color == "#E43D12"
     assert payload.subtitle_background_color == "#EBE9E1"
     assert payload.output_layout == "portrait"
@@ -365,8 +365,11 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'id="clip-lyric-previous-2"' in page.text
     assert 'id="clip-lyric-next-2"' in page.text
     assert 'id="clip-hover-marker"' in page.text
-    assert 'id="clip-marker-time"' in page.text
+    assert 'id="clip-marked-marker"' in page.text
+    assert 'id="clip-marker-time"' not in page.text
     assert 'id="clip-subtitle-font-scale"' in page.text
+    assert 'value="160"' in page.text
+    assert 'id="clip-subtitle-font-scale-value">160%</output>' in page.text
     assert 'id="clip-subtitle-font-family"' in page.text
     assert 'id="clip-subtitle-text-color"' in page.text
     assert 'id="clip-subtitle-background-color"' in page.text
@@ -1157,9 +1160,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260825-13" in page.text
-    assert "styles.css?v=20260825-19" in page.text
-    assert "app.js?v=20260825-13" in page.text
+    assert "i18n.js?v=20260825-14" in page.text
+    assert "styles.css?v=20260825-20" in page.text
+    assert "app.js?v=20260825-14" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text
@@ -1174,7 +1177,8 @@ def test_playback_track_is_public_and_user_can_request_translation(
     )
     assert ".clip-preview-stage.is-landscape-layout" in styles.text
     assert "container-type: size" in styles.text
-    assert "padding: .83cqh .57cqw" in styles.text
+    assert "padding: 1.11cqh .73cqw" in styles.text
+    assert "font-size: 2.04cqh" in styles.text
     assert "left: 3.75%" in styles.text
     assert "width: 26.5%" in styles.text
     assert "right: 3.4%" in styles.text
@@ -1198,6 +1202,10 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "2.13 * scale" in javascript.text
     assert "clipLyricHoverFrame" in javascript.text
     assert "pinClipTimelineMarker" in javascript.text
+    assert "renderClipTimelineHoverMarker" in javascript.text
+    assert "renderClipTimelineMarkedMarker" in javascript.text
+    assert "CLIP_DEFAULT_FONT_SCALE = 160" in javascript.text
+    assert "clipMarkerTime" not in javascript.text
     assert "nearestClipMarker" in javascript.text
     assert 'locked?.kind === "sentence"' in javascript.text
     assert "clipLyricPreviousTwo" in javascript.text

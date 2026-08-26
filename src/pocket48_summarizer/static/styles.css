@@ -974,25 +974,25 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   bottom: 7%;
   width: 27%;
   justify-content: end;
-  gap: 1.02cqh;
+  gap: 1.2cqh;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku article {
-  padding: .83cqh .57cqw;
+  padding: 1.11cqh .73cqw;
   border-color: rgba(214, 83, 109, .34);
-  border-radius: 1.67cqh 1.67cqh 1.67cqh .6cqh;
+  border-radius: 1.85cqh 1.85cqh 1.85cqh .65cqh;
   background: rgba(255, 248, 246, .96);
   box-shadow: 0 4px 12px rgba(91, 58, 66, .1);
   backdrop-filter: none;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku strong {
   color: #d6536d;
-  font-size: 1.39cqh;
+  font-size: 1.67cqh;
   line-height: 1.2;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku p {
-  margin-top: .19cqh;
+  margin-top: .28cqh;
   color: #5b3a42;
-  font-size: 1.67cqh;
+  font-size: 2.04cqh;
   line-height: 1.3;
   text-shadow: none;
 }
@@ -1387,6 +1387,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .clip-preview-playhead,
 .clip-raw-marker,
 .clip-snap-marker,
+.clip-marked-marker,
 .clip-hover-marker {
   position: absolute;
   z-index: 6;
@@ -1409,35 +1410,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   border-left: 2px solid #70e7c2;
   box-shadow: 0 0 7px rgba(112, 231, 194, .52);
 }
+.clip-marked-marker {
+  z-index: 5;
+  left: var(--clip-marked-position);
+  border-left: 2px solid #b8325b;
+  box-shadow: 0 0 9px rgba(184, 50, 91, .5);
+}
 .clip-hover-marker {
   left: var(--clip-hover-position);
   border-left: 1px solid rgba(228, 61, 18, .9);
   box-shadow: 0 0 8px rgba(228, 61, 18, .46);
-}
-.clip-hover-marker output {
-  position: absolute;
-  top: -20px;
-  left: -1px;
-  padding: 3px 6px;
-  border: 1px solid rgba(228, 61, 18, .4);
-  border-radius: 6px;
-  background: rgba(8, 10, 15, .92);
-  color: #ffad98;
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  white-space: nowrap;
-  transform: translateX(-50%);
-}
-.clip-hover-marker.is-marked {
-  border-left-width: 2px;
-  box-shadow: 0 0 10px rgba(228, 61, 18, .62);
-}
-.clip-hover-marker.is-marked output {
-  border-color: rgba(228, 61, 18, .72);
-  background: #b83211;
-  color: #fff8f4;
-  font-weight: 700;
 }
 .clip-range-control.is-dragging .clip-boundary-handle,
 .clip-range-control.is-dragging .clip-selection {
