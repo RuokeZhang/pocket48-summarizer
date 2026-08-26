@@ -398,6 +398,7 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'id="clip-split-at-marker"' in page.text
     assert 'id="clip-toggle-segment"' in page.text
     assert 'id="clip-segment-list"' in page.text
+    assert 'data-i18n="clipOutputTrack"' in page.text
     assert 'id="clip-preview-cut-notice"' in page.text
     assert 'id="clip-marker-time"' not in page.text
     assert 'id="clip-subtitle-font-scale"' in page.text
@@ -1290,9 +1291,10 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260826-16" in page.text
-    assert "styles.css?v=20260826-22" in page.text
-    assert "app.js?v=20260826-17" in page.text
+    assert "i18n.js?v=20260826-17" in page.text
+    assert "styles.css?v=20260826-23" in page.text
+    assert "app.js?v=20260826-18" in page.text
+    assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text
@@ -1310,6 +1312,8 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert ".clip-preview-stage.is-landscape-layout" in styles.text
     assert "kept_ranges: keptRanges" in javascript.text
     assert "splitClipAtMarkedTime" in javascript.text
+    assert 'event.code !== "Space"' in javascript.text
+    assert "seekClipPreview(clipEditorState.markerMs)" in javascript.text
     assert "container-type: size" in styles.text
     assert "padding: 1.11cqh .73cqw" in styles.text
     assert "font-size: 2.04cqh" in styles.text

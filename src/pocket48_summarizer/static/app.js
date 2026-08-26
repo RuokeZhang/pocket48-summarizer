@@ -590,14 +590,13 @@ const selectClipSegment = (segmentID, { seek = true } = {}) => {
 const renderClipSegments = () => {
   if (!clipEditorState) return;
   const segments = clipEditorState.segments || [];
+  const keptSegments = segments.filter((segment) => segment.kept);
   const selected = selectedClipSegment();
   const keptRanges = clipKeptRanges();
-  const deletedCount = segments.filter((segment) => !segment.kept).length;
   if (clipCutSummary) {
     clipCutSummary.textContent = t("clipCutSummary", {
       duration: formatFineClock(clipKeptDurationMs()),
-      kept: keptRanges.length,
-      deleted: deletedCount
+      kept: keptRanges.length
     });
   }
   if (clipSplitAtMarker) {
@@ -642,7 +641,6 @@ const renderClipSegments = () => {
           end: formatFineClock(segment.endMs)
         })
       );
-      bindSelection(block, segment);
       fragment.append(block);
     }
     clipSegmentTrack.replaceChildren(fragment);
@@ -650,11 +648,10 @@ const renderClipSegments = () => {
 
   if (clipSegmentList) {
     const fragment = document.createDocumentFragment();
-    for (const [index, segment] of segments.entries()) {
+    for (const [index, segment] of keptSegments.entries()) {
       const card = document.createElement("button");
       card.type = "button";
       card.className = "clip-segment-card";
-      card.classList.toggle("is-deleted", !segment.kept);
       card.classList.toggle("is-selected", segment.id === selected?.id);
       const number = document.createElement("strong");
       number.textContent = String(index + 1).padStart(2, "0");
@@ -663,9 +660,7 @@ const renderClipSegments = () => {
         `${formatFineClock(segment.startMs)}–${formatFineClock(segment.endMs)}`
       );
       const state = document.createElement("small");
-      state.textContent = t(
-        segment.kept ? "clipSegmentKept" : "clipSegmentDeleted"
-      );
+      state.textContent = t("clipSegmentKept");
       card.append(number, range, state);
       bindSelection(card, segment);
       fragment.append(card);
@@ -1702,6 +1697,7 @@ const pinClipTimelineMarker = (clientX) => {
   renderClipTimelineMarkedMarker(clipEditorState.markerMs);
   renderClipLyricPreview(clipEditorState.markerMs, { hovering: true });
   updateClipRangeUI();
+  seekClipPreview(clipEditorState.markerMs);
 };
 
 const splitClipAtMarkedTime = () => {
@@ -2585,6 +2581,7 @@ clipTimelineViewport?.addEventListener("click", (event) => {
     event.target instanceof Element
     && event.target.closest(".clip-boundary-handle")
   ) return;
+  clipTimelineViewport.focus({ preventScroll: true });
   pinClipTimelineMarker(event.clientX);
 });
 clipTimelineViewport?.addEventListener("pointerleave", () => {
@@ -2786,6 +2783,43 @@ clipPreviewSelection?.addEventListener("click", () => {
     clipPendingPlay = true;
     if (clipPreviewUsesNativeHls) clipPreviewPlayer.load();
   }
+});
+
+const spacePlaybackTargetIsEditable = (target) => (
+  target instanceof Element
+  && Boolean(target.closest(
+    "input, textarea, select, button, a[href], [contenteditable], [role='slider']"
+  ))
+);
+
+document.addEventListener("keydown", (event) => {
+  if (
+    event.defaultPrevented
+    || event.repeat
+    || event.code !== "Space"
+    || event.altKey
+    || event.ctrlKey
+    || event.metaKey
+    || spacePlaybackTargetIsEditable(event.target)
+  ) return;
+  const player = clipEditor?.open ? clipPreviewPlayer : replayPlayer;
+  if (!player) return;
+  event.preventDefault();
+  if (!player.paused) {
+    player.pause();
+    return;
+  }
+  if (clipEditor?.open && player.readyState < 1) {
+    clipPendingPlay = true;
+    if (clipPreviewUsesNativeHls) player.load();
+    return;
+  }
+  player.play().catch(() => {
+    const message = clipEditor?.open ? clipEditorError : replayPlayerMessage;
+    if (message) message.textContent = t(
+      clipEditor?.open ? "clipPreviewFailed" : "mediaError"
+    );
+  });
 });
 
 clipEditorClose?.addEventListener("click", closeClipEditor);

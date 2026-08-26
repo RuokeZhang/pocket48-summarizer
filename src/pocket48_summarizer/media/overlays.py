@@ -29,6 +29,7 @@ from .layouts import (
     LANDSCAPE_LIBASS_DANMAKU_AUTHOR_SCALE,
     LANDSCAPE_LIBASS_FONT_SCALE,
     LANDSCAPE_SUBTITLE_COLOR,
+    LANDSCAPE_SUBTITLE_EN_COLOR,
     LANDSCAPE_SUBTITLE_EN_SIZE,
     LANDSCAPE_SUBTITLE_LEFT,
     LANDSCAPE_SUBTITLE_WIDTH,
@@ -56,6 +57,15 @@ COVER_DURATION_MS = 1500
 COVER_TITLE_MAX_LENGTH = 40
 DEFAULT_COVER_STYLE: CoverStyle = "scrim"
 COVER_LIBASS_FONT_SCALE = 1.45
+LANDSCAPE_SUBTITLE_LINE_HEIGHT = 1.55
+LANDSCAPE_SUBTITLE_PARAGRAPH_GAP = 8
+LANDSCAPE_SUBTITLE_POSITION_OFFSET = 4
+LANDSCAPE_SUBTITLE_ZH_SCALE_X = 94
+LANDSCAPE_SUBTITLE_ZH_SCALE_Y = 94
+LANDSCAPE_SUBTITLE_EN_SCALE_X = 95
+LANDSCAPE_SUBTITLE_EN_SCALE_Y = 90
+LANDSCAPE_SUBTITLE_EN_OPACITY = 0.88
+LANDSCAPE_SUBTITLE_EN_WIDTH_FACTOR = 0.46
 HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 CJK_CLOSING_PUNCTUATION = frozenset("，。！？；：、）》】」』”’")
 
@@ -382,7 +392,12 @@ def _subtitle_events(
         12,
         round(
             LANDSCAPE_SUBTITLE_WIDTH
-            / max(1, LANDSCAPE_SUBTITLE_EN_SIZE * scale * 0.48)
+            / max(
+                1,
+                LANDSCAPE_SUBTITLE_EN_SIZE
+                * scale
+                * LANDSCAPE_SUBTITLE_EN_WIDTH_FACTOR,
+            )
         ),
     )
     for segment in selected:
@@ -394,31 +409,38 @@ def _subtitle_events(
         if end_ms <= start_ms:
             continue
         if output_layout == "landscape":
-            zh = _ass_wrapped_text(
+            zh_lines = _wrapped_text(
                 segment.text,
                 width=landscape_zh_width,
+                rebalance_cjk_orphan=False,
             )
-            en = _ass_wrapped_text(
+            en_lines = _wrapped_text(
                 translations.get(segment.sequence, ""),
                 width=landscape_en_width,
             )
+            events.extend(
+                _landscape_subtitle_events(
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    subtitle_mode=subtitle_mode,
+                    zh_lines=zh_lines,
+                    en_lines=en_lines,
+                    scale=scale,
+                )
+            )
+            continue
         else:
             zh = _ass_text(segment.text)
             en = _ass_text(translations.get(segment.sequence, ""))
-        style_prefix = (
-            "LandscapeSubtitle"
-            if output_layout == "landscape"
-            else "Subtitle"
-        )
         if subtitle_mode == "zh":
-            style = f"{style_prefix}Zh"
+            style = "SubtitleZh"
             text = zh
         elif subtitle_mode == "en":
-            style = f"{style_prefix}En"
+            style = "SubtitleEn"
             text = en
         else:
-            style = f"{style_prefix}Zh"
-            text = f"{zh}\\N{{\\r{style_prefix}En}}{en}"
+            style = "SubtitleZh"
+            text = f"{zh}\\N{{\\rSubtitleEn}}{en}"
         events.append(
             _dialogue(
                 layer=20,
@@ -436,6 +458,67 @@ def _subtitle_events(
             "所选范围没有可渲染的字幕",
             False,
         )
+    return events
+
+
+def _landscape_subtitle_events(
+    *,
+    start_ms: int,
+    end_ms: int,
+    subtitle_mode: SubtitleMode,
+    zh_lines: list[str],
+    en_lines: list[str],
+    scale: float,
+) -> list[str]:
+    paragraphs: list[tuple[str, list[str], float]] = []
+    if subtitle_mode in {"zh", "bilingual"} and zh_lines:
+        paragraphs.append(
+            (
+                "LandscapeSubtitleZh",
+                zh_lines,
+                LANDSCAPE_SUBTITLE_ZH_SIZE
+                * scale
+                * LANDSCAPE_SUBTITLE_LINE_HEIGHT,
+            )
+        )
+    if subtitle_mode in {"en", "bilingual"} and en_lines:
+        paragraphs.append(
+            (
+                "LandscapeSubtitleEn",
+                en_lines,
+                LANDSCAPE_SUBTITLE_EN_SIZE
+                * scale
+                * LANDSCAPE_SUBTITLE_LINE_HEIGHT,
+            )
+        )
+    total_height = sum(
+        (
+            LANDSCAPE_SUBTITLE_PARAGRAPH_GAP
+            + len(lines) * line_height
+        )
+        for _, lines, line_height in paragraphs
+    )
+    cursor_y = (LANDSCAPE_CANVAS_HEIGHT - total_height) / 2
+    events: list[str] = []
+    for style, lines, line_height in paragraphs:
+        cursor_y += LANDSCAPE_SUBTITLE_PARAGRAPH_GAP
+        for line in lines:
+            position_y = round(
+                cursor_y + LANDSCAPE_SUBTITLE_POSITION_OFFSET
+            )
+            events.append(
+                _dialogue(
+                    layer=20,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    style=style,
+                    text=(
+                        rf"{{\pos({LANDSCAPE_SUBTITLE_LEFT},{position_y})}}"
+                        f"{_ass_text(line)}"
+                    ),
+                )
+            )
+            cursor_y += line_height
     return events
 
 
@@ -672,6 +755,10 @@ def _ass_header(
         landscape_subtitle_color = _ass_color(
             LANDSCAPE_SUBTITLE_COLOR
         )
+        landscape_subtitle_en_color = _ass_color(
+            LANDSCAPE_SUBTITLE_EN_COLOR,
+            alpha=round(255 * (1 - LANDSCAPE_SUBTITLE_EN_OPACITY)),
+        )
         landscape_danmaku_text = _ass_color(
             LANDSCAPE_DANMAKU_TEXT_COLOR
         )
@@ -732,10 +819,6 @@ def _ass_header(
         if reserve_danmaku
         else margin_l
     )
-    landscape_margin_l = LANDSCAPE_SUBTITLE_LEFT
-    landscape_margin_r = (
-        width - LANDSCAPE_SUBTITLE_LEFT - LANDSCAPE_SUBTITLE_WIDTH
-    )
     landscape_danmaku_border = _ass_color(
         LANDSCAPE_DANMAKU_AUTHOR_COLOR,
         alpha=168,
@@ -757,8 +840,8 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: SubtitleZh,{font_name},{zh_size},{text_color},{text_color},{background_color},{background_shadow},-1,0,0,0,100,100,0,0,3,1,1,2,{margin_l},{margin_r},{margin_v},1
 Style: SubtitleEn,{font_name},{en_size},{text_color},{text_color},{background_color},{background_shadow},0,0,0,0,100,100,0,0,3,1,1,2,{margin_l},{margin_r},{margin_v},1
 Style: Danmaku,{font_name},{danmaku_size},&H00FFFFFF,&H00FFFFFF,&H40000000,&HA8000000,0,0,0,0,100,100,0,0,3,1,1,9,0,0,0,1
-Style: LandscapeSubtitleZh,{landscape_font_name},{landscape_zh_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,4,{landscape_margin_l},{landscape_margin_r},0,1
-Style: LandscapeSubtitleEn,{landscape_font_name},{landscape_en_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,4,{landscape_margin_l},{landscape_margin_r},0,1
+Style: LandscapeSubtitleZh,{landscape_font_name},{landscape_zh_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,-1,0,0,0,{LANDSCAPE_SUBTITLE_ZH_SCALE_X},{LANDSCAPE_SUBTITLE_ZH_SCALE_Y},0,0,1,0,0,7,0,0,0,1
+Style: LandscapeSubtitleEn,{landscape_font_name},{landscape_en_size},{landscape_subtitle_en_color},{landscape_subtitle_en_color},&H00000000,&H00000000,-1,0,0,0,{LANDSCAPE_SUBTITLE_EN_SCALE_X},{LANDSCAPE_SUBTITLE_EN_SCALE_Y},0,0,1,0,0,7,0,0,0,1
 Style: LandscapeDanmaku,{font_name},{landscape_danmaku_size},{landscape_danmaku_text},{landscape_danmaku_text},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: LandscapeDanmakuAuthor,{font_name},{landscape_danmaku_author_size},{landscape_danmaku_author},{landscape_danmaku_author},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: LandscapeDanmakuBox,{font_name},1,{landscape_danmaku_background},{landscape_danmaku_background},{landscape_danmaku_border},{landscape_danmaku_box_shadow},0,0,0,0,100,100,0,0,1,2,3,7,0,0,0,1
@@ -892,7 +975,12 @@ def _ass_wrapped_text(value: str, *, width: int) -> str:
     )
 
 
-def _wrapped_text(value: str, *, width: int) -> list[str]:
+def _wrapped_text(
+    value: str,
+    *,
+    width: int,
+    rebalance_cjk_orphan: bool = True,
+) -> list[str]:
     normalized = _plain_text(value)
     wrapped = textwrap.wrap(
         normalized,
@@ -909,7 +997,8 @@ def _wrapped_text(value: str, *, width: int) -> list[str]:
             wrapped[index] = wrapped[index - 1][-1] + wrapped[index]
             wrapped[index - 1] = wrapped[index - 1][:-1]
     if (
-        len(wrapped) > 1
+        rebalance_cjk_orphan
+        and len(wrapped) > 1
         and " " not in normalized
         and re.search(r"[\u3400-\u9fff]", normalized)
         and len(wrapped[-1]) < 4

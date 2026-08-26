@@ -9,6 +9,7 @@ from pocket48_summarizer.media.layouts import (
     LANDSCAPE_DANMAKU_BOTTOM,
     LANDSCAPE_DANMAKU_RIGHT,
     LANDSCAPE_DANMAKU_WIDTH,
+    LANDSCAPE_SUBTITLE_EN_COLOR,
     LANDSCAPE_SUBTITLE_LEFT,
     LANDSCAPE_SUBTITLE_WIDTH,
 )
@@ -334,12 +335,11 @@ def test_landscape_overlay_wraps_long_subtitle_inside_left_panel():
     assert (
         "Style: LandscapeSubtitleZh,LXGW WenKai,52,"
         "&H00123DE4,&H00123DE4,&H00000000,&H00000000,"
-        "-1,0,0,0,100,100,0,0,1,0,0,4,72,1339,0,1"
+        "-1,0,0,0,94,94,0,0,1,0,0,7,0,0,0,1"
         in document.content
     )
-    assert r"我最近已经在开始反思自己\N了，我要走这种不那种。" in (
-        document.content
-    )
+    assert r"\pos(72,491)}我最近已经在开始反思自己" in document.content
+    assert r"\pos(72,548)}了，我要走这种不那种。" in document.content
 
 
 def test_landscape_danmaku_card_moves_by_new_bubble_height():
@@ -396,10 +396,59 @@ def test_landscape_english_wrap_uses_browser_equivalent_width():
         output_layout="landscape",
     )
 
+    assert LANDSCAPE_SUBTITLE_EN_COLOR == "#D6536D"
     assert (
-        r"{\rLandscapeSubtitleEn}I have started reflecting on myself."
+        "Style: LandscapeSubtitleEn,LXGW WenKai,40,"
+        "&H1F6D53D6,&H1F6D53D6,&H00000000,&H00000000,"
+        "-1,0,0,0,95,90,0,0,1,0,0,7,0,0,0,1"
         in document.content
     )
+    assert (
+        r"\pos(72,558)}I have started reflecting on myself."
+        in document.content
+    )
+
+
+def test_landscape_bilingual_lines_match_browser_spacing_and_wrap():
+    document = build_clip_overlay(
+        width=1920,
+        height=1080,
+        clip_start_ms=0,
+        clip_end_ms=4000,
+        subtitle_mode="bilingual",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=4000,
+                text="人家讨厌我，可是讨厌是他的事情，我无法主观控制啊。",
+            )
+        ],
+        translations={
+            1: (
+                "They hate me, but hating is their thing, "
+                "I can't subjectively control it."
+            )
+        },
+        danmaku=[],
+        subtitle_font_scale=110,
+        output_layout="landscape",
+    )
+
+    assert r"\pos(72,376)}人家讨厌我，可是讨厌是他" in document.content
+    assert r"\pos(72,439)}的事情，我无法主观控制" in document.content
+    assert r"\pos(72,502)}啊。" in document.content
+    assert (
+        r"\pos(72,572)}They hate me, but hating is their"
+        in document.content
+    )
+    assert (
+        r"\pos(72,622)}thing, I can't subjectively control"
+        in document.content
+    )
+    assert r"\pos(72,671)}it." in document.content
 
 
 @pytest.mark.parametrize(

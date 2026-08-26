@@ -99,6 +99,7 @@
             controls
             playsinline
             preload="metadata"
+            aria-keyshortcuts="Space"
             data-hls-src="{{ job.media_url }}"
           ></video>
           <div id="subtitle-overlay" class="subtitle-overlay" hidden>
@@ -272,6 +273,7 @@
                 controls
                 playsinline
                 preload="metadata"
+                aria-keyshortcuts="Space"
               ></video>
               <div
                 id="clip-preview-subtitles"
@@ -394,6 +396,8 @@
             <div
               id="clip-timeline-viewport"
               class="clip-timeline-viewport"
+              tabindex="0"
+              aria-keyshortcuts="Space"
             >
               <div
                 id="clip-range-control"
@@ -501,6 +505,10 @@
                   disabled
                   data-i18n="deleteSelectedSegment"
                 >删除选中片段</button>
+              </div>
+              <div class="clip-output-track-heading">
+                <strong data-i18n="clipOutputTrack">成片轨道</strong>
+                <small data-i18n="clipOutputTrackHint">这里只显示最终保留片段；可点上方斜线区域恢复删除片段。</small>
               </div>
               <div
                 id="clip-segment-list"

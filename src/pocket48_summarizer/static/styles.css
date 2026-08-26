@@ -936,7 +936,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-subtitles p {
   max-width: 100%;
-  margin: 5px 0 0;
+  margin: .742cqh 0 0;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -1664,6 +1664,21 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   scrollbar-color: #525a6d transparent;
   scrollbar-width: thin;
 }
+.clip-output-track-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.clip-output-track-heading strong {
+  color: #ffd0de;
+  font-size: 12px;
+}
+.clip-output-track-heading small {
+  color: #7f899c;
+  font-size: 10px;
+  text-align: right;
+}
 .clip-segment-card {
   display: grid;
   min-width: 200px;
@@ -2210,6 +2225,14 @@ code { color: #d4c8ff; }
   }
   .clip-cut-actions button {
     min-height: 44px;
+  }
+  .clip-output-track-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .clip-output-track-heading small {
+    text-align: left;
   }
   .clip-style-heading {
     align-items: stretch;

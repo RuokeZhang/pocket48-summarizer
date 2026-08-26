@@ -42,7 +42,7 @@ LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v9"
+RENDER_VERSION = "ass-v10"
 
 
 @dataclass(slots=True)
