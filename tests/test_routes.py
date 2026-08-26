@@ -44,7 +44,7 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
         subtitle_mode="zh",
     )
 
-    assert payload.subtitle_font_scale == 160
+    assert payload.subtitle_font_scale == 100
     assert payload.subtitle_text_color == "#E43D12"
     assert payload.subtitle_background_color == "#EBE9E1"
     assert payload.output_layout == "portrait"
@@ -97,6 +97,10 @@ class DummyClipper:
             ),
             output_layout=kwargs["output_layout"],
             subtitle_font_family=kwargs["subtitle_font_family"],
+            cover_enabled=kwargs["cover_enabled"],
+            cover_timestamp_ms=kwargs["cover_timestamp_ms"],
+            cover_title=kwargs["cover_title"],
+            cover_style=kwargs["cover_style"],
             render_version="ass-v2",
             filename=self.state.output_path.name,
         )
@@ -368,8 +372,12 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'id="clip-marked-marker"' in page.text
     assert 'id="clip-marker-time"' not in page.text
     assert 'id="clip-subtitle-font-scale"' in page.text
-    assert 'value="160"' in page.text
-    assert 'id="clip-subtitle-font-scale-value">160%</output>' in page.text
+    assert 'value="100"' in page.text
+    assert 'id="clip-subtitle-font-scale-value">100%</output>' in page.text
+    assert 'id="clip-cover-panel"' in page.text
+    assert 'id="clip-cover-use-frame"' in page.text
+    assert 'id="clip-cover-title-input"' in page.text
+    assert 'name="clip-cover-style"' in page.text
     assert 'id="clip-subtitle-font-family"' in page.text
     assert 'id="clip-subtitle-text-color"' in page.text
     assert 'id="clip-subtitle-background-color"' in page.text
@@ -449,6 +457,20 @@ def test_configurable_clip_export_routes_preserve_versions(
             },
             headers=csrf_headers(alice),
         )
+        invalid_cover = alice.post(
+            f"/api/jobs/{job.id}/clip-exports",
+            json={
+                "request_id": "request-cover-invalid",
+                "timeline_index": 0,
+                "start_ms": 30_000,
+                "end_ms": 60_000,
+                "subtitle_mode": "off",
+                "cover_enabled": True,
+                "cover_timestamp_ms": 70_000,
+                "cover_title": "超出范围",
+            },
+            headers=csrf_headers(alice),
+        )
         created = alice.post(
             f"/api/jobs/{job.id}/clip-exports",
             json={
@@ -463,6 +485,10 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "subtitle_background_color": "#EBE9E1",
                 "output_layout": "landscape",
                 "subtitle_font_family": "serif",
+                "cover_enabled": True,
+                "cover_timestamp_ms": 45_000,
+                "cover_title": "灯光亮起时",
+                "cover_style": "badge",
             },
             headers=csrf_headers(alice),
         )
@@ -480,6 +506,10 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "subtitle_background_color": "#EBE9E1",
                 "output_layout": "landscape",
                 "subtitle_font_family": "serif",
+                "cover_enabled": True,
+                "cover_timestamp_ms": 45_000,
+                "cover_title": "灯光亮起时",
+                "cover_style": "badge",
             },
             headers=csrf_headers(alice),
         )
@@ -551,12 +581,21 @@ def test_configurable_clip_export_routes_preserve_versions(
     assert created.json()["subtitle_background_color"] == "#EBE9E1"
     assert created.json()["output_layout"] == "landscape"
     assert created.json()["subtitle_font_family"] == "serif"
+    assert created.json()["cover_enabled"] is True
+    assert created.json()["cover_timestamp_ms"] == 45_000
+    assert created.json()["cover_title"] == "灯光亮起时"
+    assert created.json()["cover_style"] == "badge"
+    assert created.json()["cover_duration_ms"] == 1500
+    assert created.json()["duration_ms"] == 32_150
     assert clipper.started_export_with["start_ms"] == 29_850
     assert clipper.started_export_with["subtitle_font_scale"] == 125
     assert clipper.started_export_with["output_layout"] == "landscape"
     assert clipper.started_export_with["subtitle_font_family"] == "serif"
+    assert clipper.started_export_with["cover_timestamp_ms"] == 45_000
+    assert clipper.started_export_with["cover_title"] == "灯光亮起时"
     assert low_contrast.status_code == 422
     assert english_blocked.status_code == 409
+    assert invalid_cover.status_code == 422
     assert (
         english_blocked.json()["error"]["code"]
         == "clip_english_subtitles_not_ready"
@@ -1071,13 +1110,26 @@ def test_any_invited_user_can_clip_a_public_result(
 
     with TestClient(app) as anonymous:
         page = anonymous.get(f"/jobs/{job_id}")
+        denied_create = anonymous.post(
+            f"/api/jobs/{job_id}/clip-exports",
+            json={
+                "request_id": "guest-cannot-submit",
+                "timeline_index": 0,
+                "start_ms": 30_000,
+                "end_ms": 60_000,
+                "subtitle_mode": "zh",
+            },
+        )
         clip_status = anonymous.get(f"/api/jobs/{job_id}/clips/0")
         download = anonymous.get(f"/jobs/{job_id}/clips/0/download")
 
     assert response.status_code == 200
     assert clipper.started_with["job_id"] == job_id
-    assert 'class="clip-button"' not in page.text
-    assert 'id="clip-editor"' not in page.text
+    assert 'class="clip-button"' in page.text
+    assert 'id="clip-editor"' in page.text
+    assert 'data-can-submit="false"' in page.text
+    assert "游客可以体验全部剪辑设置" in page.text
+    assert 'data-i18n="loginToCreateClip"' in page.text
     assert 'id="replay-player"' in page.text
     assert "hls-1.7.1.min.js" in page.text
     assert (
@@ -1085,6 +1137,7 @@ def test_any_invited_user_can_clip_a_public_result(
         in page.text
     )
     assert 'data-seek-ms="30000"' in page.text
+    assert denied_create.status_code == 401
     assert clip_status.status_code == 200
     assert clip_status.json()["status"] == "completed"
     assert clip_status.json()["download_url"].endswith("/clips/0/download")
@@ -1160,9 +1213,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260825-14" in page.text
-    assert "styles.css?v=20260825-20" in page.text
-    assert "app.js?v=20260825-14" in page.text
+    assert "i18n.js?v=20260825-15" in page.text
+    assert "styles.css?v=20260825-21" in page.text
+    assert "app.js?v=20260825-15" in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
     assert "(pointer: coarse)" in styles.text
@@ -1204,7 +1257,10 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "pinClipTimelineMarker" in javascript.text
     assert "renderClipTimelineHoverMarker" in javascript.text
     assert "renderClipTimelineMarkedMarker" in javascript.text
-    assert "CLIP_DEFAULT_FONT_SCALE = 160" in javascript.text
+    assert "CLIP_DEFAULT_FONT_SCALE = 100" in javascript.text
+    assert "CLIP_SUBTITLE_BASE_SCALE = 1.6" in javascript.text
+    assert "captureClipCoverFrame" in javascript.text
+    assert "cover_timestamp_ms" in javascript.text
     assert "clipMarkerTime" not in javascript.text
     assert "nearestClipMarker" in javascript.text
     assert 'locked?.kind === "sentence"' in javascript.text

@@ -24,6 +24,33 @@ class FakeFFmpeg:
         output_path.write_bytes(b"video")
         return output_path
 
+    async def render_cover_frame(
+        self,
+        manifest_url: str,
+        output_path: Path,
+        timestamp_ms: int,
+        ass_path: Path,
+        output_layout: str = "portrait",
+    ) -> Path:
+        del manifest_url, timestamp_ms, ass_path, output_layout
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"cover")
+        return output_path
+
+    async def prepend_cover(
+        self,
+        cover_path: Path,
+        clip_path: Path,
+        output_path: Path,
+        *,
+        duration_ms: int,
+    ) -> Path:
+        del duration_ms
+        output_path.write_bytes(
+            cover_path.read_bytes() + clip_path.read_bytes()
+        )
+        return output_path
+
 
 class FakeOSS:
     def __init__(self):
@@ -58,6 +85,9 @@ class FlakyOSS(FakeOSS):
 class OverlayFFmpeg(FakeFFmpeg):
     def __init__(self):
         self.ass_content = ""
+        self.cover_ass_content = ""
+        self.cover_timestamp_ms = None
+        self.cover_duration_ms = None
         self.output_layout = ""
 
     async def supports_ass_filter(self) -> bool:
@@ -77,8 +107,8 @@ class OverlayFFmpeg(FakeFFmpeg):
         ass_path: Path | None = None,
         output_layout: str = "portrait",
     ) -> Path:
-        assert ass_path is not None
-        self.ass_content = ass_path.read_text(encoding="utf-8")
+        if ass_path is not None:
+            self.ass_content = ass_path.read_text(encoding="utf-8")
         self.output_layout = output_layout
         return await super().clip_video(
             manifest_url,
@@ -86,6 +116,41 @@ class OverlayFFmpeg(FakeFFmpeg):
             start_ms,
             end_ms,
             output_layout=output_layout,
+        )
+
+    async def render_cover_frame(
+        self,
+        manifest_url: str,
+        output_path: Path,
+        timestamp_ms: int,
+        ass_path: Path,
+        output_layout: str = "portrait",
+    ) -> Path:
+        self.cover_ass_content = ass_path.read_text(encoding="utf-8")
+        self.cover_timestamp_ms = timestamp_ms
+        self.output_layout = output_layout
+        return await super().render_cover_frame(
+            manifest_url,
+            output_path,
+            timestamp_ms,
+            ass_path,
+            output_layout,
+        )
+
+    async def prepend_cover(
+        self,
+        cover_path: Path,
+        clip_path: Path,
+        output_path: Path,
+        *,
+        duration_ms: int,
+    ) -> Path:
+        self.cover_duration_ms = duration_ms
+        return await super().prepend_cover(
+            cover_path,
+            clip_path,
+            output_path,
+            duration_ms=duration_ms,
         )
 
 
@@ -318,7 +383,7 @@ async def test_overlay_export_keeps_warning_across_upload_retry(
     assert "[Events]" in ffmpeg.ass_content
     assert "测试字幕" in ffmpeg.ass_content
     assert (
-        "Style: SubtitleZh,Noto Sans CJK SC,82,"
+        "Style: SubtitleZh,Noto Sans CJK SC,131,"
         "&H00563412,&H00563412,&H18DDEEF0,&H38DDEEF0"
         in ffmpeg.ass_content
     )
@@ -377,3 +442,53 @@ async def test_landscape_export_uses_fixed_canvas_overlay(
     assert "Style: LandscapeSubtitleZh,Noto Serif CJK SC,52," in (
         ffmpeg.ass_content
     )
+
+
+@pytest.mark.asyncio
+async def test_landscape_export_prepends_selected_custom_cover(
+    settings, repository
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=991106",
+        "991106",
+    )
+    ffmpeg = OverlayFFmpeg()
+    oss = FakeOSS()
+    service = VideoClipService(
+        settings,
+        repository,
+        oss,  # type: ignore[arg-type]
+        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+    )
+
+    record = service.start_export(
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="封面测试",
+        requested_by_user_id=None,
+        request_id="cover-request",
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="off",
+        include_danmaku=False,
+        output_layout="landscape",
+        cover_enabled=True,
+        cover_timestamp_ms=2300,
+        cover_title="灯光亮起时",
+        cover_style="badge",
+    )
+    await service._tasks[record.id]
+
+    completed = repository.get_video_clip_export(job.id, record.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.cover_enabled
+    assert completed.cover_timestamp_ms == 2300
+    assert completed.cover_title == "灯光亮起时"
+    assert completed.cover_style == "badge"
+    assert ffmpeg.cover_timestamp_ms == 2300
+    assert ffmpeg.cover_duration_ms == 1500
+    assert "灯光亮起时" in ffmpeg.cover_ass_content
+    assert r"\pos(692,670)\p1" in ffmpeg.cover_ass_content
+    assert oss.uploads[0][2] == b"covervideo"

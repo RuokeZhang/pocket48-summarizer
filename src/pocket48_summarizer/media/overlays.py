@@ -33,6 +33,7 @@ from .layouts import (
     LANDSCAPE_SUBTITLE_LEFT,
     LANDSCAPE_SUBTITLE_WIDTH,
     LANDSCAPE_SUBTITLE_ZH_SIZE,
+    LANDSCAPE_VIDEO_WIDTH,
     DEFAULT_LANDSCAPE_SUBTITLE_FONT,
     ClipOutputLayout,
     LandscapeSubtitleFont,
@@ -40,15 +41,21 @@ from .layouts import (
 )
 
 SubtitleMode = Literal["off", "zh", "en", "bilingual"]
+CoverStyle = Literal["scrim", "display", "badge"]
 DANMAKU_MIN_GAP_MS = 450
 DANMAKU_MAX_VISIBLE = 5
 DANMAKU_RISE_MS = 220
-SUBTITLE_FONT_SCALE_MIN = 70
-SUBTITLE_FONT_SCALE_MAX = 160
-DEFAULT_SUBTITLE_FONT_SCALE = 160
+SUBTITLE_FONT_SCALE_MIN = 50
+SUBTITLE_FONT_SCALE_MAX = 150
+DEFAULT_SUBTITLE_FONT_SCALE = 100
+SUBTITLE_FONT_BASE_SCALE = 1.6
 DEFAULT_SUBTITLE_TEXT_COLOR = "#E43D12"
 DEFAULT_SUBTITLE_BACKGROUND_COLOR = "#EBE9E1"
 MIN_SUBTITLE_CONTRAST_RATIO = 3.0
+COVER_DURATION_MS = 1500
+COVER_TITLE_MAX_LENGTH = 40
+DEFAULT_COVER_STYLE: CoverStyle = "scrim"
+COVER_LIBASS_FONT_SCALE = 1.45
 HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 CJK_CLOSING_PUNCTUATION = frozenset("，。！？；：、）》】」』”’")
 
@@ -59,6 +66,13 @@ class ClipOverlayDocument:
     subtitle_event_count: int
     danmaku_event_count: int
     warning_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CoverOverlayDocument:
+    content: str
+    title: str
+    style: CoverStyle
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +166,170 @@ def build_clip_overlay(
     )
 
 
+def build_cover_overlay(
+    *,
+    width: int,
+    height: int,
+    title: str,
+    style: CoverStyle = DEFAULT_COVER_STYLE,
+    font_name: str = "Noto Sans CJK SC",
+    output_layout: ClipOutputLayout = "portrait",
+    duration_ms: int = COVER_DURATION_MS,
+) -> CoverOverlayDocument:
+    normalized_title = normalize_cover_title(title)
+    if (
+        width <= 0
+        or height <= 0
+        or duration_ms <= 0
+        or not normalized_title
+        or len(normalized_title) > COVER_TITLE_MAX_LENGTH
+    ):
+        raise AppError(
+            "clip_cover_invalid",
+            "封面标题或画面参数无效",
+            False,
+        )
+    if style not in {"scrim", "display", "badge"}:
+        raise AppError(
+            "clip_cover_invalid",
+            "封面标题样式无效",
+            False,
+        )
+    if (
+        output_layout == "landscape"
+        and (
+            width != LANDSCAPE_CANVAS_WIDTH
+            or height != LANDSCAPE_CANVAS_HEIGHT
+        )
+    ):
+        raise AppError(
+            "clip_layout_invalid",
+            "横屏画布尺寸无效",
+            False,
+        )
+    if output_layout not in {"portrait", "landscape"}:
+        raise AppError(
+            "clip_layout_invalid",
+            "视频画面方向无效",
+            False,
+        )
+
+    video_width = (
+        LANDSCAPE_VIDEO_WIDTH
+        if output_layout == "landscape"
+        else width
+    )
+    video_x = (width - video_width) // 2
+    safe_x = round(video_width * 0.06)
+    panel_x = video_x + safe_x
+    panel_width = video_width - safe_x * 2
+    center_x = panel_x + panel_width // 2
+    if style == "scrim":
+        box_y = round(height * 0.12)
+        box_height = round(height * 0.22)
+        title_y = box_y + box_height // 2
+        visual_size = max(28, round(height * 0.041))
+        text_color = "#FFF8F6"
+        outline_color = "#08090C"
+        outline_width = 2
+        shadow = 2
+        box_color = "#08090C"
+        box_alpha = 100
+        radius = round(height * 0.022)
+    elif style == "display":
+        box_y = None
+        box_height = None
+        title_y = round(height * 0.42)
+        visual_size = max(30, round(height * 0.046))
+        text_color = "#F6D365"
+        outline_color = "#08090C"
+        outline_width = 5
+        shadow = 3
+        box_color = "#08090C"
+        box_alpha = 255
+        radius = 0
+    else:
+        box_y = round(height * 0.62)
+        box_height = round(height * 0.20)
+        title_y = box_y + box_height // 2
+        visual_size = max(26, round(height * 0.037))
+        text_color = "#FFF8F6"
+        outline_color = "#7A1837"
+        outline_width = 1
+        shadow = 1
+        box_color = "#B8325B"
+        box_alpha = 16
+        radius = round(height * 0.026)
+
+    contains_cjk = bool(re.search(r"[\u3400-\u9fff]", normalized_title))
+    average_width = 1.0 if contains_cjk else 0.52
+    text_inset = round(
+        video_width * (0.05 if output_layout == "landscape" else 0.03)
+    )
+    wrap_width = max(
+        6,
+        round(
+            (panel_width - text_inset * 2)
+            / max(1, visual_size * average_width)
+        ),
+    )
+    wrapped_title = _wrapped_ass_text(
+        normalized_title,
+        width=wrap_width,
+        lines=2,
+    )
+    safe_font_name = _plain_text(font_name).replace(",", " ") or "sans-serif"
+    ass_size = round(visual_size * COVER_LIBASS_FONT_SCALE)
+    primary = _ass_color(text_color)
+    outline = _ass_color(outline_color, alpha=24)
+    back = _ass_color(outline_color, alpha=112)
+    box_fill = _ass_color(box_color, alpha=box_alpha)
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: CoverTitle,{safe_font_name},{ass_size},{primary},{primary},{outline},{back},-1,0,0,0,100,100,0,0,1,{outline_width},{shadow},5,0,0,0,1
+Style: CoverBox,{safe_font_name},1,{box_fill},{box_fill},{box_fill},{box_fill},0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"""
+    events: list[str] = []
+    if box_y is not None and box_height is not None:
+        box = _ass_rounded_rect(panel_width, box_height, radius)
+        events.append(
+            _dialogue(
+                layer=4,
+                start_ms=0,
+                end_ms=duration_ms,
+                style="CoverBox",
+                text=(
+                    f"{{\\an7\\pos({panel_x},{box_y})\\p1}}"
+                    f"{box}{{\\p0}}"
+                ),
+            )
+        )
+    events.append(
+        _dialogue(
+            layer=5,
+            start_ms=0,
+            end_ms=duration_ms,
+            style="CoverTitle",
+            text=f"{{\\an5\\pos({center_x},{title_y})}}{wrapped_title}",
+        )
+    )
+    return CoverOverlayDocument(
+        content="\n".join([header, *events, ""]),
+        title=normalized_title,
+        style=style,
+    )
+
+
 def _subtitle_events(
     *,
     clip_start_ms: int,
@@ -189,7 +367,7 @@ def _subtitle_events(
                 True,
             )
     events: list[str] = []
-    scale = subtitle_font_scale / 100
+    scale = _subtitle_scale(subtitle_font_scale)
     landscape_zh_width = max(
         8,
         LANDSCAPE_SUBTITLE_WIDTH
@@ -513,7 +691,7 @@ def _ass_header(
             "字幕字体无效",
             False,
         ) from exc
-    scale = subtitle_font_scale / 100
+    scale = _subtitle_scale(subtitle_font_scale)
     zh_size = max(14, round(max(20, height * 0.034) * scale))
     en_size = max(12, round(max(16, height * 0.025) * scale))
     danmaku_size = max(15, round(height * 0.020))
@@ -588,6 +766,10 @@ def normalize_subtitle_color(value: str) -> str:
     return value.upper()
 
 
+def normalize_cover_title(value: str) -> str:
+    return _plain_text(value)
+
+
 def subtitle_contrast_ratio(
     text_color: str,
     background_color: str,
@@ -625,6 +807,10 @@ def _relative_luminance(value: str) -> float:
         for channel in channels
     ]
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _subtitle_scale(value: int) -> float:
+    return value / 100 * SUBTITLE_FONT_BASE_SCALE
 
 
 def _ass_rounded_rect(width: int, height: int, radius: int) -> str:

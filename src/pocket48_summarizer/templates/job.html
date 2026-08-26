@@ -164,7 +164,7 @@
             >{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</button>
             <div class="timeline-title-row">
               <strong>{{ item.title }}</strong>
-              {% if can_create_clips %}
+              {% if can_preview_clips %}
                 <button
                   class="clip-button"
                   type="button"
@@ -225,10 +225,11 @@
     </section>
   {% endif %}
 
-  {% if can_create_clips and summary %}
+  {% if can_preview_clips and summary %}
     <dialog
       id="clip-editor"
       class="clip-editor"
+      data-can-submit="{{ 'true' if can_create_clips else 'false' }}"
       data-duration-ms="{{ job.duration_ms or 0 }}"
       data-context-ms="{{ clip_context_ms }}"
       data-max-clip-ms="{{ max_clip_ms }}"
@@ -241,6 +242,18 @@
             <p class="eyebrow">Clip editor</p>
             <h2 id="clip-editor-title" data-i18n="clipEditorTitle">调整剪辑</h2>
             <p id="clip-editor-topic" class="muted"></p>
+            {% if not can_create_clips %}
+              <p
+                class="clip-editor-access-note"
+                data-i18n="{% if current_user %}clipPreviewMaintenanceHint{% else %}clipGuestPreviewHint{% endif %}"
+              >
+                {% if current_user %}
+                  当前可以预览剪辑设置，但剪辑服务正在维护。
+                {% else %}
+                  游客可以体验全部剪辑设置；登录后才能生成视频。
+                {% endif %}
+              </p>
+            {% endif %}
           </div>
           <button
             id="clip-editor-close"
@@ -273,6 +286,20 @@
                 class="clip-preview-danmaku"
                 hidden
               ></div>
+              <div
+                id="clip-cover-preview"
+                class="clip-cover-preview"
+                data-cover-style="scrim"
+                hidden
+              >
+                <span
+                  class="clip-cover-preview-badge"
+                  data-i18n="coverPreview"
+                >封面预览</span>
+                <div class="clip-cover-title-surface">
+                  <p id="clip-cover-preview-title"></p>
+                </div>
+              </div>
             </div>
             <fieldset
               id="clip-output-layout"
@@ -502,12 +529,12 @@
                   <input
                     id="clip-subtitle-font-scale"
                     type="range"
-                    min="70"
-                    max="160"
+                    min="50"
+                    max="150"
                     step="5"
-                    value="160"
+                    value="100"
                   >
-                  <output id="clip-subtitle-font-scale-value">160%</output>
+                  <output id="clip-subtitle-font-scale-value">100%</output>
                 </label>
                 <label
                   id="clip-subtitle-font-family-control"
@@ -546,6 +573,93 @@
               ></output>
             </section>
 
+            <section
+              id="clip-cover-panel"
+              class="clip-cover-panel"
+              aria-labelledby="clip-cover-title"
+            >
+              <header class="clip-cover-heading">
+                <div>
+                  <strong id="clip-cover-title" data-i18n="customCover">自定义封面</strong>
+                  <small data-i18n="customCoverHint">选择视频画面并添加两行以内的标题</small>
+                </div>
+                <label class="toggle-control">
+                  <input id="clip-cover-enabled" type="checkbox">
+                  <span data-i18n="enableCustomCover">启用封面</span>
+                </label>
+              </header>
+              <div id="clip-cover-controls" class="clip-cover-controls" hidden>
+                <div class="clip-cover-frame-controls">
+                  <button
+                    id="clip-cover-use-frame"
+                    class="secondary-button"
+                    type="button"
+                    data-i18n="useCurrentCoverFrame"
+                  >使用当前画面</button>
+                  <time id="clip-cover-time">--:--:--.-</time>
+                  <button
+                    id="clip-cover-preview-toggle"
+                    class="secondary-button"
+                    type="button"
+                    data-i18n="previewCover"
+                  >预览封面</button>
+                </div>
+                <label class="clip-cover-title-control">
+                  <span data-i18n="coverTitleText">封面标题</span>
+                  <input
+                    id="clip-cover-title-input"
+                    type="text"
+                    maxlength="40"
+                    autocomplete="off"
+                    placeholder="输入封面标题"
+                    data-i18n-placeholder="coverTitlePlaceholder"
+                  >
+                  <output id="clip-cover-title-count">0/40</output>
+                </label>
+                <fieldset class="clip-cover-styles">
+                  <legend data-i18n="coverTitleStyle">标题样式</legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name="clip-cover-style"
+                      value="scrim"
+                      checked
+                    >
+                    <span class="clip-cover-style-sample is-scrim">标题</span>
+                    <span>
+                      <strong data-i18n="coverStyleScrim">暗幕粗体</strong>
+                      <small data-i18n="coverStyleScrimHint">最稳定，适合复杂画面</small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="clip-cover-style"
+                      value="display"
+                    >
+                    <span class="clip-cover-style-sample is-display">标题</span>
+                    <span>
+                      <strong data-i18n="coverStyleDisplay">高亮描边</strong>
+                      <small data-i18n="coverStyleDisplayHint">更醒目，适合短标题</small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="clip-cover-style"
+                      value="badge"
+                    >
+                    <span class="clip-cover-style-sample is-badge">标题</span>
+                    <span>
+                      <strong data-i18n="coverStyleBadge">玫红标题条</strong>
+                      <small data-i18n="coverStyleBadgeHint">对比最强，画面再亮也清楚</small>
+                    </span>
+                  </label>
+                </fieldset>
+                <small class="clip-cover-duration-note" data-i18n="coverDurationHint">封面会以 1.5 秒静帧放在视频开头，原视频声音随后开始。</small>
+              </div>
+            </section>
+
             <p id="clip-editor-error" class="clip-editor-error" role="alert"></p>
           </section>
         </div>
@@ -560,8 +674,21 @@
           <button
             id="clip-editor-submit"
             type="button"
-            data-i18n="createClipExport"
-          >生成剪辑</button>
+            {% if can_create_clips %}
+              data-i18n="createClipExport"
+            {% else %}
+              disabled
+              data-i18n="{% if current_user %}clipPreviewOnly{% else %}loginToCreateClip{% endif %}"
+            {% endif %}
+          >
+            {% if can_create_clips %}
+              生成剪辑
+            {% elif current_user %}
+              仅预览
+            {% else %}
+              登录后生成
+            {% endif %}
+          </button>
         </footer>
       </div>
     </dialog>

@@ -27,9 +27,13 @@ from .layouts import (
     LandscapeSubtitleFont,
 )
 from .overlays import (
+    COVER_DURATION_MS,
+    DEFAULT_COVER_STYLE,
     DEFAULT_SUBTITLE_BACKGROUND_COLOR,
     DEFAULT_SUBTITLE_FONT_SCALE,
     DEFAULT_SUBTITLE_TEXT_COLOR,
+    CoverStyle,
+    build_cover_overlay,
     build_clip_overlay,
 )
 
@@ -38,7 +42,7 @@ LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v7"
+RENDER_VERSION = "ass-v8"
 
 
 @dataclass(slots=True)
@@ -118,12 +122,15 @@ class VideoClipService:
         subtitle_mode: str,
         include_danmaku: bool,
         output_layout: ClipOutputLayout,
+        cover_enabled: bool = False,
     ) -> str:
         overlay = subtitle_mode
         if include_danmaku:
             overlay += "-danmaku"
         if output_layout == "landscape":
             overlay = f"landscape-{overlay}"
+        if cover_enabled:
+            overlay = f"cover-{overlay}"
         return (
             f"timeline-{timeline_index + 1:02d}-"
             f"{start_ms}-{end_ms}-{overlay}-{clip_id[:8]}.mp4"
@@ -151,6 +158,10 @@ class VideoClipService:
         subtitle_font_family: LandscapeSubtitleFont = (
             DEFAULT_LANDSCAPE_SUBTITLE_FONT
         ),
+        cover_enabled: bool = False,
+        cover_timestamp_ms: int | None = None,
+        cover_title: str = "",
+        cover_style: CoverStyle = DEFAULT_COVER_STYLE,
     ) -> VideoClipExportRecord:
         clip_id = str(uuid.uuid4())
         filename = self.output_filename(
@@ -161,6 +172,7 @@ class VideoClipService:
             subtitle_mode=subtitle_mode,
             include_danmaku=include_danmaku,
             output_layout=output_layout,
+            cover_enabled=cover_enabled,
         )
         record, created = self.repository.begin_video_clip_export(
             clip_id=clip_id,
@@ -178,6 +190,10 @@ class VideoClipService:
             subtitle_background_color=subtitle_background_color,
             output_layout=output_layout,
             subtitle_font_family=subtitle_font_family,
+            cover_enabled=cover_enabled,
+            cover_timestamp_ms=cover_timestamp_ms,
+            cover_title=cover_title,
+            cover_style=cover_style,
             render_version=RENDER_VERSION,
             filename=filename,
         )
@@ -323,6 +339,9 @@ class VideoClipService:
         manifest_url: str | None,
     ) -> None:
         ass_path = state.output_path.with_suffix(".ass")
+        cover_ass_path = state.output_path.with_suffix(".cover.ass")
+        cover_frame_path = state.output_path.with_suffix(".cover.png")
+        main_output_path = state.output_path.with_suffix(".main.mp4")
         try:
             async with self._capacity:
                 warning = record.warning_message
@@ -338,11 +357,12 @@ class VideoClipService:
                                     "本地视频片段不存在，请重新剪辑",
                                     True,
                                 )
-                            ass_input: Path | None = None
-                            if (
+                            needs_clip_overlay = (
                                 record.subtitle_mode != "off"
                                 or record.include_danmaku
-                            ):
+                            )
+                            dimensions: VideoDimensions | None = None
+                            if needs_clip_overlay or record.cover_enabled:
                                 await self._require_ass_support()
                                 dimensions = (
                                     VideoDimensions(
@@ -354,6 +374,12 @@ class VideoClipService:
                                         manifest_url
                                     )
                                 )
+                            ass_input: Path | None = None
+                            if needs_clip_overlay:
+                                if dimensions is None:
+                                    raise RuntimeError(
+                                        "clip overlay dimensions missing"
+                                    )
                                 document = build_clip_overlay(
                                     width=dimensions.width,
                                     height=dimensions.height,
@@ -400,10 +426,47 @@ class VideoClipService:
                                 )
                                 ass_input = ass_path
                                 warning = document.warning_message
+                            if record.cover_enabled:
+                                if (
+                                    dimensions is None
+                                    or record.cover_timestamp_ms is None
+                                ):
+                                    raise AppError(
+                                        "clip_cover_invalid",
+                                        "封面画面时间无效，请重新选择",
+                                        False,
+                                    )
+                                cover_document = build_cover_overlay(
+                                    width=dimensions.width,
+                                    height=dimensions.height,
+                                    title=record.cover_title,
+                                    style=record.cover_style,
+                                    font_name=self.settings.clip_font_name,
+                                    output_layout=record.output_layout,
+                                )
+                                cover_ass_path.parent.mkdir(
+                                    parents=True, exist_ok=True
+                                )
+                                cover_ass_path.write_text(
+                                    cover_document.content,
+                                    encoding="utf-8",
+                                )
+                                await self.ffmpeg.render_cover_frame(
+                                    manifest_url,
+                                    cover_frame_path,
+                                    record.cover_timestamp_ms,
+                                    cover_ass_path,
+                                    output_layout=record.output_layout,
+                                )
+                            clip_output_path = (
+                                main_output_path
+                                if record.cover_enabled
+                                else state.output_path
+                            )
                             if ass_input is None:
                                 await self.ffmpeg.clip_video(
                                     manifest_url,
-                                    state.output_path,
+                                    clip_output_path,
                                     record.start_ms,
                                     record.end_ms,
                                     output_layout=record.output_layout,
@@ -411,11 +474,18 @@ class VideoClipService:
                             else:
                                 await self.ffmpeg.clip_video(
                                     manifest_url,
-                                    state.output_path,
+                                    clip_output_path,
                                     record.start_ms,
                                     record.end_ms,
                                     ass_input,
                                     output_layout=record.output_layout,
+                                )
+                            if record.cover_enabled:
+                                await self.ffmpeg.prepend_cover(
+                                    cover_frame_path,
+                                    main_output_path,
+                                    state.output_path,
+                                    duration_ms=COVER_DURATION_MS,
                                 )
                         object_key = self.oss.clip_object_key(
                             record.job_id, state.output_path.name
@@ -462,6 +532,9 @@ class VideoClipService:
                             },
                         )
                     ass_path.unlink(missing_ok=True)
+                    cover_ass_path.unlink(missing_ok=True)
+                    cover_frame_path.unlink(missing_ok=True)
+                    main_output_path.unlink(missing_ok=True)
                     await asyncio.sleep(
                         self._retry_delay_seconds * (2 ** (attempt - 1))
                     )
@@ -488,6 +561,9 @@ class VideoClipService:
             )
         finally:
             ass_path.unlink(missing_ok=True)
+            cover_ass_path.unlink(missing_ok=True)
+            cover_frame_path.unlink(missing_ok=True)
+            main_output_path.unlink(missing_ok=True)
             self._tasks.pop(record.id, None)
 
     async def _require_ass_support(self) -> None:
@@ -498,7 +574,7 @@ class VideoClipService:
         if not self._ass_supported:
             raise AppError(
                 "clip_overlay_unavailable",
-                "当前 FFmpeg 不支持 ASS 字幕滤镜，无法烧录字幕或弹幕",
+                "当前 FFmpeg 不支持 ASS 字幕滤镜，无法烧录字幕、弹幕或封面",
                 False,
             )
 

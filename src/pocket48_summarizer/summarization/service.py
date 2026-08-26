@@ -9,7 +9,14 @@ from pydantic import ValidationError
 from ..clients.llm import OpenAICompatibleClient
 from ..config import Settings
 from ..errors import ExternalServiceError
-from ..models import ChunkSummary, DanmakuPeak, FinalSummary, TranscriptSegment
+from ..models import (
+    ChunkSummary,
+    DanmakuPeak,
+    FinalSummary,
+    SummaryCandidate,
+    TimelineItem,
+    TranscriptSegment,
+)
 from ..repository import JobRepository
 from .chunking import build_transcript_chunks
 from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, chunk_prompt, final_prompt
@@ -56,7 +63,10 @@ class SummarizationService:
                 try:
                     chunk_summary = ChunkSummary.model_validate_json(existing[1])
                     self._validate_chunk_evidence(
-                        chunk_summary, valid_chunk_ids
+                        chunk_summary,
+                        valid_chunk_ids,
+                        expected_start_ms=chunk.start_ms,
+                        expected_end_ms=chunk.end_ms,
                     )
                 except (ValidationError, ExternalServiceError):
                     pass
@@ -66,7 +76,10 @@ class SummarizationService:
                         await on_progress(len(chunk_summaries), len(chunks))
                     continue
             chunk_summary = await self._request_chunk(
-                prompt, valid_chunk_ids
+                prompt,
+                valid_chunk_ids,
+                expected_start_ms=chunk.start_ms,
+                expected_end_ms=chunk.end_ms,
             )
             self.repository.save_summary_chunk(
                 job_id,
@@ -84,6 +97,14 @@ class SummarizationService:
         summary = await self._request_final(
             chunk_summaries, peaks, valid_segment_ids
         )
+        summary = summary.model_copy(
+            update={
+                "timeline": self._balanced_timeline(
+                    summary.timeline,
+                    chunk_summaries,
+                )
+            }
+        )
         markdown = render_summary_markdown(
             summary,
             title=title,
@@ -93,7 +114,12 @@ class SummarizationService:
         return summary, markdown
 
     async def _request_chunk(
-        self, prompt: str, valid_ids: set[int]
+        self,
+        prompt: str,
+        valid_ids: set[int],
+        *,
+        expected_start_ms: int,
+        expected_end_ms: int,
     ) -> ChunkSummary:
         last_error: Exception | None = None
         request_prompt = prompt
@@ -105,7 +131,12 @@ class SummarizationService:
             )
             try:
                 summary = ChunkSummary.model_validate(payload)
-                self._validate_chunk_evidence(summary, valid_ids)
+                self._validate_chunk_evidence(
+                    summary,
+                    valid_ids,
+                    expected_start_ms=expected_start_ms,
+                    expected_end_ms=expected_end_ms,
+                )
                 return summary
             except (ValidationError, ExternalServiceError) as exc:
                 last_error = exc
@@ -219,8 +250,22 @@ class SummarizationService:
 
     @classmethod
     def _validate_chunk_evidence(
-        cls, summary: ChunkSummary, valid_ids: set[int]
+        cls,
+        summary: ChunkSummary,
+        valid_ids: set[int],
+        *,
+        expected_start_ms: int,
+        expected_end_ms: int,
     ) -> None:
+        if (
+            summary.start_ms != expected_start_ms
+            or summary.end_ms != expected_end_ms
+        ):
+            raise ExternalServiceError(
+                "llm_invalid_chunk_window",
+                "模型分段总结改写了输入时间窗口",
+                True,
+            )
         cls._validate_evidence(
             summary.evidence_segment_ids, valid_ids, "分段总结"
         )
@@ -228,7 +273,122 @@ class SummarizationService:
             cls._validate_evidence(
                 item.evidence_segment_ids, valid_ids, "分段时间线"
             )
+            cls._validate_candidate_window(
+                item,
+                expected_start_ms,
+                expected_end_ms,
+                "分段时间线",
+            )
         for item in summary.highlight_candidates:
             cls._validate_evidence(
                 item.evidence_segment_ids, valid_ids, "分段高光"
             )
+            cls._validate_candidate_window(
+                item,
+                expected_start_ms,
+                expected_end_ms,
+                "分段高光",
+            )
+
+    @staticmethod
+    def _validate_candidate_window(
+        item: SummaryCandidate,
+        start_ms: int,
+        end_ms: int,
+        label: str,
+    ) -> None:
+        if (
+            item.start_ms < start_ms
+            or item.end_ms > end_ms
+            or item.end_ms <= item.start_ms
+        ):
+            raise ExternalServiceError(
+                "llm_invalid_chunk_window",
+                f"模型{label}超出了输入时间窗口",
+                True,
+            )
+
+    @classmethod
+    def _balanced_timeline(
+        cls,
+        timeline: list[TimelineItem],
+        chunks: list[ChunkSummary],
+    ) -> list[TimelineItem]:
+        if not chunks:
+            return sorted(timeline, key=lambda item: (item.start_ms, item.end_ms))
+
+        selected = list(timeline)
+
+        for chunk in chunks:
+            valid_ids = {
+                evidence_id
+                for evidence_id in (
+                    chunk.evidence_segment_ids
+                    + [
+                        item
+                        for candidate in chunk.timeline_candidates
+                        for item in candidate.evidence_segment_ids
+                    ]
+                )
+            }
+            if any(
+                item.end_ms > chunk.start_ms
+                and item.start_ms < chunk.end_ms
+                and set(item.evidence_segment_ids) & valid_ids
+                for item in selected
+            ):
+                continue
+            target = (chunk.start_ms + chunk.end_ms) // 2
+            candidates = sorted(
+                (
+                    cls._timeline_item(candidate)
+                    for candidate in chunk.timeline_candidates
+                ),
+                key=lambda item: (
+                    abs(cls._timeline_midpoint(item) - target),
+                    -len(item.detail),
+                ),
+            )
+            candidate = next(
+                (
+                    item
+                    for item in candidates
+                    if not cls._timeline_duplicate(item, selected)
+                ),
+                None,
+            )
+            if candidate is not None:
+                selected.append(candidate)
+
+        return sorted(
+            selected,
+            key=lambda item: (item.start_ms, item.end_ms),
+        )
+
+    @staticmethod
+    def _timeline_item(candidate: SummaryCandidate) -> TimelineItem:
+        return TimelineItem.model_validate(candidate.model_dump())
+
+    @staticmethod
+    def _timeline_midpoint(item: TimelineItem) -> int:
+        return (item.start_ms + item.end_ms) // 2
+
+    @classmethod
+    def _timeline_duplicate(
+        cls,
+        candidate: TimelineItem,
+        selected: list[TimelineItem],
+    ) -> bool:
+        midpoint = cls._timeline_midpoint(candidate)
+        return any(
+            (
+                candidate.start_ms == item.start_ms
+                and candidate.end_ms == item.end_ms
+                and candidate.title == item.title
+            )
+            or (
+                abs(midpoint - cls._timeline_midpoint(item)) <= 10_000
+                and candidate.title == item.title
+            )
+            for item in selected
+        )

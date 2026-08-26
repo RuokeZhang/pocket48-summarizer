@@ -137,3 +137,43 @@ def test_clip_command_builds_landscape_canvas_before_ass(settings):
         "setsar=1,"
         "ass=filename='/tmp/overlay.ass'"
     )
+
+
+def test_cover_frame_command_seeks_and_matches_landscape_canvas(settings):
+    runner = FFmpegRunner(settings)
+
+    command = runner.build_cover_frame_command(
+        MANIFEST_URL,
+        Path("/tmp/cover.png"),
+        timestamp_ms=45_250,
+        ass_path=Path("/tmp/cover title.ass"),
+        output_layout="landscape",
+    )
+
+    assert command[command.index("-ss") + 1] == "45.250"
+    assert command[command.index("-frames:v") + 1] == "1"
+    vf = command[command.index("-vf") + 1]
+    assert "pad=1920:1080:(ow-iw)/2:0:color=0xEBE9E1" in vf
+    assert "ass=filename='/tmp/cover title.ass'" in vf
+    assert command[-1] == "/tmp/cover.png"
+
+
+def test_prepend_cover_command_delays_audio_until_cover_finishes(settings):
+    runner = FFmpegRunner(settings)
+
+    command = runner.build_prepend_cover_command(
+        Path("/tmp/cover.png"),
+        Path("/tmp/clip.mp4"),
+        Path("/tmp/final.mp4"),
+        duration_ms=1500,
+    )
+
+    assert command[command.index("-loop") + 1] == "1"
+    assert command[command.index("-framerate") + 1] == "30"
+    assert command[command.index("-t") + 1] == "1.500"
+    assert command[command.index("-itsoffset") + 1] == "1.500"
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "[cover][main]concat=n=2:v=1:a=0[v]" in filter_complex
+    assert "trim=duration=1.500" in filter_complex
+    assert "2:a:0?" in command
+    assert command[-1] == "/tmp/final.mp4"

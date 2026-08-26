@@ -19,12 +19,16 @@ from .auth import AuthContext
 from .errors import AppError
 from .media.clips import ClipState
 from .media.overlays import (
+    COVER_DURATION_MS,
+    COVER_TITLE_MAX_LENGTH,
+    DEFAULT_COVER_STYLE,
     DEFAULT_SUBTITLE_BACKGROUND_COLOR,
     DEFAULT_SUBTITLE_FONT_SCALE,
     DEFAULT_SUBTITLE_TEXT_COLOR,
     MIN_SUBTITLE_CONTRAST_RATIO,
     SUBTITLE_FONT_SCALE_MAX,
     SUBTITLE_FONT_SCALE_MIN,
+    normalize_cover_title,
     normalize_subtitle_color,
     subtitle_contrast_ratio,
 )
@@ -81,6 +85,12 @@ class CreateClipExportRequest(BaseModel):
     )
     output_layout: Literal["portrait", "landscape"] = "portrait"
     subtitle_font_family: Literal["wenkai", "serif", "sans"] = "wenkai"
+    cover_enabled: bool = False
+    cover_timestamp_ms: int | None = Field(default=None, ge=0)
+    cover_title: str = Field(default="", max_length=COVER_TITLE_MAX_LENGTH)
+    cover_style: Literal["scrim", "display", "badge"] = (
+        DEFAULT_COVER_STYLE
+    )
 
     @field_validator(
         "subtitle_text_color",
@@ -90,8 +100,13 @@ class CreateClipExportRequest(BaseModel):
     def normalize_color(cls, value: str) -> str:
         return normalize_subtitle_color(value)
 
+    @field_validator("cover_title")
+    @classmethod
+    def clean_cover_title(cls, value: str) -> str:
+        return normalize_cover_title(value)
+
     @model_validator(mode="after")
-    def validate_color_contrast(self) -> CreateClipExportRequest:
+    def validate_clip_style(self) -> CreateClipExportRequest:
         if (
             self.subtitle_mode != "off"
             and self.output_layout == "portrait"
@@ -102,6 +117,19 @@ class CreateClipExportRequest(BaseModel):
             < MIN_SUBTITLE_CONTRAST_RATIO
         ):
             raise ValueError("subtitle colors need at least 3:1 contrast")
+        if self.cover_enabled:
+            if not self.cover_title:
+                raise ValueError("cover title is required")
+            if (
+                self.cover_timestamp_ms is None
+                or self.cover_timestamp_ms < self.start_ms
+                or self.cover_timestamp_ms >= self.end_ms
+            ):
+                raise ValueError("cover frame must be inside the clip range")
+        else:
+            self.cover_timestamp_ms = None
+            self.cover_title = ""
+            self.cover_style = DEFAULT_COVER_STYLE
         return self
 
 
@@ -405,7 +433,11 @@ def clip_export_payload(
         "timeline_title": record.timeline_title,
         "start_ms": record.start_ms,
         "end_ms": record.end_ms,
-        "duration_ms": record.end_ms - record.start_ms,
+        "duration_ms": (
+            record.end_ms
+            - record.start_ms
+            + (COVER_DURATION_MS if record.cover_enabled else 0)
+        ),
         "subtitle_mode": record.subtitle_mode,
         "include_danmaku": record.include_danmaku,
         "subtitle_font_scale": record.subtitle_font_scale,
@@ -413,6 +445,13 @@ def clip_export_payload(
         "subtitle_background_color": record.subtitle_background_color,
         "output_layout": record.output_layout,
         "subtitle_font_family": record.subtitle_font_family,
+        "cover_enabled": record.cover_enabled,
+        "cover_timestamp_ms": record.cover_timestamp_ms,
+        "cover_title": record.cover_title,
+        "cover_style": record.cover_style,
+        "cover_duration_ms": (
+            COVER_DURATION_MS if record.cover_enabled else 0
+        ),
         "filename": record.filename,
         "status": record.status,
         "error": record.error_message,
@@ -692,6 +731,10 @@ async def job_page(request: Request, job_id: str) -> Response:
                 context is not None
                 and request.app.state.services.clipper is not None
                 and not request.app.state.settings.clip_maintenance_path.exists()
+            ),
+            "can_preview_clips": (
+                request.app.state.services.clipper is not None
+                and job.media_url is not None
             ),
             "can_request_translation": context is not None,
             "clip_context_ms": round(
@@ -974,6 +1017,10 @@ async def create_clip_export(
             ),
             output_layout=payload.output_layout,
             subtitle_font_family=payload.subtitle_font_family,
+            cover_enabled=payload.cover_enabled,
+            cover_timestamp_ms=payload.cover_timestamp_ms,
+            cover_title=payload.cover_title,
+            cover_style=payload.cover_style,
         )
     return JSONResponse(
         clip_export_payload(job.id, record),

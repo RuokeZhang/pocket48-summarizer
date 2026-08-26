@@ -289,6 +289,139 @@ class FFmpegRunner:
         )
         return command
 
+    def build_cover_frame_command(
+        self,
+        manifest_url: str,
+        output_path: Path,
+        timestamp_ms: int,
+        ass_path: Path,
+        output_layout: ClipOutputLayout = "portrait",
+    ) -> list[str]:
+        validate_https_url(
+            manifest_url,
+            MEDIA_HOSTS,
+            code="invalid_media_url",
+            label="回放媒体",
+        )
+        if timestamp_ms < 0:
+            raise AppError(
+                "clip_cover_invalid",
+                "封面画面时间无效",
+                False,
+            )
+        filters: list[str] = []
+        if output_layout == "landscape":
+            filters.extend(landscape_video_filters())
+        elif output_layout != "portrait":
+            raise AppError(
+                "clip_layout_invalid",
+                "视频画面方向无效",
+                False,
+            )
+        filters.append(
+            f"ass=filename='{self._escape_filter_path(ass_path)}'"
+        )
+        return [
+            self.require_executable(),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-user_agent",
+            "pocket48-summarizer/0.1",
+            "-rw_timeout",
+            "30000000",
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_on_network_error",
+            "1",
+            "-reconnect_on_http_error",
+            "4xx,5xx",
+            "-reconnect_delay_max",
+            "5",
+            "-headers",
+            "Origin: https://h5.48.cn\r\nReferer: https://h5.48.cn/\r\n",
+            "-ss",
+            f"{timestamp_ms / 1000:.3f}",
+            "-i",
+            manifest_url,
+            "-vf",
+            ",".join(filters),
+            "-frames:v",
+            "1",
+            "-an",
+            "-y",
+            str(output_path),
+        ]
+
+    def build_prepend_cover_command(
+        self,
+        cover_path: Path,
+        clip_path: Path,
+        output_path: Path,
+        *,
+        duration_ms: int,
+    ) -> list[str]:
+        if duration_ms <= 0:
+            raise AppError(
+                "clip_cover_invalid",
+                "封面停留时间无效",
+                False,
+            )
+        duration = f"{duration_ms / 1000:.3f}"
+        filter_complex = (
+            f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,"
+            "fps=30,format=yuv420p,setsar=1[cover];"
+            "[1:v]setpts=PTS-STARTPTS,fps=30,"
+            "format=yuv420p,setsar=1[main];"
+            "[cover][main]concat=n=2:v=1:a=0[v]"
+        )
+        return [
+            self.require_executable(),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-loop",
+            "1",
+            "-framerate",
+            "30",
+            "-t",
+            duration,
+            "-i",
+            str(cover_path),
+            "-i",
+            str(clip_path),
+            "-itsoffset",
+            duration,
+            "-i",
+            str(clip_path),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "2:a:0?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-avoid_negative_ts",
+            "make_zero",
+            "-y",
+            str(output_path),
+        ]
+
     def build_probe_command(self, manifest_url: str) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -512,6 +645,93 @@ class FFmpegRunner:
                 raise AppError(
                     "video_clip_missing",
                     "FFmpeg 未生成视频片段",
+                    True,
+                )
+            temporary_path.replace(output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return output_path
+
+    async def render_cover_frame(
+        self,
+        manifest_url: str,
+        output_path: Path,
+        timestamp_ms: int,
+        ass_path: Path,
+        output_layout: ClipOutputLayout = "portrait",
+    ) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = output_path.with_suffix(".part.png")
+        temporary_path.unlink(missing_ok=True)
+        try:
+            await self._run_command(
+                self.build_cover_frame_command(
+                    manifest_url,
+                    temporary_path,
+                    timestamp_ms,
+                    ass_path,
+                    output_layout,
+                ),
+                timeout_seconds=10 * 60,
+                heartbeat=None,
+                error_code="clip_cover_frame_failed",
+                error_message="提取封面画面失败",
+                redact_value=manifest_url,
+            )
+            if (
+                not temporary_path.is_file()
+                or temporary_path.stat().st_size == 0
+            ):
+                raise AppError(
+                    "clip_cover_frame_missing",
+                    "FFmpeg 未生成封面画面",
+                    True,
+                )
+            temporary_path.replace(output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return output_path
+
+    async def prepend_cover(
+        self,
+        cover_path: Path,
+        clip_path: Path,
+        output_path: Path,
+        *,
+        duration_ms: int,
+    ) -> Path:
+        if not cover_path.is_file() or not clip_path.is_file():
+            raise AppError(
+                "clip_cover_input_missing",
+                "封面或视频片段不存在",
+                True,
+            )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = output_path.with_suffix(".part.mp4")
+        temporary_path.unlink(missing_ok=True)
+        try:
+            await self._run_command(
+                self.build_prepend_cover_command(
+                    cover_path,
+                    clip_path,
+                    temporary_path,
+                    duration_ms=duration_ms,
+                ),
+                timeout_seconds=15 * 60,
+                heartbeat=None,
+                error_code="clip_cover_prepend_failed",
+                error_message="合成视频封面失败",
+                redact_value=None,
+            )
+            if (
+                not temporary_path.is_file()
+                or temporary_path.stat().st_size == 0
+            ):
+                raise AppError(
+                    "clip_cover_output_missing",
+                    "FFmpeg 未生成带封面的视频",
                     True,
                 )
             temporary_path.replace(output_path)

@@ -5,6 +5,8 @@ from pocket48_summarizer.models import (
     ChunkSummary,
     DanmakuPeak,
     FinalSummary,
+    SummaryCandidate,
+    TimelineItem,
     TranscriptSegment,
 )
 from pocket48_summarizer.summarization.prompts import final_prompt
@@ -24,7 +26,15 @@ class FakeLLM:
                 "end_ms": 5000,
                 "summary": "主播问候观众并介绍主题。",
                 "topics": ["近况"],
-                "timeline_candidates": [],
+                "timeline_candidates": [
+                    {
+                        "start_ms": 0,
+                        "end_ms": 5000,
+                        "title": "开场",
+                        "detail": "主播向观众问好。",
+                        "evidence_segment_ids": [1],
+                    }
+                ],
                 "highlight_candidates": [],
                 "verification_needed": [],
                 "evidence_segment_ids": [1],
@@ -91,7 +101,15 @@ class RepairingFinalLLM(FakeLLM):
             "end_ms": 5000,
             "summary": "主播问候观众。",
             "topics": [],
-            "timeline_candidates": [],
+            "timeline_candidates": [
+                {
+                    "start_ms": 0,
+                    "end_ms": 5000,
+                    "title": "开场",
+                    "detail": "主播向观众问好。",
+                    "evidence_segment_ids": [1],
+                }
+            ],
             "highlight_candidates": [],
             "verification_needed": [],
             "evidence_segment_ids": [1],
@@ -128,6 +146,15 @@ def test_final_prompt_reuses_window_transcript_and_keeps_danmaku_untrusted():
                 start_ms=0,
                 end_ms=5000,
                 summary="主播向观众问好。",
+                timeline_candidates=[
+                    SummaryCandidate(
+                        start_ms=0,
+                        end_ms=5000,
+                        title="开场",
+                        detail="主播向观众问好。",
+                        evidence_segment_ids=[1],
+                    )
+                ],
                 evidence_segment_ids=[1],
             )
         ],
@@ -183,7 +210,7 @@ async def test_summarizes_with_evidence(settings, repository):
     assert summary.timeline[0].evidence_segment_ids == [1]
     assert "观众积极回应" in summary.danmaku_peak_summaries[0].summary
     assert "# 测试直播" in markdown
-    assert repository.get_summary_chunks(job.id, "v1")
+    assert repository.get_summary_chunks(job.id, "v2")
 
 
 @pytest.mark.asyncio
@@ -246,3 +273,50 @@ async def test_final_summary_retries_with_schema_feedback(
     assert "previous_response_validation_error" in llm.prompts[2][
         "user_prompt"
     ]
+
+
+def test_timeline_keeps_all_model_items_and_fills_late_chunks():
+    chunks = [
+        ChunkSummary(
+            start_ms=index * 1_200_000,
+            end_ms=(index + 1) * 1_200_000,
+            summary=f"第 {index + 1} 段",
+            timeline_candidates=[
+                SummaryCandidate(
+                    start_ms=index * 1_200_000 + 300_000,
+                    end_ms=index * 1_200_000 + 360_000,
+                    title=f"分段事件 {index + 1}",
+                    detail=f"第 {index + 1} 段的代表事件。",
+                    evidence_segment_ids=[index + 1],
+                )
+            ],
+            evidence_segment_ids=[index + 1],
+        )
+        for index in range(4)
+    ]
+    early_items = [
+        TimelineItem(
+            start_ms=index * 20_000,
+            end_ms=index * 20_000 + 10_000,
+            title=f"前段事件 {index + 1}",
+            detail="模型保留的前段事件。",
+            evidence_segment_ids=[1],
+        )
+        for index in range(20)
+    ]
+
+    timeline = SummarizationService._balanced_timeline(
+        early_items,
+        chunks,
+    )
+
+    assert len(timeline) == 23
+    assert {item.title for item in early_items}.issubset(
+        {item.title for item in timeline}
+    )
+    assert timeline[-1].start_ms == 3_900_000
+    assert {
+        evidence_id
+        for item in timeline
+        for evidence_id in item.evidence_segment_ids
+    } >= {1, 2, 3, 4}

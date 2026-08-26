@@ -13,6 +13,8 @@ from pocket48_summarizer.media.layouts import (
     LANDSCAPE_SUBTITLE_WIDTH,
 )
 from pocket48_summarizer.media.overlays import (
+    COVER_DURATION_MS,
+    build_cover_overlay,
     build_clip_overlay,
     subtitle_contrast_ratio,
 )
@@ -63,7 +65,7 @@ def test_overlay_renders_bilingual_subtitles_and_bounded_danmaku():
     assert r"\fad(120,0)" in document.content
     assert "Style: SubtitleZh,Noto Sans CJK SC" in document.content
     assert (
-        "Style: SubtitleZh,Noto Sans CJK SC,54,"
+        "Style: SubtitleZh,Noto Sans CJK SC,87,"
         "&H00123DE4,&H00123DE4,&H18E1E9EB,&H38E1E9EB"
         in document.content
     )
@@ -398,3 +400,37 @@ def test_landscape_english_wrap_uses_browser_equivalent_width():
         r"{\rLandscapeSubtitleEn}I have started reflecting on myself."
         in document.content
     )
+
+
+@pytest.mark.parametrize(
+    ("style", "expected"),
+    [
+        ("scrim", r"\pos(692,130)\p1"),
+        ("display", r"\pos(960,454)"),
+        ("badge", r"\pos(692,670)\p1"),
+    ],
+)
+def test_cover_overlay_keeps_title_inside_video_safe_area(style, expected):
+    document = build_cover_overlay(
+        width=1920,
+        height=1080,
+        title="这是一个自定义封面标题，最多显示两行",
+        style=style,
+        output_layout="landscape",
+    )
+
+    assert document.style == style
+    assert document.title == "这是一个自定义封面标题，最多显示两行"
+    assert expected in document.content
+    assert "Style: CoverTitle,Noto Sans CJK SC" in document.content
+    assert document.content.count(r"\N") <= 1
+    assert "0:00:01.50" in document.content
+
+
+def test_cover_overlay_rejects_empty_title():
+    with pytest.raises(AppError, match="封面标题"):
+        build_cover_overlay(
+            width=1080,
+            height=1920,
+            title="   ",
+        )

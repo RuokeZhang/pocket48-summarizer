@@ -171,7 +171,10 @@ class ChunkSummary(StrictSummaryModel):
     end_ms: int
     summary: str
     topics: list[str] = Field(default_factory=list)
-    timeline_candidates: list[SummaryCandidate] = Field(default_factory=list)
+    timeline_candidates: list[SummaryCandidate] = Field(
+        min_length=1,
+        max_length=3,
+    )
     highlight_candidates: list[SummaryCandidate] = Field(default_factory=list)
     verification_needed: list[str] = Field(default_factory=list)
     evidence_segment_ids: list[int] = Field(default_factory=list)
@@ -292,6 +295,10 @@ class VideoClipExportRecord(BaseModel):
     subtitle_background_color: str
     output_layout: Literal["portrait", "landscape"]
     subtitle_font_family: Literal["wenkai", "serif", "sans"]
+    cover_enabled: bool
+    cover_timestamp_ms: int | None = None
+    cover_title: str
+    cover_style: Literal["scrim", "display", "badge"]
     render_version: str
     filename: str
     status: Literal["running", "completed", "failed"]

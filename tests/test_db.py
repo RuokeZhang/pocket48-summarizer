@@ -1,3 +1,4 @@
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -34,7 +35,118 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "009_clip_subtitle_styles.sql",
         "010_clip_output_layout.sql",
         "011_clip_subtitle_fonts.sql",
+        "012_clip_covers.sql",
+        "013_resummarize_incomplete_timelines.sql",
     ]
+
+
+def test_cover_migration_normalizes_existing_font_scale(tmp_path):
+    database_path = tmp_path / "font-scale.sqlite3"
+    migration_dir = (
+        Path(__file__).parents[1]
+        / "src"
+        / "pocket48_summarizer"
+        / "migrations"
+    )
+
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE schema_migrations (
+            version TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    for migration in sorted(migration_dir.glob("*.sql")):
+        if migration.name == "012_clip_covers.sql":
+            break
+        connection.executescript(migration.read_text(encoding="utf-8"))
+        connection.execute(
+            """
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?, datetime('now'))
+            """,
+            (migration.name,),
+        )
+    connection.execute(
+        """
+        INSERT INTO jobs (
+            id, source_url, live_id, status, stage, created_at, updated_at
+        ) VALUES (
+            'job-font-scale', 'https://example.com/live', 'font-scale',
+            'completed', 'completed', datetime('now'), datetime('now')
+        )
+        """
+    )
+    for clip_id, scale in (("clip-160", 160), ("clip-100", 100)):
+        connection.execute(
+            """
+            INSERT INTO video_clip_exports (
+                id, job_id, timeline_index, request_id,
+                start_ms, end_ms, subtitle_mode, render_version,
+                filename, status, created_at, updated_at,
+                subtitle_font_scale
+            ) VALUES (
+                ?, 'job-font-scale', 0, ?,
+                1000, 5000, 'zh', 'ass-v7',
+                ?, 'completed', datetime('now'), datetime('now'), ?
+            )
+            """,
+            (clip_id, f"request-{clip_id}", f"{clip_id}.mp4", scale),
+        )
+    connection.commit()
+    connection.close()
+
+    Database(database_path).initialize()
+
+    with Database(database_path).connect() as migrated:
+        rows = migrated.execute(
+            """
+            SELECT id, subtitle_font_percent, cover_enabled, cover_style
+            FROM video_clip_exports
+            ORDER BY id
+            """
+        ).fetchall()
+
+    assert [
+        (
+            row["id"],
+            row["subtitle_font_percent"],
+            row["cover_enabled"],
+            row["cover_style"],
+        )
+        for row in rows
+    ] == [
+        ("clip-100", 63, 0, "scrim"),
+        ("clip-160", 100, 0, "scrim"),
+    ]
+
+    with Database(database_path).connect() as migrated:
+        migrated.execute(
+            """
+            INSERT INTO video_clip_exports (
+                id, job_id, timeline_index, request_id,
+                start_ms, end_ms, subtitle_mode, render_version,
+                filename, status, created_at, updated_at,
+                subtitle_font_scale
+            ) VALUES (
+                'clip-legacy-insert', 'job-font-scale', 0, 'legacy-insert',
+                1000, 5000, 'zh', 'ass-v7',
+                'clip-legacy-insert.mp4', 'completed',
+                datetime('now'), datetime('now'), 128
+            )
+            """
+        )
+        normalized = migrated.execute(
+            """
+            SELECT subtitle_font_percent
+            FROM video_clip_exports
+            WHERE id = 'clip-legacy-insert'
+            """
+        ).fetchone()
+
+    assert normalized["subtitle_font_percent"] == 80
 
 
 def test_backfill_migration_queues_completed_transcripts(tmp_path):
@@ -73,6 +185,87 @@ def test_backfill_migration_queues_completed_transcripts(tmp_path):
 
     translation = repository.get_subtitle_translation_request(job.id)
     assert translation and translation.status == "queued"
+
+
+def test_incomplete_long_timelines_are_queued_for_resummarization(tmp_path):
+    database_path = tmp_path / "timeline-coverage.sqlite3"
+    migration_dir = (
+        Path(__file__).parents[1]
+        / "src"
+        / "pocket48_summarizer"
+        / "migrations"
+    )
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE schema_migrations (
+            version TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    for migration in sorted(migration_dir.glob("*.sql")):
+        if migration.name == "013_resummarize_incomplete_timelines.sql":
+            break
+        connection.executescript(migration.read_text(encoding="utf-8"))
+        connection.execute(
+            """
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?, datetime('now'))
+            """,
+            (migration.name,),
+        )
+    for job_id, timeline_end in (
+        ("incomplete-timeline", 4_000_000),
+        ("covered-timeline", 11_000_000),
+    ):
+        summary_json = (
+            '{"overview":"测试","timeline":[{"start_ms":0,'
+            f'"end_ms":{timeline_end},"title":"测试","detail":"测试",'
+            '"evidence_segment_ids":[1]}],"topics":[],"highlights":[]}'
+        )
+        connection.execute(
+            """
+            INSERT INTO jobs (
+                id, source_url, live_id, status, stage, duration_ms,
+                summary_json, summary_markdown, progress_percent,
+                progress_message, created_at, updated_at, completed_at
+            ) VALUES (
+                ?, 'https://example.com/live', ?, 'completed', 'completed',
+                12000000, ?, '# 测试', 100, '处理完成',
+                datetime('now'), datetime('now'), datetime('now')
+            )
+            """,
+            (job_id, job_id, summary_json),
+        )
+        connection.execute(
+            """
+            INSERT INTO transcript_segments (
+                job_id, sequence, start_ms, end_ms, text
+            ) VALUES (?, 1, 0, 12000000, '完整长直播字幕')
+            """,
+            (job_id,),
+        )
+    connection.commit()
+    connection.close()
+
+    Database(database_path).initialize()
+
+    with Database(database_path).connect() as migrated:
+        incomplete = migrated.execute(
+            "SELECT * FROM jobs WHERE id = 'incomplete-timeline'"
+        ).fetchone()
+        covered = migrated.execute(
+            "SELECT * FROM jobs WHERE id = 'covered-timeline'"
+        ).fetchone()
+
+    assert incomplete["status"] == "queued"
+    assert incomplete["stage"] == "queued"
+    assert incomplete["summary_json"] is None
+    assert incomplete["summary_markdown"] is None
+    assert incomplete["completed_at"] is None
+    assert covered["status"] == "completed"
+    assert covered["summary_json"] is not None
 
 
 def test_configurable_clip_migration_backfills_legacy_rows_idempotently(
@@ -118,7 +311,7 @@ def test_configurable_clip_migration_backfills_legacy_rows_idempotently(
     assert exports[0].timeline_index == 2
     assert exports[0].request_id == "legacy:2"
     assert exports[0].subtitle_mode == "off"
-    assert exports[0].subtitle_font_scale == 100
+    assert exports[0].subtitle_font_scale == 63
     assert exports[0].subtitle_text_color == "#FFFFFF"
     assert exports[0].subtitle_background_color == "#000000"
     assert exports[0].output_layout == "portrait"

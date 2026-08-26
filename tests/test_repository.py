@@ -71,6 +71,10 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
         subtitle_background_color="#EBE9E1",
         output_layout="landscape",
         subtitle_font_family="serif",
+        cover_enabled=True,
+        cover_timestamp_ms=2500,
+        cover_title="第一段封面",
+        cover_style="display",
         render_version="ass-v2",
         filename="clip-1.mp4",
     )
@@ -113,6 +117,21 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
     assert duplicate.subtitle_background_color == "#EBE9E1"
     assert duplicate.output_layout == "landscape"
     assert duplicate.subtitle_font_family == "serif"
+    assert duplicate.cover_enabled
+    assert duplicate.cover_timestamp_ms == 2500
+    assert duplicate.cover_title == "第一段封面"
+    assert duplicate.cover_style == "display"
+    with repository.database.connect() as connection:
+        stored_scale = connection.execute(
+            """
+            SELECT subtitle_font_scale, subtitle_font_percent
+            FROM video_clip_exports
+            WHERE id = ?
+            """,
+            (first.id,),
+        ).fetchone()
+    assert stored_scale["subtitle_font_scale"] == 160
+    assert stored_scale["subtitle_font_percent"] == 125
     assert [item.id for item in repository.list_video_clip_exports(job.id)] == [
         second.id,
         first.id,

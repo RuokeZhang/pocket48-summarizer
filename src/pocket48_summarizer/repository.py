@@ -79,7 +79,12 @@ class JobRepository:
     ) -> VideoClipExportRecord | None:
         if row is None:
             return None
-        return VideoClipExportRecord.model_validate(dict(row))
+        payload = dict(row)
+        if "subtitle_font_percent" in payload:
+            payload["subtitle_font_scale"] = payload[
+                "subtitle_font_percent"
+            ]
+        return VideoClipExportRecord.model_validate(payload)
 
     @staticmethod
     def _clip_boundary_suggestion(
@@ -1074,8 +1079,16 @@ class JobRepository:
         subtitle_background_color: str = "#000000",
         output_layout: str = "portrait",
         subtitle_font_family: str = "sans",
+        cover_enabled: bool = False,
+        cover_timestamp_ms: int | None = None,
+        cover_title: str = "",
+        cover_style: str = "scrim",
     ) -> tuple[VideoClipExportRecord, bool]:
         now = utcnow()
+        legacy_font_scale = max(
+            70,
+            min(160, round(subtitle_font_scale * 1.6)),
+        )
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             inserted = connection.execute(
@@ -1083,13 +1096,17 @@ class JobRepository:
                 INSERT OR IGNORE INTO video_clip_exports (
                     id, job_id, timeline_index, timeline_title,
                     requested_by_user_id, request_id, start_ms, end_ms,
-                    subtitle_mode, include_danmaku, subtitle_font_scale,
+                    subtitle_mode, include_danmaku,
+                    subtitle_font_scale, subtitle_font_percent,
                     subtitle_text_color, subtitle_background_color,
                     output_layout, subtitle_font_family,
+                    cover_enabled, cover_timestamp_ms, cover_title,
+                    cover_style,
                     render_version, filename,
                     status, created_at, updated_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
                     'running', ?, ?
                 )
                 """,
@@ -1104,11 +1121,16 @@ class JobRepository:
                     end_ms,
                     subtitle_mode,
                     int(include_danmaku),
+                    legacy_font_scale,
                     subtitle_font_scale,
                     subtitle_text_color,
                     subtitle_background_color,
                     output_layout,
                     subtitle_font_family,
+                    int(cover_enabled),
+                    cover_timestamp_ms,
+                    cover_title,
+                    cover_style,
                     render_version,
                     filename,
                     now,
@@ -1223,7 +1245,9 @@ class JobRepository:
                 parameters,
             ).fetchall()
         return [
-            VideoClipExportRecord.model_validate(dict(row)) for row in rows
+            export
+            for row in rows
+            if (export := self._video_clip_export(row)) is not None
         ]
 
     def complete_video_clip_export(
