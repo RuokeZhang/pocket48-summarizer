@@ -79,6 +79,11 @@ class SummarizationService:
             if existing and existing[0] == input_hash:
                 try:
                     chunk_summary = ChunkSummary.model_validate_json(existing[1])
+                    chunk_summary = self._normalize_chunk_window(
+                        chunk_summary,
+                        expected_start_ms=chunk.start_ms,
+                        expected_end_ms=chunk.end_ms,
+                    )
                     self._validate_chunk_evidence(
                         chunk_summary,
                         valid_chunk_ids,
@@ -154,6 +159,11 @@ class SummarizationService:
             )
             try:
                 summary = ChunkSummary.model_validate(payload)
+                summary = self._normalize_chunk_window(
+                    summary,
+                    expected_start_ms=expected_start_ms,
+                    expected_end_ms=expected_end_ms,
+                )
                 self._validate_chunk_evidence(
                     summary,
                     valid_ids,
@@ -242,6 +252,25 @@ class SummarizationService:
             "模型最终总结不符合要求的 JSON 结构",
             True,
         ) from last_error
+
+    @staticmethod
+    def _normalize_chunk_window(
+        summary: ChunkSummary,
+        *,
+        expected_start_ms: int,
+        expected_end_ms: int,
+    ) -> ChunkSummary:
+        if (
+            summary.start_ms == expected_start_ms
+            and summary.end_ms == expected_end_ms
+        ):
+            return summary
+        return summary.model_copy(
+            update={
+                "start_ms": expected_start_ms,
+                "end_ms": expected_end_ms,
+            }
+        )
 
     @staticmethod
     def _schema_retry_prompt(

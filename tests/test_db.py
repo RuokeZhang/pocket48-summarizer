@@ -39,6 +39,7 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "013_resummarize_incomplete_timelines.sql",
         "014_clip_ranges.sql",
         "015_resummarize_coarse_timelines.sql",
+        "016_retry_normalized_chunk_windows.sql",
     ]
 
 
@@ -343,6 +344,78 @@ def test_incomplete_long_timelines_are_queued_for_resummarization(tmp_path):
     assert coarse["status"] == "queued"
     assert coarse["summary_json"] is None
     assert coarse["progress_message"] == "等待细化长直播时间线"
+
+
+def test_failed_chunk_window_job_is_requeued_after_normalization_fix(
+    tmp_path,
+):
+    database_path = tmp_path / "chunk-window-retry.sqlite3"
+    migration_dir = (
+        Path(__file__).parents[1]
+        / "src"
+        / "pocket48_summarizer"
+        / "migrations"
+    )
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE schema_migrations (
+            version TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    for migration in sorted(migration_dir.glob("*.sql")):
+        if migration.name == "016_retry_normalized_chunk_windows.sql":
+            break
+        connection.executescript(migration.read_text(encoding="utf-8"))
+        connection.execute(
+            """
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?, datetime('now'))
+            """,
+            (migration.name,),
+        )
+    connection.execute(
+        """
+        INSERT INTO jobs (
+            id, source_url, live_id, status, stage, duration_ms,
+            progress_percent, progress_message, error_code, error_message,
+            error_retryable, created_at, updated_at, started_at
+        ) VALUES (
+            'chunk-window-failed', 'https://example.com/live',
+            'chunk-window-failed', 'failed', 'summarizing_chunks',
+            12000000, 70, '分段总结失败', 'llm_invalid_chunk_window',
+            '模型分段总结改写了输入时间窗口', 1,
+            datetime('now'), datetime('now'), datetime('now')
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO transcript_segments (
+            job_id, sequence, start_ms, end_ms, text
+        ) VALUES (
+            'chunk-window-failed', 1, 0, 12000000, '完整长直播字幕'
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    Database(database_path).initialize()
+
+    with Database(database_path).connect() as migrated:
+        job = migrated.execute(
+            "SELECT * FROM jobs WHERE id = 'chunk-window-failed'"
+        ).fetchone()
+
+    assert job["status"] == "queued"
+    assert job["stage"] == "queued"
+    assert job["progress_message"] == "等待继续细化长直播时间线"
+    assert job["error_code"] is None
+    assert job["error_message"] is None
+    assert job["started_at"] is None
 
 
 def test_configurable_clip_migration_backfills_legacy_rows_idempotently(

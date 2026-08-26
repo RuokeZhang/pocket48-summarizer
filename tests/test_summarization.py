@@ -134,6 +134,32 @@ class RepairingFinalLLM(FakeLLM):
         }
 
 
+class RewritingChunkWindowLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def chat_json(self, **_):
+        self.calls += 1
+        return {
+            "start_ms": 250,
+            "end_ms": 4750,
+            "summary": "主播问候观众。",
+            "topics": [],
+            "timeline_candidates": [
+                {
+                    "start_ms": 0,
+                    "end_ms": 5000,
+                    "title": "开场",
+                    "detail": "主播向观众问好。",
+                    "evidence_segment_ids": [1],
+                }
+            ],
+            "highlight_candidates": [],
+            "verification_needed": [],
+            "evidence_segment_ids": [1],
+        }
+
+
 def test_old_final_summary_defaults_peak_summaries():
     summary = FinalSummary.model_validate(
         {
@@ -227,6 +253,7 @@ def test_timeline_prompts_and_validation_reject_coarse_or_unlinked_events():
     )[0]
 
     assert "最长 5 分钟" in chunk_prompt(chunk)
+    assert "固定分段元数据" in chunk_prompt(chunk)
     assert "不得用十几分钟的宽泛区间" in final_prompt([], [])
 
     with pytest.raises(ExternalServiceError, match="最多 5 分钟"):
@@ -254,6 +281,26 @@ def test_timeline_prompts_and_validation_reject_coarse_or_unlinked_events():
             {1: (120_000, 180_000)},
             "时间线",
         )
+
+
+@pytest.mark.asyncio
+async def test_chunk_window_is_normalized_instead_of_failing(
+    settings, repository
+):
+    llm = RewritingChunkWindowLLM()
+    service = SummarizationService(settings, repository, llm)
+
+    summary = await service._request_chunk(
+        "测试提示词",
+        {1},
+        {1: (0, 5000)},
+        expected_start_ms=0,
+        expected_end_ms=5000,
+    )
+
+    assert summary.start_ms == 0
+    assert summary.end_ms == 5000
+    assert llm.calls == 1
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,9 @@ def chunk_prompt(chunk: TranscriptChunk) -> str:
     }
     return (
         "请分析以下直播字幕片段。时间与 segment id 是引用证据，不得改写为不存在的证据。\n"
+        f"输出顶层 start_ms 和 end_ms 是固定分段元数据，必须分别原样返回 "
+        f"{chunk.start_ms} 和 {chunk.end_ms}；下面关于精确事件边界的要求只适用于 "
+        "timeline_candidates 和 highlight_candidates。\n"
         "timeline_candidates 必须输出 1 到 3 条，选择本片段内最值得进入整场时间线的"
         "不同事件；至少一条应能代表本片段的主要内容，不能返回空数组。每条事件的"
         "时间范围必须紧贴其引用字幕实际发生的时段并与证据字幕重叠，最长 5 分钟；"
