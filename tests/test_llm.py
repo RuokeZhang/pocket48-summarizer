@@ -104,3 +104,69 @@ async def test_reports_truncated_model_output(settings):
 
     assert error.value.code == "llm_output_truncated"
     await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_retries_truncated_output_with_recovery_limit(settings):
+    requested_limits = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        requested_limits.append(body["max_tokens"])
+        if len(requested_limits) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"content": '{"overview":"partial"'},
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "overview": "完整总结",
+                                    "timeline": [],
+                                    "topics": [],
+                                    "highlights": [],
+                                    "danmaku_peak_summaries": [],
+                                    "verification_needed": [],
+                                },
+                                ensure_ascii=False,
+                            )
+                        },
+                    }
+                ]
+            },
+        )
+
+    configured = settings.model_copy(
+        update={
+            "external_retry_attempts": 2,
+            "llm_max_output_tokens": 16_384,
+            "llm_truncation_retry_max_tokens": 65_536,
+        }
+    )
+    http_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    )
+    client = OpenAICompatibleClient(configured, client=http_client)
+
+    payload = await client.chat_json(
+        system_prompt="Return JSON.",
+        user_prompt="Summarize.",
+        response_model=FinalSummary,
+    )
+
+    assert payload["overview"] == "完整总结"
+    assert requested_limits == [16_384, 65_536]
+    await http_client.aclose()

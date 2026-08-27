@@ -103,20 +103,36 @@ class OpenAICompatibleClient:
                         False,
                     )
                 if response.status_code == 200:
-                    return self._parse_response(response)
+                    try:
+                        return self._parse_response(response)
+                    except ExternalServiceError as exc:
+                        retry_limit = (
+                            self.settings.llm_truncation_retry_max_tokens
+                        )
+                        current_limit = int(body["max_tokens"])
+                        if (
+                            exc.code != "llm_output_truncated"
+                            or current_limit >= retry_limit
+                            or attempt + 1
+                            >= self.settings.external_retry_attempts
+                        ):
+                            raise
+                        body["max_tokens"] = retry_limit
+                        last_error = exc
                 retryable = (
                     response.status_code == 429
                     or response.status_code >= 500
                 )
-                detail = self._safe_error_detail(response)
-                last_error = ExternalServiceError(
-                    "llm_request_failed",
-                    f"模型 API 请求失败（HTTP {response.status_code}）"
-                    + (f"：{detail}" if detail else ""),
-                    retryable,
-                )
-                if not retryable:
-                    raise last_error
+                if response.status_code != 200:
+                    detail = self._safe_error_detail(response)
+                    last_error = ExternalServiceError(
+                        "llm_request_failed",
+                        f"模型 API 请求失败（HTTP {response.status_code}）"
+                        + (f"：{detail}" if detail else ""),
+                        retryable,
+                    )
+                    if not retryable:
+                        raise last_error
             except httpx.RequestError as exc:
                 last_error = exc
             if attempt + 1 < self.settings.external_retry_attempts:

@@ -109,7 +109,8 @@ ARK_SEEDREAM_MODEL=...
 支持 JSON Schema 的模型可设置
 `LLM_RESPONSE_FORMAT=json_schema`，应用会把 Pydantic 响应结构发送给模型并严格校验；
 生产使用的 `qwen3.7-plus` 支持该模式。`LLM_MAX_OUTPUT_TOKENS` 控制结构化输出上限，
-默认值为 `32768`，
+默认值为 `32768`；仅当模型明确返回长度截断时，应用会使用
+`LLM_TRUNCATION_RETRY_MAX_TOKENS`（默认 `65536`）完整重试一次，
 `LLM_SCHEMA_RETRY_ATTEMPTS` 控制校验失败后的带反馈重试次数。
 `HLS_CONCURRENT_FRAGMENTS` 控制回放分片并行下载数，默认 16；若 Pocket48 CDN
 出现限流或下载错误，可降低该值，应用仍会在并行下载失败时自动回退到 FFmpeg。

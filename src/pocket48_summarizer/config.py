@@ -144,6 +144,11 @@ class Settings(BaseSettings):
         le=30.0,
     )
     llm_max_output_tokens: int = Field(default=32_768, ge=512, le=65_536)
+    llm_truncation_retry_max_tokens: int = Field(
+        default=65_536,
+        ge=512,
+        le=65_536,
+    )
     llm_chunk_overlap_segments: int = Field(default=3, ge=0, le=20)
     llm_temperature: float = Field(default=0.1, ge=0, le=2)
     llm_response_format: Literal[
@@ -161,6 +166,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bind_address(self) -> "Settings":
+        if (
+            self.llm_truncation_retry_max_tokens
+            < self.llm_max_output_tokens
+        ):
+            raise ValueError(
+                "LLM_TRUNCATION_RETRY_MAX_TOKENS must be greater than "
+                "or equal to LLM_MAX_OUTPUT_TOKENS"
+            )
         if (
             self.ai_cover_landscape_width * 9
             != self.ai_cover_landscape_height * 16
