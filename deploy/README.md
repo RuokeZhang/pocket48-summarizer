@@ -1,6 +1,6 @@
 # 阿里云香港 ECS 蓝绿部署
 
-目标架构：香港地域 ECS、私有 OSS、Caddy HTTPS、蓝绿 Web 槽位、独立单 Worker、SQLite 每日备份。已完成的直播结果、同步中英文字幕、弹幕和剪辑下载公开可见；提交任务、新建剪辑和为历史直播触发英文翻译需要邀请账号。生产模板把剪辑限制为单并发、每段最长 10 分钟，临时 HLS、FFmpeg 或 OSS 错误自动重试 3 次。
+目标架构：香港地域 ECS、私有 OSS、Caddy HTTPS、蓝绿 Web 槽位、独立单 Worker、SQLite 每日备份。已完成的直播结果、同步中英文字幕、弹幕、剪辑和 AI 封面下载公开可见；提交任务、新建剪辑和为历史直播触发英文翻译需要邀请账号，Seedream 封面生成、改字、换版和用于成片仅允许管理员。生产模板把剪辑与 AI 封面限制为单并发、每段最长 10 分钟，临时 HLS、FFmpeg 或 OSS 错误自动重试 3 次。
 
 ## 1. 云资源
 
@@ -10,7 +10,7 @@
    - TCP 80、443：`0.0.0.0/0` 和 `::/0`。
    - 不开放 8000；应用只监听 `127.0.0.1`。
 3. 在香港地域创建私有 OSS Bucket，并保持“阻止公共访问”开启。
-4. 只给临时音频前缀 `pocket48-summarizer/` 设置 1 天生命周期规则。不要让该规则覆盖永久剪辑前缀 `pocket48-clips/`。
+4. 只给临时音频前缀 `pocket48-summarizer/` 设置 1 天生命周期规则。不要让该规则覆盖永久剪辑和 AI 封面前缀 `pocket48-clips/`。
 5. 创建专用 RAM 用户，仅授予上述两个 Bucket 前缀的 `oss:PutObject`、`oss:GetObject` 和 `oss:DeleteObject`。不要使用主账号 AccessKey。
 
 香港 ECS 不要求 ICP 备案。Cloudflare 记录使用 DNS only，由 Caddy 直接终止 TLS。
@@ -27,11 +27,20 @@ sudoedit /etc/pocket48-summarizer/app.env
 ```
 
 安装脚本会安装 FFmpeg/ffprobe、`fonts-noto-cjk` 和
-`fonts-lxgw-wenkai`。填写 OSS、DashScope 和 LLM 凭证。
+`fonts-lxgw-wenkai`。填写 OSS、DashScope 和 LLM 凭证。要启用管理员
+AI 封面，再填写 Ark 的 `ARK_API_KEY` 和控制台显示的实际
+`ARK_SEEDREAM_MODEL`；不要猜测或把它们提交到仓库。未配置时普通总结和
+剪辑继续可用，封面面板会明确显示 Seedream 尚未启用。
 `ALIYUN_OSS_ENDPOINT` 使用香港内网 Endpoint 上传；
 `ALIYUN_OSS_PUBLIC_ENDPOINT` 必须使用公网 Endpoint，供 DashScope
 和浏览器读取短期签名 URL。剪辑上传到独立的
 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
+
+AI 封面会把 MARK 原始帧临时写入该私有前缀，并向 Ark 提供短期签名
+HTTPS URL；生成结束后应用删除临时帧，长期保留两种比例的无文字背景和
+最终叠字 PNG。Ark Key、签名 URL 和 OSS 对象 Key 不会发送到浏览器。
+首版固定使用 `AI_COVER_CONCURRENCY=1`，推荐保持默认的
+1440×2560 与 2560×1440 尺寸。
 
 首次发布带烧录字幕的剪辑功能前，确认生产依赖：
 
@@ -101,11 +110,11 @@ sudo /opt/pocket48-summarizer/scripts/deploy-release.sh HEAD
 curl --fail https://p48.ruokezhang.com/healthz
 ```
 
-浏览器未登录时应看到最近公开结果和已有剪辑下载，但看不到提交表单和剪辑按钮；登录后应能打开剪辑编辑器、调整范围、预览字幕/弹幕并保留多个独立导出版本。
+浏览器未登录时应看到最近公开结果和已有剪辑下载，并能打开剪辑编辑器体验设置但不能提交导出；普通账号可提交剪辑，但 AI 封面操作保持禁用。管理员应能在保留片段内 MARK 一个画面，生成独立的 16:9 和 4:3 横屏 PNG，在“贴纸高亮”“轻弧杂志”“贴条叠画面”之间切换，并自定义主标题、重点文字和补充文字而不再次调用模型；“换一版”才会发起新的付费请求。16:9 可用于横屏成片第 0 帧，4:3 仅供下载。
 
 ## 6. 蓝绿发布与回滚
 
-发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑和边界分析会短暂返回维护提示。脚本先取得剪辑操作锁，再同时排空旧 `video_clips` 和新 `video_clip_exports` 中的运行任务，避免在 FFmpeg 或静音分析执行中切槽。独立 Worker 会在当前直播任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务和翻译任务并重新排队；任务已持久化的 DashScope ID、总结分块和英文字幕片段会继续复用，不会从头重复提交。
+发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑、边界分析和 AI 封面写操作会短暂返回维护提示。脚本先取得剪辑操作锁，再同时排空旧 `video_clips`、新 `video_clip_exports` 的运行任务，以及 `ai_cover_generations` 的排队/运行任务，避免在 FFmpeg、静音分析、付费 Seedream 请求或本地叠字期间切槽。独立 Worker 会在当前直播任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务和翻译任务并重新排队；任务已持久化的 DashScope ID、总结分块和英文字幕片段会继续复用，不会从头重复提交。
 
 推荐使用手动触发的 GitHub Actions 工作流。一次性初始化会生成独立部署密钥；该密钥在服务器端绑定强制命令，只能部署已经进入 `origin/main` 的完整提交 SHA，不能打开任意 root shell，也不会把现有管理员 SSH 私钥上传到 GitHub：
 

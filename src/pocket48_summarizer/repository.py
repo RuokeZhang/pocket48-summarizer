@@ -12,6 +12,8 @@ from typing import Iterable
 from .db import Database
 from .errors import AppError
 from .models import (
+    AICoverAssetRecord,
+    AICoverGenerationRecord,
     ClipRange,
     ClipBoundarySuggestionRecord,
     DanmakuEntry,
@@ -107,6 +109,35 @@ class JobRepository:
         if row is None:
             return None
         return ClipBoundarySuggestionRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _ai_cover_generation(
+        row: sqlite3.Row | None,
+    ) -> AICoverGenerationRecord | None:
+        if row is None:
+            return None
+        payload = dict(row)
+        payload.setdefault("layout_style", "sticker_pop")
+        payload.setdefault("highlight_text", "")
+        extra_text_json = payload.pop("extra_text_json", "[]")
+        try:
+            extra_text = json.loads(extra_text_json)
+        except (TypeError, json.JSONDecodeError):
+            extra_text = []
+        payload["extra_text"] = (
+            [str(item) for item in extra_text]
+            if isinstance(extra_text, list)
+            else []
+        )
+        return AICoverGenerationRecord.model_validate(payload)
+
+    @staticmethod
+    def _ai_cover_asset(
+        row: sqlite3.Row | None,
+    ) -> AICoverAssetRecord | None:
+        if row is None:
+            return None
+        return AICoverAssetRecord.model_validate(dict(row))
 
     @staticmethod
     def _subtitle_translation(
@@ -1098,6 +1129,11 @@ class JobRepository:
         cover_timestamp_ms: int | None = None,
         cover_title: str = "",
         cover_style: str = "scrim",
+        ai_cover_generation_id: str | None = None,
+        ai_cover_asset_id: str | None = None,
+        ai_cover_final_oss_object_key: str | None = None,
+        ai_cover_final_sha256: str | None = None,
+        ai_cover_text_revision: int | None = None,
     ) -> tuple[VideoClipExportRecord, bool]:
         now = utcnow()
         legacy_font_scale = max(
@@ -1120,12 +1156,14 @@ class JobRepository:
                     subtitle_text_color, subtitle_background_color,
                     output_layout, subtitle_font_family,
                     cover_enabled, cover_timestamp_ms, cover_title,
-                    cover_style,
+                    cover_style, ai_cover_generation_id,
+                    ai_cover_asset_id, ai_cover_final_oss_object_key,
+                    ai_cover_final_sha256, ai_cover_text_revision,
                     render_version, filename,
                     status, created_at, updated_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     'running', ?, ?
                 )
                 """,
@@ -1157,6 +1195,11 @@ class JobRepository:
                     cover_timestamp_ms,
                     cover_title,
                     cover_style,
+                    ai_cover_generation_id,
+                    ai_cover_asset_id,
+                    ai_cover_final_oss_object_key,
+                    ai_cover_final_sha256,
+                    ai_cover_text_revision,
                     render_version,
                     filename,
                     now,
@@ -1178,6 +1221,587 @@ class JobRepository:
                 True,
             )
         return export, inserted == 1
+
+    def begin_ai_cover_generation(
+        self,
+        *,
+        generation_id: str,
+        job_id: str,
+        timeline_index: int,
+        requested_by_user_id: str | None,
+        request_id: str,
+        source_timestamp_ms: int,
+        provider: str,
+        model: str,
+        prompt_version: str,
+        shared_seed: int | None,
+        title_text: str,
+        extra_text: list[str],
+        landscape_size: tuple[int, int],
+        four_three_size: tuple[int, int],
+        layout_style: str = "sticker_pop",
+        highlight_text: str = "",
+    ) -> tuple[AICoverGenerationRecord, bool]:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            inserted = connection.execute(
+                """
+                INSERT OR IGNORE INTO ai_cover_generations (
+                    id, job_id, timeline_index, requested_by_user_id,
+                    request_id, source_timestamp_ms, provider, model,
+                    prompt_version, shared_seed, layout_style, title_text,
+                    highlight_text, extra_text_json, status, created_at,
+                    updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    'queued', ?, ?
+                )
+                """,
+                (
+                    generation_id,
+                    job_id,
+                    timeline_index,
+                    requested_by_user_id,
+                    request_id,
+                    source_timestamp_ms,
+                    provider,
+                    model,
+                    prompt_version,
+                    shared_seed,
+                    layout_style,
+                    title_text,
+                    highlight_text,
+                    json.dumps(extra_text, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            ).rowcount
+            if inserted:
+                for orientation, size in (
+                    ("landscape", landscape_size),
+                    ("four_three", four_three_size),
+                ):
+                    connection.execute(
+                        """
+                        INSERT INTO ai_cover_assets (
+                            id, generation_id, orientation, width, height,
+                            status, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            generation_id,
+                            orientation,
+                            size[0],
+                            size[1],
+                            now,
+                            now,
+                        ),
+                    )
+            row = connection.execute(
+                """
+                SELECT * FROM ai_cover_generations
+                WHERE job_id = ? AND request_id = ?
+                """,
+                (job_id, request_id),
+            ).fetchone()
+        generation = self._ai_cover_generation(row)
+        if generation is None:
+            raise AppError(
+                "ai_cover_conflict",
+                "AI 封面请求标识冲突，请重新提交",
+                True,
+            )
+        return generation, inserted == 1
+
+    def get_ai_cover_generation(
+        self, job_id: str, generation_id: str
+    ) -> AICoverGenerationRecord | None:
+        with self.database.connect() as connection:
+            return self._ai_cover_generation(
+                connection.execute(
+                    """
+                    SELECT * FROM ai_cover_generations
+                    WHERE job_id = ? AND id = ?
+                    """,
+                    (job_id, generation_id),
+                ).fetchone()
+            )
+
+    def list_ai_cover_generations(
+        self,
+        job_id: str,
+        *,
+        timeline_index: int | None = None,
+        limit: int = 30,
+    ) -> list[AICoverGenerationRecord]:
+        limit = max(1, min(limit, 100))
+        if timeline_index is None:
+            where = "job_id = ?"
+            parameters: tuple[object, ...] = (job_id, limit)
+        else:
+            where = "job_id = ? AND timeline_index = ?"
+            parameters = (job_id, timeline_index, limit)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM ai_cover_generations
+                WHERE {where}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+        return [
+            generation
+            for row in rows
+            if (
+                generation := self._ai_cover_generation(row)
+            ) is not None
+        ]
+
+    def list_ai_cover_assets(
+        self, generation_id: str
+    ) -> list[AICoverAssetRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM ai_cover_assets
+                WHERE generation_id = ?
+                ORDER BY CASE orientation
+                    WHEN 'landscape' THEN 0 ELSE 1 END
+                """,
+                (generation_id,),
+            ).fetchall()
+        return [
+            asset
+            for row in rows
+            if (asset := self._ai_cover_asset(row)) is not None
+        ]
+
+    def get_ai_cover_asset(
+        self, generation_id: str, orientation: str
+    ) -> AICoverAssetRecord | None:
+        with self.database.connect() as connection:
+            return self._ai_cover_asset(
+                connection.execute(
+                    """
+                    SELECT * FROM ai_cover_assets
+                    WHERE generation_id = ? AND orientation = ?
+                    """,
+                    (generation_id, orientation),
+                ).fetchone()
+            )
+
+    def mark_ai_cover_generation_running(
+        self, generation_id: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ai_cover_generations
+                SET status = 'running', error_code = NULL,
+                    error_message = NULL, updated_at = ?,
+                    completed_at = NULL
+                WHERE id = ?
+                """,
+                (utcnow(), generation_id),
+            )
+
+    def mark_ai_cover_asset_running(
+        self,
+        asset_id: str,
+        *,
+        provider_task_id: str | None = None,
+        provider_request_id: str | None = None,
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ai_cover_assets
+                SET status = 'running', provider_task_id = ?,
+                    provider_request_id = ?, error_code = NULL,
+                    error_message = NULL, updated_at = ?,
+                    completed_at = NULL
+                WHERE id = ?
+                """,
+                (
+                    provider_task_id,
+                    provider_request_id,
+                    utcnow(),
+                    asset_id,
+                ),
+            )
+
+    def save_ai_cover_asset_background(
+        self,
+        asset_id: str,
+        *,
+        background_oss_object_key: str,
+        background_sha256: str,
+        provider_task_id: str | None = None,
+        provider_request_id: str | None = None,
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ai_cover_assets
+                SET background_oss_object_key = ?,
+                    background_sha256 = ?,
+                    provider_task_id = COALESCE(?, provider_task_id),
+                    provider_request_id = COALESCE(
+                        ?, provider_request_id
+                    ),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    background_oss_object_key,
+                    background_sha256,
+                    provider_task_id,
+                    provider_request_id,
+                    utcnow(),
+                    asset_id,
+                ),
+            )
+
+    def complete_ai_cover_asset(
+        self,
+        asset_id: str,
+        *,
+        background_oss_object_key: str,
+        final_oss_object_key: str,
+        background_sha256: str,
+        final_sha256: str,
+        provider_task_id: str | None = None,
+        provider_request_id: str | None = None,
+    ) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT generation_id FROM ai_cover_assets WHERE id = ?
+                """,
+                (asset_id,),
+            ).fetchone()
+            if row is None:
+                raise AppError(
+                    "ai_cover_asset_not_found",
+                    "AI 封面图片不存在",
+                    False,
+                )
+            connection.execute(
+                """
+                UPDATE ai_cover_assets
+                SET status = 'completed',
+                    provider_task_id = COALESCE(?, provider_task_id),
+                    provider_request_id = COALESCE(?, provider_request_id),
+                    background_oss_object_key = ?,
+                    final_oss_object_key = ?,
+                    background_sha256 = ?, final_sha256 = ?,
+                    error_code = NULL, error_message = NULL,
+                    updated_at = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    provider_task_id,
+                    provider_request_id,
+                    background_oss_object_key,
+                    final_oss_object_key,
+                    background_sha256,
+                    final_sha256,
+                    now,
+                    now,
+                    asset_id,
+                ),
+            )
+            self._sync_ai_cover_generation_status(
+                connection, row["generation_id"], now
+            )
+
+    def fail_ai_cover_asset(
+        self, asset_id: str, error_code: str, error_message: str
+    ) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT generation_id FROM ai_cover_assets WHERE id = ?
+                """,
+                (asset_id,),
+            ).fetchone()
+            if row is None:
+                return
+            connection.execute(
+                """
+                UPDATE ai_cover_assets
+                SET status = 'failed', error_code = ?, error_message = ?,
+                    updated_at = ?, completed_at = NULL
+                WHERE id = ?
+                """,
+                (error_code, error_message, now, asset_id),
+            )
+            self._sync_ai_cover_generation_status(
+                connection, row["generation_id"], now
+            )
+
+    def fail_ai_cover_generation(
+        self,
+        generation_id: str,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE ai_cover_assets
+                SET status = 'failed', error_code = ?, error_message = ?,
+                    updated_at = ?, completed_at = NULL
+                WHERE generation_id = ? AND status != 'completed'
+                """,
+                (error_code, error_message, now, generation_id),
+            )
+            connection.execute(
+                """
+                UPDATE ai_cover_generations
+                SET status = 'failed', error_code = ?, error_message = ?,
+                    updated_at = ?, completed_at = NULL
+                WHERE id = ?
+                """,
+                (error_code, error_message, now, generation_id),
+            )
+
+    def update_ai_cover_text(
+        self,
+        job_id: str,
+        generation_id: str,
+        *,
+        title_text: str,
+        extra_text: list[str],
+        layout_style: str | None = None,
+        highlight_text: str | None = None,
+    ) -> AICoverGenerationRecord:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM ai_cover_generations
+                WHERE job_id = ? AND id = ?
+                """,
+                (job_id, generation_id),
+            ).fetchone()
+            generation = self._ai_cover_generation(row)
+            if generation is None:
+                raise AppError(
+                    "ai_cover_not_found",
+                    "AI 封面不存在",
+                    False,
+                )
+            if generation.status != "completed":
+                raise AppError(
+                    "ai_cover_not_ready",
+                    "AI 封面尚未生成完成",
+                    True,
+                )
+            next_layout_style = (
+                layout_style or generation.layout_style
+            )
+            next_highlight_text = (
+                generation.highlight_text
+                if highlight_text is None
+                else highlight_text
+            )
+            connection.execute(
+                """
+                UPDATE ai_cover_generations
+                SET layout_style = ?, title_text = ?, highlight_text = ?,
+                    extra_text_json = ?,
+                    status = 'running', error_code = NULL,
+                    error_message = NULL, updated_at = ?,
+                    completed_at = NULL
+                WHERE id = ?
+                """,
+                (
+                    next_layout_style,
+                    title_text,
+                    next_highlight_text,
+                    json.dumps(extra_text, ensure_ascii=False),
+                    now,
+                    generation_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE ai_cover_assets
+                SET status = 'running', text_revision = text_revision + 1,
+                    error_code = NULL, error_message = NULL,
+                    updated_at = ?, completed_at = NULL
+                WHERE generation_id = ?
+                """,
+                (now, generation_id),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM ai_cover_generations WHERE id = ?
+                """,
+                (generation_id,),
+            ).fetchone()
+        updated = self._ai_cover_generation(row)
+        assert updated is not None
+        return updated
+
+    def retry_ai_cover_generation(
+        self, job_id: str, generation_id: str
+    ) -> AICoverGenerationRecord:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM ai_cover_generations
+                WHERE job_id = ? AND id = ?
+                """,
+                (job_id, generation_id),
+            ).fetchone()
+            generation = self._ai_cover_generation(row)
+            if generation is None:
+                raise AppError(
+                    "ai_cover_not_found",
+                    "AI 封面不存在",
+                    False,
+                )
+            if generation.status == "running":
+                return generation
+            if generation.status == "completed":
+                return generation
+            connection.execute(
+                """
+                UPDATE ai_cover_assets
+                SET status = 'queued', error_code = NULL,
+                    error_message = NULL, updated_at = ?,
+                    completed_at = NULL
+                WHERE generation_id = ? AND status != 'completed'
+                """,
+                (now, generation_id),
+            )
+            connection.execute(
+                """
+                UPDATE ai_cover_generations
+                SET status = 'queued', error_code = NULL,
+                    error_message = NULL, updated_at = ?,
+                    completed_at = NULL
+                WHERE id = ?
+                """,
+                (now, generation_id),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM ai_cover_generations WHERE id = ?
+                """,
+                (generation_id,),
+            ).fetchone()
+        retried = self._ai_cover_generation(row)
+        assert retried is not None
+        return retried
+
+    def recover_running_ai_cover_generations(self) -> int:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            assets = connection.execute(
+                """
+                UPDATE ai_cover_assets
+                SET status = 'failed', error_code = 'ai_cover_interrupted',
+                    error_message = '服务曾重启，请重试 AI 封面',
+                    updated_at = ?, completed_at = NULL
+                WHERE status IN ('queued', 'running')
+                """,
+                (now,),
+            ).rowcount
+            connection.execute(
+                """
+                UPDATE ai_cover_generations
+                SET status = 'failed', error_code = 'ai_cover_interrupted',
+                    error_message = '服务曾重启，请重试 AI 封面',
+                    updated_at = ?, completed_at = NULL
+                WHERE status IN ('queued', 'running')
+                """,
+                (now,),
+            )
+        return assets
+
+    @staticmethod
+    def _sync_ai_cover_generation_status(
+        connection: sqlite3.Connection,
+        generation_id: str,
+        now: str,
+    ) -> None:
+        rows = connection.execute(
+            """
+            SELECT status, error_code, error_message
+            FROM ai_cover_assets
+            WHERE generation_id = ?
+            """,
+            (generation_id,),
+        ).fetchall()
+        statuses = [str(row["status"]) for row in rows]
+        generation_row = connection.execute(
+            """
+            SELECT status FROM ai_cover_generations WHERE id = ?
+            """,
+            (generation_id,),
+        ).fetchone()
+        current_status = (
+            str(generation_row["status"]) if generation_row else "queued"
+        )
+        if rows and all(status == "completed" for status in statuses):
+            status = "completed"
+            error_code = None
+            error_message = None
+            completed_at = now
+        elif any(status == "running" for status in statuses):
+            status = "running"
+            error_code = None
+            error_message = None
+            completed_at = None
+        elif any(status == "queued" for status in statuses):
+            status = "running" if current_status == "running" else "queued"
+            error_code = None
+            error_message = None
+            completed_at = None
+        elif any(status == "failed" for status in statuses):
+            status = "failed"
+            failed = next(row for row in rows if row["status"] == "failed")
+            error_code = failed["error_code"]
+            error_message = failed["error_message"]
+            completed_at = None
+        else:
+            status = "queued"
+            error_code = None
+            error_message = None
+            completed_at = None
+        connection.execute(
+            """
+            UPDATE ai_cover_generations
+            SET status = ?, error_code = ?, error_message = ?,
+                updated_at = ?, completed_at = ?
+            WHERE id = ?
+            """,
+            (
+                status,
+                error_code,
+                error_message,
+                now,
+                completed_at,
+                generation_id,
+            ),
+        )
 
     def get_video_clip_export(
         self, job_id: str, clip_id: str

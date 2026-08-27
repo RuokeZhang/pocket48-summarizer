@@ -3,10 +3,14 @@ from __future__ import annotations
 import re
 import textwrap
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from ..errors import AppError
-from ..models import DanmakuEntry, TranscriptSegment
+from ..models import (
+    AICoverLayoutStyle,
+    DanmakuEntry,
+    TranscriptSegment,
+)
 from ..security import strip_control_chars
 from .layouts import (
     LANDSCAPE_CANVAS_WIDTH,
@@ -57,6 +61,12 @@ COVER_DURATION_MS = 1500
 COVER_TITLE_MAX_LENGTH = 40
 DEFAULT_COVER_STYLE: CoverStyle = "scrim"
 COVER_LIBASS_FONT_SCALE = 1.45
+AI_COVER_TITLE_MAX_LENGTH = 80
+AI_COVER_HIGHLIGHT_MAX_LENGTH = 60
+AI_COVER_EXTRA_TEXT_MAX_ITEMS = 4
+AI_COVER_EXTRA_TEXT_MAX_LENGTH = 60
+AI_COVER_RENDER_DURATION_MS = 1000
+DEFAULT_AI_COVER_LAYOUT_STYLE: AICoverLayoutStyle = "sticker_pop"
 LANDSCAPE_SUBTITLE_LINE_HEIGHT = 1.55
 LANDSCAPE_SUBTITLE_PARAGRAPH_GAP = 8
 LANDSCAPE_SUBTITLE_POSITION_OFFSET = 4
@@ -83,6 +93,30 @@ class CoverOverlayDocument:
     content: str
     title: str
     style: CoverStyle
+
+
+@dataclass(frozen=True, slots=True)
+class AICoverOverlayDocument:
+    content: str
+    layout_style: AICoverLayoutStyle
+    title: str
+    highlight_text: str
+    extra_text: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _AICoverTextLayout:
+    title_size: int
+    title_lines: tuple[str, ...]
+    title_height: int
+    highlight_size: int
+    highlight_lines: tuple[str, ...]
+    highlight_height: int
+    extra_size: int
+    extra_lines: tuple[tuple[str, ...], ...]
+    extra_heights: tuple[int, ...]
+    gap: int
+    total_height: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +374,809 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         title=normalized_title,
         style=style,
     )
+
+
+def build_ai_cover_overlay(
+    *,
+    width: int,
+    height: int,
+    layout_style: AICoverLayoutStyle = DEFAULT_AI_COVER_LAYOUT_STYLE,
+    title: str,
+    highlight_text: str = "",
+    extra_text: list[str] | tuple[str, ...] = (),
+    font_name: str = "Noto Sans CJK SC",
+    orientation: Literal["landscape", "four_three"],
+    duration_ms: int = AI_COVER_RENDER_DURATION_MS,
+) -> AICoverOverlayDocument:
+    normalized_style = normalize_ai_cover_layout_style(layout_style)
+    normalized_title = normalize_ai_cover_title(title)
+    normalized_highlight = normalize_ai_cover_highlight(highlight_text)
+    normalized_extra = normalize_ai_cover_extra_text(extra_text)
+    if width <= 0 or height <= 0 or duration_ms <= 0:
+        raise AppError(
+            "ai_cover_text_invalid",
+            "AI 封面文字或画面参数无效",
+            False,
+        )
+    if orientation == "landscape":
+        if width * 9 != height * 16:
+            raise AppError(
+                "ai_cover_dimensions_invalid",
+                "横屏 AI 封面必须使用 16:9 画面",
+                False,
+            )
+    elif orientation == "four_three":
+        if width * 3 != height * 4:
+            raise AppError(
+                "ai_cover_dimensions_invalid",
+                "标准 AI 封面必须使用 4:3 横屏画面",
+                False,
+            )
+    else:
+        raise AppError(
+            "ai_cover_orientation_invalid",
+            "AI 封面画面方向无效",
+            False,
+        )
+
+    if normalized_style == "sticker_pop":
+        panel_x = round(width * 0.045)
+        panel_width = round(
+            width * (0.40 if orientation == "landscape" else 0.43)
+        )
+        panel_top = round(height * 0.09)
+        panel_height = round(height * 0.82)
+        title_base_size = max(72, round(height * 0.105))
+        title_min_size = max(34, round(height * 0.026))
+    elif normalized_style == "editorial_arc":
+        panel_x = round(width * 0.045)
+        panel_width = round(
+            width * (0.40 if orientation == "landscape" else 0.43)
+        )
+        panel_top = round(height * 0.09)
+        panel_height = round(height * 0.82)
+        title_base_size = max(70, round(height * 0.098))
+        title_min_size = max(34, round(height * 0.025))
+    else:
+        panel_x = round(width * 0.045)
+        panel_width = round(
+            width * (0.42 if orientation == "landscape" else 0.45)
+        )
+        panel_top = round(height * 0.10)
+        panel_height = round(height * 0.84)
+        title_base_size = max(68, round(height * 0.088))
+        title_min_size = max(32, round(height * 0.023))
+
+    text_layout = _fit_ai_cover_template_text(
+        normalized_title,
+        normalized_highlight,
+        normalized_extra,
+        panel_width=panel_width,
+        panel_height=panel_height,
+        title_base_size=title_base_size,
+        title_min_size=title_min_size,
+        height=height,
+    )
+    palette = _ai_cover_palette(normalized_style)
+    header = _ai_cover_ass_header(
+        width=width,
+        height=height,
+        font_name=font_name,
+        text_layout=text_layout,
+        palette=palette,
+    )
+    builder = {
+        "sticker_pop": _build_sticker_pop_events,
+        "editorial_arc": _build_editorial_arc_events,
+        "banner_energy": _build_banner_energy_events,
+    }[normalized_style]
+    events = builder(
+        width=width,
+        height=height,
+        panel_x=panel_x,
+        panel_width=panel_width,
+        panel_top=panel_top,
+        panel_height=panel_height,
+        text_layout=text_layout,
+        palette=palette,
+        duration_ms=duration_ms,
+    )
+    return AICoverOverlayDocument(
+        content="\n".join([header, *events, ""]),
+        layout_style=normalized_style,
+        title=normalized_title,
+        highlight_text=normalized_highlight,
+        extra_text=tuple(normalized_extra),
+    )
+
+
+def _fit_ai_cover_template_text(
+    title: str,
+    highlight_text: str,
+    extra_text: list[str],
+    *,
+    panel_width: int,
+    panel_height: int,
+    title_base_size: int,
+    title_min_size: int,
+    height: int,
+) -> _AICoverTextLayout:
+    effective_width = max(1, round(panel_width * 0.88))
+    extra_base_size = max(28, round(height * 0.032))
+    extra_min_size = max(20, round(height * 0.015))
+    for title_size in range(
+        title_base_size,
+        title_min_size - 1,
+        -2,
+    ):
+        title_wrap_width = max(
+            1,
+            round(effective_width / (title_size * 0.92)),
+        )
+        title_lines = _wrapped_text(title, width=title_wrap_width)
+        if len(title_lines) > 4:
+            continue
+        highlight_size = max(
+            title_min_size,
+            min(
+                round(title_base_size * 1.04),
+                round(title_size * 1.04),
+            ),
+        )
+        highlight_lines = (
+            _wrapped_text(
+                highlight_text,
+                width=max(
+                    1,
+                    round(
+                        effective_width
+                        / (highlight_size * 0.92)
+                    ),
+                ),
+            )
+            if highlight_text
+            else []
+        )
+        if len(highlight_lines) > 3:
+            continue
+        extra_size = max(
+            extra_min_size,
+            min(extra_base_size, round(title_size * 0.36)),
+        )
+        extra_lines = [
+            _wrapped_text(
+                value,
+                width=max(
+                    1,
+                    round(
+                        effective_width / (extra_size * 0.92)
+                    ),
+                ),
+            )
+            for value in extra_text
+        ]
+        if any(len(lines) > 2 for lines in extra_lines):
+            continue
+        title_height = round(
+            len(title_lines) * title_size * 1.14
+        )
+        highlight_height = round(
+            len(highlight_lines) * highlight_size * 1.14
+        )
+        extra_heights = tuple(
+            round(len(lines) * extra_size * 1.22)
+            for lines in extra_lines
+        )
+        gap = max(12, round(title_size * 0.18))
+        block_count = (
+            1
+            + (1 if highlight_lines else 0)
+            + len(extra_lines)
+        )
+        total_height = (
+            title_height
+            + highlight_height
+            + sum(extra_heights)
+            + gap * max(0, block_count - 1)
+            + round(height * 0.06)
+        )
+        if total_height <= panel_height:
+            return _AICoverTextLayout(
+                title_size=title_size,
+                title_lines=tuple(title_lines),
+                title_height=title_height,
+                highlight_size=highlight_size,
+                highlight_lines=tuple(highlight_lines),
+                highlight_height=highlight_height,
+                extra_size=extra_size,
+                extra_lines=tuple(
+                    tuple(lines) for lines in extra_lines
+                ),
+                extra_heights=extra_heights,
+                gap=gap,
+                total_height=total_height,
+            )
+    raise AppError(
+        "ai_cover_text_does_not_fit",
+        "AI 封面文字过长，无法完整放入模板安全区域",
+        False,
+    )
+
+
+def _ai_cover_palette(
+    layout_style: AICoverLayoutStyle,
+) -> dict[str, tuple[str, int] | str]:
+    if layout_style == "editorial_arc":
+        return {
+            "panel": ("#F6EEE3", 34),
+            "title": "#FFF8EC",
+            "title_outline": "#2B282B",
+            "title_inner": "#FFF8EC",
+            "highlight": "#DE8490",
+            "highlight_outline": "#2B282B",
+            "highlight_inner": "#FFF8EC",
+            "extra": "#34424A",
+            "tag": "#FFF8EC",
+            "tag_box": ("#7895A2", 0),
+            "accent": ("#DE8490", 0),
+        }
+    if layout_style == "banner_energy":
+        return {
+            "panel": ("#211D20", 102),
+            "title": "#191619",
+            "title_outline": "#FFF7E9",
+            "title_inner": "#FFF7E9",
+            "highlight": "#FFF7E9",
+            "highlight_outline": "#171417",
+            "highlight_inner": "#FFF7E9",
+            "extra": "#FFF7E9",
+            "extra_outline": "#171417",
+            "tag": "#191619",
+            "tag_outline": "#FFF7E9",
+            "tag_box": ("#F4C95F", 0),
+            "title_box": ("#FFF7E9", 0),
+            "highlight_box": ("#DF8591", 0),
+            "accent": ("#F4C95F", 0),
+        }
+    return {
+        "panel": ("#1F191C", 54),
+        "title": "#FFF7E9",
+        "title_outline": "#171417",
+        "title_inner": "#FFF7E9",
+        "highlight": "#F4C95F",
+        "highlight_outline": "#171417",
+        "highlight_inner": "#FFF7E9",
+        "extra": "#FFF7E9",
+        "tag": "#FFF7E9",
+        "tag_box": ("#DF8591", 0),
+        "accent": ("#DF8591", 0),
+    }
+
+
+def _palette_ass_color(
+    palette: dict[str, tuple[str, int] | str],
+    key: str,
+) -> str:
+    value = palette[key]
+    if isinstance(value, tuple):
+        return _ass_color(value[0], alpha=value[1])
+    return _ass_color(value)
+
+
+def _ai_cover_ass_header(
+    *,
+    width: int,
+    height: int,
+    font_name: str,
+    text_layout: _AICoverTextLayout,
+    palette: dict[str, tuple[str, int] | str],
+) -> str:
+    safe_font_name = _plain_text(font_name).replace(",", " ") or "sans-serif"
+    outer_border = max(6, round(height * 0.008))
+    inner_border = max(2, round(height * 0.003))
+    extra_border = max(2, round(height * 0.0025))
+    shadow_size = max(2, round(height * 0.0025))
+    title = _palette_ass_color(palette, "title")
+    title_outline = _palette_ass_color(palette, "title_outline")
+    title_inner = _palette_ass_color(palette, "title_inner")
+    highlight = _palette_ass_color(palette, "highlight")
+    highlight_outline = _palette_ass_color(
+        palette, "highlight_outline"
+    )
+    highlight_inner = _palette_ass_color(
+        palette, "highlight_inner"
+    )
+    extra = _palette_ass_color(palette, "extra")
+    extra_outline = _palette_ass_color(
+        palette,
+        "extra_outline"
+        if "extra_outline" in palette
+        else "title_outline",
+    )
+    tag = _palette_ass_color(palette, "tag")
+    tag_outline = _palette_ass_color(
+        palette,
+        "tag_outline"
+        if "tag_outline" in palette
+        else "title_outline",
+    )
+    dark_shadow = _ass_color("#000000", alpha=96)
+    return f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: AICoverTitle,{safe_font_name},{text_layout.title_size},{title},{title},{title_outline},{dark_shadow},-1,0,0,0,100,100,1,0,1,{outer_border},{shadow_size},7,0,0,0,1
+Style: AICoverTitleInner,{safe_font_name},{text_layout.title_size},{title},{title},{title_inner},{dark_shadow},-1,0,0,0,100,100,1,0,1,{inner_border},0,7,0,0,0,1
+Style: AICoverHighlight,{safe_font_name},{text_layout.highlight_size},{highlight},{highlight},{highlight_outline},{dark_shadow},-1,0,0,0,100,100,1,0,1,{outer_border},{shadow_size},7,0,0,0,1
+Style: AICoverHighlightInner,{safe_font_name},{text_layout.highlight_size},{highlight},{highlight},{highlight_inner},{dark_shadow},-1,0,0,0,100,100,1,0,1,{inner_border},0,7,0,0,0,1
+Style: AICoverExtra,{safe_font_name},{text_layout.extra_size},{extra},{extra},{extra_outline},{dark_shadow},-1,0,0,0,100,100,1,0,1,{extra_border},{shadow_size},7,0,0,0,1
+Style: AICoverTag,{safe_font_name},{text_layout.extra_size},{tag},{tag},{tag_outline},{dark_shadow},-1,0,0,0,100,100,1,0,1,{extra_border},0,7,0,0,0,1
+Style: AICoverShape,{safe_font_name},1,{title},{title},{title_outline},{dark_shadow},0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"""
+
+
+def _ai_cover_shape_event(
+    *,
+    layer: int,
+    duration_ms: int,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    radius: int,
+    color: str,
+    angle: int = 0,
+) -> str:
+    shape = _ass_rounded_rect(width, height, radius)
+    return _dialogue(
+        layer=layer,
+        start_ms=0,
+        end_ms=duration_ms,
+        style="AICoverShape",
+        text=(
+            f"{{\\an7\\pos({x},{y})\\frz{angle}\\p1"
+            f"\\1c{color}\\bord0\\shad0}}"
+            f"{shape}{{\\p0}}"
+        ),
+    )
+
+
+def _ai_cover_text_events(
+    *,
+    layer: int,
+    duration_ms: int,
+    x: int,
+    y: int,
+    lines: tuple[str, ...],
+    style: str,
+    inner_style: str | None = None,
+    angle: int = 0,
+) -> list[str]:
+    wrapped = r"\N".join(_ass_text(line) for line in lines)
+    override = f"{{\\an7\\pos({x},{y})\\frz{angle}}}"
+    events = [
+        _dialogue(
+            layer=layer,
+            start_ms=0,
+            end_ms=duration_ms,
+            style=style,
+            text=f"{override}{wrapped}",
+        )
+    ]
+    if inner_style:
+        events.append(
+            _dialogue(
+                layer=layer + 1,
+                start_ms=0,
+                end_ms=duration_ms,
+                style=inner_style,
+                text=f"{override}{wrapped}",
+            )
+        )
+    return events
+
+
+def _build_sticker_pop_events(
+    *,
+    width: int,
+    height: int,
+    panel_x: int,
+    panel_width: int,
+    panel_top: int,
+    panel_height: int,
+    text_layout: _AICoverTextLayout,
+    palette: dict[str, tuple[str, int] | str],
+    duration_ms: int,
+) -> list[str]:
+    del panel_height
+    events = [
+        _ai_cover_shape_event(
+            layer=0,
+            duration_ms=duration_ms,
+            x=0,
+            y=0,
+            width=round(width * 0.47),
+            height=height,
+            radius=0,
+            color=_palette_ass_color(palette, "panel"),
+        )
+    ]
+    cursor_y = panel_top
+    extra_start = 0
+    if text_layout.extra_lines:
+        tag_height = (
+            text_layout.extra_heights[0]
+            + round(text_layout.extra_size * 0.72)
+        )
+        events.append(
+            _ai_cover_shape_event(
+                layer=1,
+                duration_ms=duration_ms,
+                x=panel_x,
+                y=cursor_y,
+                width=panel_width,
+                height=tag_height,
+                radius=tag_height // 2,
+                color=_palette_ass_color(palette, "tag_box"),
+                angle=-2,
+            )
+        )
+        events.extend(
+            _ai_cover_text_events(
+                layer=2,
+                duration_ms=duration_ms,
+                x=panel_x + round(text_layout.extra_size * 0.55),
+                y=cursor_y + round(text_layout.extra_size * 0.30),
+                lines=text_layout.extra_lines[0],
+                style="AICoverTag",
+                angle=-2,
+            )
+        )
+        cursor_y += tag_height + text_layout.gap
+        extra_start = 1
+    events.extend(
+        _ai_cover_text_events(
+            layer=4,
+            duration_ms=duration_ms,
+            x=panel_x,
+            y=cursor_y,
+            lines=text_layout.title_lines,
+            style="AICoverTitle",
+            inner_style="AICoverTitleInner",
+            angle=-2,
+        )
+    )
+    cursor_y += text_layout.title_height + text_layout.gap
+    if text_layout.highlight_lines:
+        events.extend(
+            _ai_cover_text_events(
+                layer=6,
+                duration_ms=duration_ms,
+                x=panel_x + round(panel_width * 0.025),
+                y=cursor_y,
+                lines=text_layout.highlight_lines,
+                style="AICoverHighlight",
+                inner_style="AICoverHighlightInner",
+                angle=-1,
+            )
+        )
+        cursor_y += text_layout.highlight_height + text_layout.gap
+        underline_width = round(panel_width * 0.76)
+        underline_height = max(8, round(height * 0.009))
+        events.append(
+            _ai_cover_shape_event(
+                layer=3,
+                duration_ms=duration_ms,
+                x=panel_x + round(panel_width * 0.04),
+                y=cursor_y - round(text_layout.gap * 0.45),
+                width=underline_width,
+                height=underline_height,
+                radius=underline_height // 2,
+                color=_palette_ass_color(palette, "accent"),
+                angle=1,
+            )
+        )
+    for index in range(extra_start, len(text_layout.extra_lines)):
+        events.extend(
+            _ai_cover_text_events(
+                layer=8 + index,
+                duration_ms=duration_ms,
+                x=panel_x,
+                y=cursor_y,
+                lines=text_layout.extra_lines[index],
+                style="AICoverExtra",
+            )
+        )
+        cursor_y += (
+            text_layout.extra_heights[index] + text_layout.gap
+        )
+    return events
+
+
+def _build_editorial_arc_events(
+    *,
+    width: int,
+    height: int,
+    panel_x: int,
+    panel_width: int,
+    panel_top: int,
+    panel_height: int,
+    text_layout: _AICoverTextLayout,
+    palette: dict[str, tuple[str, int] | str],
+    duration_ms: int,
+) -> list[str]:
+    del panel_height
+    events = [
+        _ai_cover_shape_event(
+            layer=0,
+            duration_ms=duration_ms,
+            x=0,
+            y=0,
+            width=round(width * 0.49),
+            height=height,
+            radius=0,
+            color=_palette_ass_color(palette, "panel"),
+        )
+    ]
+    cursor_y = panel_top
+    extra_start = 0
+    if text_layout.extra_lines:
+        tag_height = (
+            text_layout.extra_heights[0]
+            + round(text_layout.extra_size * 0.60)
+        )
+        tag_width = min(panel_width, round(panel_width * 0.72))
+        events.append(
+            _ai_cover_shape_event(
+                layer=1,
+                duration_ms=duration_ms,
+                x=panel_x,
+                y=cursor_y,
+                width=tag_width,
+                height=tag_height,
+                radius=max(8, round(tag_height * 0.18)),
+                color=_palette_ass_color(palette, "tag_box"),
+                angle=-4,
+            )
+        )
+        events.extend(
+            _ai_cover_text_events(
+                layer=2,
+                duration_ms=duration_ms,
+                x=panel_x + round(text_layout.extra_size * 0.45),
+                y=cursor_y + round(text_layout.extra_size * 0.22),
+                lines=text_layout.extra_lines[0],
+                style="AICoverTag",
+                angle=-4,
+            )
+        )
+        cursor_y += tag_height + text_layout.gap
+        extra_start = 1
+    events.extend(
+        _ai_cover_text_events(
+            layer=4,
+            duration_ms=duration_ms,
+            x=panel_x,
+            y=cursor_y,
+            lines=text_layout.title_lines,
+            style="AICoverTitle",
+            inner_style="AICoverTitleInner",
+            angle=-5,
+        )
+    )
+    cursor_y += text_layout.title_height + text_layout.gap
+    if text_layout.highlight_lines:
+        events.extend(
+            _ai_cover_text_events(
+                layer=6,
+                duration_ms=duration_ms,
+                x=panel_x + round(panel_width * 0.02),
+                y=cursor_y,
+                lines=text_layout.highlight_lines,
+                style="AICoverHighlight",
+                inner_style="AICoverHighlightInner",
+            )
+        )
+        cursor_y += text_layout.highlight_height + text_layout.gap
+    accent_height = max(5, round(height * 0.0045))
+    events.append(
+        _ai_cover_shape_event(
+            layer=3,
+            duration_ms=duration_ms,
+            x=panel_x,
+            y=cursor_y - round(text_layout.gap * 0.35),
+            width=round(panel_width * 0.72),
+            height=accent_height,
+            radius=accent_height // 2,
+            color=_palette_ass_color(palette, "accent"),
+            angle=2,
+        )
+    )
+    for index in range(extra_start, len(text_layout.extra_lines)):
+        events.extend(
+            _ai_cover_text_events(
+                layer=8 + index,
+                duration_ms=duration_ms,
+                x=panel_x,
+                y=cursor_y,
+                lines=text_layout.extra_lines[index],
+                style="AICoverExtra",
+            )
+        )
+        cursor_y += (
+            text_layout.extra_heights[index] + text_layout.gap
+        )
+    return events
+
+
+def _build_banner_energy_events(
+    *,
+    width: int,
+    height: int,
+    panel_x: int,
+    panel_width: int,
+    panel_top: int,
+    panel_height: int,
+    text_layout: _AICoverTextLayout,
+    palette: dict[str, tuple[str, int] | str],
+    duration_ms: int,
+) -> list[str]:
+    events = [
+        _ai_cover_shape_event(
+            layer=0,
+            duration_ms=duration_ms,
+            x=0,
+            y=0,
+            width=round(width * 0.36),
+            height=height,
+            radius=0,
+            color=_palette_ass_color(palette, "panel"),
+        )
+    ]
+    cursor_y = panel_top
+    extra_start = 0
+    if text_layout.extra_lines:
+        tag_height = (
+            text_layout.extra_heights[0]
+            + round(text_layout.extra_size * 0.64)
+        )
+        events.append(
+            _ai_cover_shape_event(
+                layer=1,
+                duration_ms=duration_ms,
+                x=panel_x,
+                y=cursor_y,
+                width=min(panel_width, round(panel_width * 0.74)),
+                height=tag_height,
+                radius=max(10, round(tag_height * 0.18)),
+                color=_palette_ass_color(palette, "tag_box"),
+                angle=-3,
+            )
+        )
+        events.extend(
+            _ai_cover_text_events(
+                layer=2,
+                duration_ms=duration_ms,
+                x=panel_x + round(text_layout.extra_size * 0.45),
+                y=cursor_y + round(text_layout.extra_size * 0.23),
+                lines=text_layout.extra_lines[0],
+                style="AICoverTag",
+                angle=-3,
+            )
+        )
+        cursor_y += tag_height + text_layout.gap
+        extra_start = 1
+    remaining_height = (
+        text_layout.title_height
+        + text_layout.highlight_height
+        + sum(text_layout.extra_heights[extra_start:])
+        + text_layout.gap
+        * (
+            (1 if text_layout.highlight_lines else 0)
+            + len(text_layout.extra_lines[extra_start:])
+        )
+        + round(height * 0.06)
+    )
+    desired_title_y = round(height * 0.39)
+    latest_title_y = (
+        panel_top + panel_height - remaining_height
+    )
+    cursor_y = max(
+        cursor_y,
+        min(desired_title_y, latest_title_y),
+    )
+    box_padding_x = round(text_layout.title_size * 0.32)
+    box_padding_y = round(text_layout.title_size * 0.18)
+    title_box_height = text_layout.title_height + box_padding_y * 2
+    events.append(
+        _ai_cover_shape_event(
+            layer=3,
+            duration_ms=duration_ms,
+            x=panel_x,
+            y=cursor_y,
+            width=panel_width,
+            height=title_box_height,
+            radius=max(12, round(title_box_height * 0.10)),
+            color=_palette_ass_color(palette, "title_box"),
+            angle=-3,
+        )
+    )
+    events.extend(
+        _ai_cover_text_events(
+            layer=4,
+            duration_ms=duration_ms,
+            x=panel_x + box_padding_x,
+            y=cursor_y + box_padding_y,
+            lines=text_layout.title_lines,
+            style="AICoverTitle",
+            inner_style="AICoverTitleInner",
+            angle=-3,
+        )
+    )
+    cursor_y += title_box_height + text_layout.gap
+    if text_layout.highlight_lines:
+        highlight_padding_x = round(
+            text_layout.highlight_size * 0.30
+        )
+        highlight_padding_y = round(
+            text_layout.highlight_size * 0.17
+        )
+        highlight_box_height = (
+            text_layout.highlight_height
+            + highlight_padding_y * 2
+        )
+        highlight_x = panel_x + round(panel_width * 0.06)
+        events.append(
+            _ai_cover_shape_event(
+                layer=5,
+                duration_ms=duration_ms,
+                x=highlight_x,
+                y=cursor_y,
+                width=round(panel_width * 0.94),
+                height=highlight_box_height,
+                radius=max(12, round(highlight_box_height * 0.10)),
+                color=_palette_ass_color(
+                    palette, "highlight_box"
+                ),
+                angle=2,
+            )
+        )
+        events.extend(
+            _ai_cover_text_events(
+                layer=6,
+                duration_ms=duration_ms,
+                x=highlight_x + highlight_padding_x,
+                y=cursor_y + highlight_padding_y,
+                lines=text_layout.highlight_lines,
+                style="AICoverHighlight",
+                inner_style="AICoverHighlightInner",
+                angle=2,
+            )
+        )
+        cursor_y += highlight_box_height + text_layout.gap
+    for index in range(extra_start, len(text_layout.extra_lines)):
+        events.extend(
+            _ai_cover_text_events(
+                layer=8 + index,
+                duration_ms=duration_ms,
+                x=panel_x + round(panel_width * 0.08),
+                y=cursor_y,
+                lines=text_layout.extra_lines[index],
+                style="AICoverExtra",
+            )
+        )
+        cursor_y += (
+            text_layout.extra_heights[index] + text_layout.gap
+        )
+    return events
 
 
 def _subtitle_events(
@@ -860,6 +1697,59 @@ def normalize_cover_title(value: str) -> str:
     return _plain_text(value)
 
 
+def normalize_ai_cover_title(value: str) -> str:
+    normalized = _plain_text(value)
+    if not normalized or len(normalized) > AI_COVER_TITLE_MAX_LENGTH:
+        raise ValueError(
+            f"AI cover title must contain 1-{AI_COVER_TITLE_MAX_LENGTH} characters"
+        )
+    return normalized
+
+
+def normalize_ai_cover_highlight(value: str) -> str:
+    normalized = _plain_text(value)
+    if len(normalized) > AI_COVER_HIGHLIGHT_MAX_LENGTH:
+        raise ValueError(
+            "AI cover highlight must not exceed "
+            f"{AI_COVER_HIGHLIGHT_MAX_LENGTH} characters"
+        )
+    return normalized
+
+
+def normalize_ai_cover_layout_style(
+    value: str,
+) -> AICoverLayoutStyle:
+    if value not in {
+        "sticker_pop",
+        "editorial_arc",
+        "banner_energy",
+    }:
+        raise ValueError("unsupported AI cover layout style")
+    return cast(AICoverLayoutStyle, value)
+
+
+def normalize_ai_cover_extra_text(
+    values: list[str] | tuple[str, ...],
+) -> list[str]:
+    if len(values) > AI_COVER_EXTRA_TEXT_MAX_ITEMS:
+        raise ValueError(
+            "AI cover supports at most "
+            f"{AI_COVER_EXTRA_TEXT_MAX_ITEMS} extra text lines"
+        )
+    normalized: list[str] = []
+    for value in values:
+        item = _plain_text(str(value))
+        if not item:
+            continue
+        if len(item) > AI_COVER_EXTRA_TEXT_MAX_LENGTH:
+            raise ValueError(
+                "AI cover extra text must not exceed "
+                f"{AI_COVER_EXTRA_TEXT_MAX_LENGTH} characters"
+            )
+        normalized.append(item)
+    return normalized
+
+
 def subtitle_contrast_ratio(
     text_color: str,
     background_color: str,
@@ -966,6 +1856,66 @@ def _wrapped_ass_text(value: str, *, width: int, lines: int) -> str:
         wrapped = wrapped[:lines]
         wrapped[-1] = _truncate(wrapped[-1], max(1, width - 1)) + "…"
     return r"\N".join(_ass_text(line) for line in wrapped)
+
+
+def _fit_ai_cover_lines(
+    value: str,
+    *,
+    panel_width: int,
+    base_size: int,
+    minimum_size: int,
+    character_factor: float,
+    max_lines: int,
+) -> tuple[int, int, list[str]]:
+    sizes = list(range(base_size, minimum_size, -2))
+    sizes.append(minimum_size)
+    for size in sizes:
+        wrap_width = max(
+            1, round(panel_width / (size * character_factor))
+        )
+        wrapped = _wrapped_text(value, width=wrap_width)
+        if len(wrapped) <= max_lines:
+            return size, wrap_width, wrapped
+    raise AppError(
+        "ai_cover_text_does_not_fit",
+        "AI 封面文字过长，无法完整放入安全区域",
+        False,
+    )
+
+
+def _fit_ai_cover_extra_lines(
+    values: list[str],
+    *,
+    panel_width: int,
+    base_size: int,
+    minimum_size: int,
+    available_height: int,
+) -> tuple[int, int, list[list[str]]]:
+    if not values:
+        return base_size, panel_width, []
+    sizes = list(range(base_size, minimum_size, -2))
+    sizes.append(minimum_size)
+    for size in sizes:
+        wrap_width = max(1, round(panel_width / (size * 0.92)))
+        wrapped = [
+            _wrapped_text(value, width=wrap_width)
+            for value in values
+        ]
+        gap = round(size * 0.55)
+        required_height = sum(
+            round(len(lines) * size * 1.25) + gap
+            for lines in wrapped
+        )
+        if (
+            all(len(lines) <= 2 for lines in wrapped)
+            and required_height <= available_height
+        ):
+            return size, wrap_width, wrapped
+    raise AppError(
+        "ai_cover_text_does_not_fit",
+        "AI 封面附加文字过长，无法完整放入安全区域",
+        False,
+    )
 
 
 def _ass_wrapped_text(value: str, *, width: int) -> str:

@@ -11,12 +11,14 @@ from fastapi.templating import Jinja2Templates
 
 from .clients.member_catalog import MemberCatalogClient
 from .clients.oss_store import OSSStore
+from .clients.seedream import SeedreamClient
 from .config import Settings
 from .auth import AuthRepository, AuthService
 from .db import Database
 from .errors import AppError
 from .glossary import MemberCatalogService
 from .media.clips import VideoClipService
+from .media.ai_covers import AICoverService
 from .repository import JobRepository
 from .routes import router
 from .services import ApplicationServices, build_services
@@ -57,11 +59,24 @@ def create_app(
         services.clipper = VideoClipService(
             settings, repository, OSSStore(settings)
         )
+    if (
+        settings.enable_ai_covers
+        and services.ai_covers is None
+        and not settings.missing_ai_cover_configuration()
+    ):
+        services.ai_covers = AICoverService(
+            settings,
+            repository,
+            OSSStore(settings),
+            SeedreamClient(settings),
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if services.clipper:
             await services.clipper.startup()
+        if services.ai_covers:
+            await services.ai_covers.startup()
         if services.worker:
             await services.worker.start()
         yield
@@ -104,12 +119,16 @@ def create_app(
         if exc.retryable and exc.code.endswith("_not_ready"):
             status = 409
         if exc.code in {
+            "ai_cover_configuration_missing",
+            "ai_cover_maintenance",
             "clipper_maintenance",
             "configuration_error",
             "member_catalog_unavailable",
             "worker_unavailable",
         }:
             status = 503
+        if exc.code in {"ai_cover_already_running", "ai_cover_not_ready"}:
+            status = 409
         if request.url.path.startswith("/api/") or request.url.path == "/healthz":
             return JSONResponse(
                 {"error": {"code": exc.code, "message": exc.message}},

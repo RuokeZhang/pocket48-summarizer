@@ -80,3 +80,29 @@ async def test_clip_upload_uses_permanent_prefix_and_video_headers(
     )
     assert signatures == [("GET", key, 1800, True)]
     assert signed_url == f"https://download.example/{key}"
+
+
+def test_ai_cover_source_uses_lifecycle_managed_prefix(
+    settings, monkeypatch
+):
+    class FakeBucket:
+        def __init__(self, auth, endpoint, bucket):
+            pass
+
+    monkeypatch.setattr(
+        "pocket48_summarizer.clients.oss_store.oss2.Bucket", FakeBucket
+    )
+    store = OSSStore(
+        settings.model_copy(
+            update={
+                "aliyun_oss_prefix": "temporary",
+                "aliyun_oss_clip_prefix": "permanent-clips",
+            }
+        )
+    )
+
+    key = store.ai_cover_source_object_key("job-1", "generation-1")
+
+    assert key == (
+        "temporary/ai-cover-sources/job-1/generation-1/source.png"
+    )

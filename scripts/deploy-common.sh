@@ -168,6 +168,7 @@ atomic_symlink() {
 wait_for_status_zero() {
   local table="$1"
   local timeout_seconds="$2"
+  local statuses="${3:-'running'}"
   local deadline=$((SECONDS + timeout_seconds))
   local count
   if [[ ! -f "$DATABASE" ]]; then
@@ -182,7 +183,7 @@ wait_for_status_zero() {
   while true; do
     count="$(
       sqlite3 "$DATABASE" \
-        "SELECT COUNT(*) FROM $table WHERE status = 'running';"
+        "SELECT COUNT(*) FROM $table WHERE status IN ($statuses);"
     )"
     if [[ "$count" == "0" ]]; then
       return 0

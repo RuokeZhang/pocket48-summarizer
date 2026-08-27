@@ -56,6 +56,8 @@ target_commit="$(basename "$target_release")"
 activate_clip_maintenance
 wait_for_status_zero video_clips "$clip_drain_seconds"
 wait_for_status_zero video_clip_exports "$clip_drain_seconds"
+wait_for_status_zero \
+  ai_cover_generations "$clip_drain_seconds" "'queued','running'"
 
 systemctl enable "pocket48-web@$target_slot.service" >/dev/null
 systemctl start "pocket48-web@$target_slot.service"

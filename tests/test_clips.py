@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -18,8 +19,10 @@ class FakeFFmpeg:
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: str = "portrait",
+        cover_path: Path | None = None,
+        cover_dimensions: VideoDimensions | None = None,
     ) -> Path:
-        del ass_path, output_layout
+        del ass_path, output_layout, cover_path, cover_dimensions
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"video")
         return output_path
@@ -63,8 +66,10 @@ class FakeFFmpeg:
 
 
 class FakeOSS:
-    def __init__(self):
+    def __init__(self, *, cover_bytes: bytes = b"ai-cover"):
         self.uploads = []
+        self.cover_downloads = []
+        self.cover_bytes = cover_bytes
 
     def clip_object_key(self, job_id: str, filename: str) -> str:
         return f"clips/{job_id}/{filename}"
@@ -76,6 +81,13 @@ class FakeOSS:
 
     async def signed_clip_url(self, key: str) -> str:
         return f"https://oss.example/{key}?signed=1"
+
+    async def download_ai_cover_image(
+        self, key: str, path: Path
+    ) -> None:
+        self.cover_downloads.append(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(self.cover_bytes)
 
 
 class FlakyOSS(FakeOSS):
@@ -99,6 +111,8 @@ class OverlayFFmpeg(FakeFFmpeg):
         self.cover_timestamp_ms = None
         self.cover_duration_ms = None
         self.output_layout = ""
+        self.ai_cover_bytes = None
+        self.ai_cover_dimensions = None
 
     async def supports_ass_filter(self) -> bool:
         return True
@@ -116,16 +130,24 @@ class OverlayFFmpeg(FakeFFmpeg):
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: str = "portrait",
+        cover_path: Path | None = None,
+        cover_dimensions: VideoDimensions | None = None,
     ) -> Path:
         if ass_path is not None:
             self.ass_content = ass_path.read_text(encoding="utf-8")
         self.output_layout = output_layout
+        self.ai_cover_bytes = (
+            cover_path.read_bytes() if cover_path is not None else None
+        )
+        self.ai_cover_dimensions = cover_dimensions
         return await super().clip_video(
             manifest_url,
             output_path,
             start_ms,
             end_ms,
             output_layout=output_layout,
+            cover_path=cover_path,
+            cover_dimensions=cover_dimensions,
         )
 
     async def render_cover_frame(
@@ -179,6 +201,8 @@ class MultiRangeFFmpeg(OverlayFFmpeg):
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: str = "portrait",
+        cover_path: Path | None = None,
+        cover_dimensions: VideoDimensions | None = None,
     ) -> Path:
         self.clip_calls.append((start_ms, end_ms))
         if ass_path is not None:
@@ -193,6 +217,8 @@ class MultiRangeFFmpeg(OverlayFFmpeg):
             end_ms,
             ass_path,
             output_layout,
+            cover_path,
+            cover_dimensions,
         )
 
     async def concat_clips(
@@ -511,7 +537,7 @@ async def test_landscape_export_prepends_selected_custom_cover(
         ffmpeg=ffmpeg,  # type: ignore[arg-type]
     )
 
-    record = service.start_export(
+    export_kwargs = dict(
         job_id=job.id,
         timeline_index=0,
         timeline_title="封面测试",
@@ -528,6 +554,7 @@ async def test_landscape_export_prepends_selected_custom_cover(
         cover_title="灯光亮起时",
         cover_style="badge",
     )
+    record = service.start_export(**export_kwargs)
     await service._tasks[record.id]
 
     completed = repository.get_video_clip_export(job.id, record.id)
@@ -542,6 +569,185 @@ async def test_landscape_export_prepends_selected_custom_cover(
     assert "灯光亮起时" in ffmpeg.cover_ass_content
     assert r"\pos(692,670)\p1" in ffmpeg.cover_ass_content
     assert oss.uploads[0][2] == b"covervideo"
+
+
+@pytest.mark.asyncio
+async def test_ai_cover_replaces_only_first_encoded_frame(
+    settings, repository
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=991109",
+        "991109",
+    )
+    generation, _ = repository.begin_ai_cover_generation(
+        generation_id="ai-cover-clip-1",
+        job_id=job.id,
+        timeline_index=0,
+        requested_by_user_id=None,
+        request_id="ai-cover-clip-request-1",
+        source_timestamp_ms=2300,
+        provider="seedream",
+        model="seedream-test",
+        prompt_version="variety-v1",
+        shared_seed=42,
+        title_text="灯光亮起时",
+        extra_text=[],
+        landscape_size=(2560, 1440),
+        four_three_size=(2048, 1536),
+    )
+    repository.mark_ai_cover_generation_running(generation.id)
+    for asset in repository.list_ai_cover_assets(generation.id):
+        repository.mark_ai_cover_asset_running(asset.id)
+        repository.complete_ai_cover_asset(
+            asset.id,
+            background_oss_object_key=(
+                f"covers/{asset.orientation}-background.png"
+            ),
+            final_oss_object_key=f"covers/{asset.orientation}-final.png",
+            background_sha256=f"background-{asset.orientation}",
+            final_sha256=hashlib.sha256(b"ai-cover").hexdigest(),
+        )
+    ffmpeg = OverlayFFmpeg()
+    oss = FakeOSS()
+    service = VideoClipService(
+        settings,
+        repository,
+        oss,  # type: ignore[arg-type]
+        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+    )
+
+    export_kwargs = dict(
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="封面测试",
+        requested_by_user_id=None,
+        request_id="ai-cover-export-request",
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="off",
+        include_danmaku=False,
+        output_layout="landscape",
+        ai_cover_generation_id=generation.id,
+    )
+    record = service.start_export(**export_kwargs)
+    repository.update_ai_cover_text(
+        job.id,
+        generation.id,
+        title_text="后来修改的标题",
+        extra_text=[],
+    )
+    duplicate = service.start_export(**export_kwargs)
+    assert duplicate.id == record.id
+    for asset in repository.list_ai_cover_assets(generation.id):
+        repository.complete_ai_cover_asset(
+            asset.id,
+            background_oss_object_key=(
+                asset.background_oss_object_key or "covers/background.png"
+            ),
+            final_oss_object_key=(
+                f"covers/{asset.orientation}-final-r1.png"
+            ),
+            background_sha256=asset.background_sha256 or "background",
+            final_sha256=hashlib.sha256(b"ai-cover").hexdigest(),
+        )
+    await service._tasks[record.id]
+
+    completed = repository.get_video_clip_export(job.id, record.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert not completed.cover_enabled
+    assert completed.ai_cover_generation_id == generation.id
+    assert completed.ai_cover_asset_id is not None
+    assert completed.ai_cover_text_revision == 0
+    assert completed.ai_cover_final_oss_object_key == (
+        "covers/landscape-final.png"
+    )
+    assert ffmpeg.ai_cover_bytes == b"ai-cover"
+    assert ffmpeg.ai_cover_dimensions == VideoDimensions(
+        width=1920,
+        height=1080,
+    )
+    assert ffmpeg.cover_duration_ms is None
+    assert oss.cover_downloads == ["covers/landscape-final.png"]
+    assert oss.uploads[0][2] == b"video"
+    with pytest.raises(AppError, match="只能用于横屏成片"):
+        service.start_export(
+            **{
+                **export_kwargs,
+                "request_id": "ai-cover-portrait-export",
+                "output_layout": "portrait",
+            }
+        )
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_ai_cover_export_rejects_hash_mismatch(
+    settings, repository
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=991110",
+        "991110",
+    )
+    generation, _ = repository.begin_ai_cover_generation(
+        generation_id="ai-cover-clip-hash",
+        job_id=job.id,
+        timeline_index=0,
+        requested_by_user_id=None,
+        request_id="ai-cover-clip-request-hash",
+        source_timestamp_ms=2300,
+        provider="seedream",
+        model="seedream-test",
+        prompt_version="variety-v1",
+        shared_seed=42,
+        title_text="封面校验",
+        extra_text=[],
+        landscape_size=(2560, 1440),
+        four_three_size=(2048, 1536),
+    )
+    repository.mark_ai_cover_generation_running(generation.id)
+    for asset in repository.list_ai_cover_assets(generation.id):
+        repository.mark_ai_cover_asset_running(asset.id)
+        repository.complete_ai_cover_asset(
+            asset.id,
+            background_oss_object_key=(
+                f"covers/{asset.orientation}-background.png"
+            ),
+            final_oss_object_key=f"covers/{asset.orientation}-final.png",
+            background_sha256=f"background-{asset.orientation}",
+            final_sha256=hashlib.sha256(b"expected").hexdigest(),
+        )
+    oss = FakeOSS(cover_bytes=b"tampered")
+    service = VideoClipService(
+        settings,
+        repository,
+        oss,  # type: ignore[arg-type]
+        ffmpeg=OverlayFFmpeg(),  # type: ignore[arg-type]
+    )
+
+    record = service.start_export(
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="封面校验",
+        requested_by_user_id=None,
+        request_id="ai-cover-export-hash",
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="off",
+        include_danmaku=False,
+        output_layout="landscape",
+        ai_cover_generation_id=generation.id,
+    )
+    await service._tasks[record.id]
+
+    failed = repository.get_video_clip_export(job.id, record.id)
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error_message == "AI 封面文件校验失败，请重新选择封面"
+    assert oss.uploads == []
+    await service.close()
 
 
 @pytest.mark.asyncio

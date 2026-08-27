@@ -290,8 +290,6 @@ const clipCutSummary = document.querySelector("#clip-cut-summary");
 const clipSplitAtMarker = document.querySelector("#clip-split-at-marker");
 const clipToggleSegment = document.querySelector("#clip-toggle-segment");
 const clipSegmentList = document.querySelector("#clip-segment-list");
-const clipCoverPreview = document.querySelector("#clip-cover-preview");
-const clipCoverPreviewTitle = document.querySelector("#clip-cover-preview-title");
 const clipLyricPreview = document.querySelector("#clip-lyric-preview");
 const clipLyricTime = document.querySelector("#clip-lyric-time");
 const clipLyricStack = document.querySelector("#clip-lyric-stack");
@@ -315,17 +313,30 @@ const clipSubtitleTextColorValue = document.querySelector("#clip-subtitle-text-c
 const clipSubtitleBackgroundColor = document.querySelector("#clip-subtitle-background-color");
 const clipSubtitleBackgroundColorValue = document.querySelector("#clip-subtitle-background-color-value");
 const clipSubtitleContrast = document.querySelector("#clip-subtitle-contrast");
-const clipCoverPanel = document.querySelector("#clip-cover-panel");
-const clipCoverEnabled = document.querySelector("#clip-cover-enabled");
-const clipCoverControls = document.querySelector("#clip-cover-controls");
-const clipCoverUseFrame = document.querySelector("#clip-cover-use-frame");
-const clipCoverTime = document.querySelector("#clip-cover-time");
-const clipCoverPreviewToggle = document.querySelector("#clip-cover-preview-toggle");
-const clipCoverTitleInput = document.querySelector("#clip-cover-title-input");
-const clipCoverTitleCount = document.querySelector("#clip-cover-title-count");
-const clipCoverStyleRadios = Array.from(
-  document.querySelectorAll('input[name="clip-cover-style"]')
+const aiCoverPanel = document.querySelector("#ai-cover-panel");
+const aiCoverMarkTime = document.querySelector("#ai-cover-mark-time");
+const aiCoverLayoutStyles = Array.from(
+  document.querySelectorAll('input[name="ai-cover-layout-style"]')
 );
+const aiCoverTitleInput = document.querySelector("#ai-cover-title-input");
+const aiCoverTitleCount = document.querySelector("#ai-cover-title-count");
+const aiCoverHighlightInput = document.querySelector("#ai-cover-highlight-input");
+const aiCoverHighlightCount = document.querySelector("#ai-cover-highlight-count");
+const aiCoverExtraText = document.querySelector("#ai-cover-extra-text");
+const aiCoverAddText = document.querySelector("#ai-cover-add-text");
+const aiCoverGenerate = document.querySelector("#ai-cover-generate");
+const aiCoverUpdateText = document.querySelector("#ai-cover-update-text");
+const aiCoverRegenerate = document.querySelector("#ai-cover-regenerate");
+const aiCoverRetry = document.querySelector("#ai-cover-retry");
+const aiCoverSelect = document.querySelector("#ai-cover-select");
+const aiCoverStatus = document.querySelector("#ai-cover-status");
+const aiCoverLandscapeImage = document.querySelector("#ai-cover-landscape-image");
+const aiCoverFourThreeImage = document.querySelector("#ai-cover-four-three-image");
+const aiCoverLandscapeState = document.querySelector("#ai-cover-landscape-state");
+const aiCoverFourThreeState = document.querySelector("#ai-cover-four-three-state");
+const aiCoverLandscapeDownload = document.querySelector("#ai-cover-landscape-download");
+const aiCoverFourThreeDownload = document.querySelector("#ai-cover-four-three-download");
+const aiCoverHistoryList = document.querySelector("#ai-cover-history-list");
 
 let clipExports = [];
 let clipPollTimer = null;
@@ -343,6 +354,8 @@ let clipLyricHoverClientX = 0;
 let clipLyricHoverMs = null;
 let clipLyricHovering = false;
 let clipSegmentSequence = 0;
+let aiCoverPollTimer = null;
+const selectedAICoverByTimeline = new Map();
 
 const CLIP_MIN_ZOOM = 1;
 const CLIP_MAX_ZOOM = 64;
@@ -360,8 +373,8 @@ const CLIP_SUBTITLE_FONT_SCALE_MIN = 50;
 const CLIP_SUBTITLE_FONT_SCALE_MAX = 150;
 const CLIP_DEFAULT_FONT_SCALE = 100;
 const CLIP_SUBTITLE_BASE_SCALE = 1.6;
-const CLIP_COVER_TITLE_MAX_LENGTH = 40;
-const CLIP_DEFAULT_COVER_STYLE = "scrim";
+const AI_COVER_POLL_MS = 1_500;
+const AI_COVER_MAX_EXTRA_TEXT = 4;
 const CLIP_DEFAULT_FONT_FAMILY = "wenkai";
 const CLIP_DEFAULT_TEXT_COLOR = "#E43D12";
 const CLIP_DEFAULT_BACKGROUND_COLOR = "#EBE9E1";
@@ -381,22 +394,6 @@ const clipOutputLayoutValue = () => {
   return clipOutputLayoutRadios.find((input) => input.checked)?.value
     || "portrait";
 };
-
-const clipCoverAvailable = () => (
-  window.matchMedia("(min-width: 761px)").matches
-);
-
-const clipCoverStyleValue = () => (
-  clipCoverStyleRadios.find((input) => input.checked)?.value
-  || CLIP_DEFAULT_COVER_STYLE
-);
-
-const clipCoverTitleValue = () => (
-  String(clipCoverTitleInput?.value || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, CLIP_COVER_TITLE_MAX_LENGTH)
-);
 
 const createClipSegment = (
   startMs,
@@ -559,20 +556,6 @@ const syncClipSegmentsToBounds = () => {
       )
       || merged[0].id
     );
-  }
-};
-
-const reconcileClipCoverAfterCut = ({ showNotice = true } = {}) => {
-  if (
-    !clipEditorState
-    || !Number.isFinite(clipEditorState.coverTimestampMs)
-    || clipTimeIsKept(clipEditorState.coverTimestampMs)
-  ) return;
-  clipEditorState.coverTimestampMs = null;
-  clipEditorState.coverPreviewing = false;
-  clipEditorState.coverReturnMs = null;
-  if (showNotice && clipCoverEnabled?.checked) {
-    clipEditorState.notice = t("coverFrameRemovedByCut");
   }
 };
 
@@ -827,129 +810,565 @@ const applyClipOutputLayout = ({ resetRequest = true } = {}) => {
     clipEditorState.notice = "";
   }
   updateClipRangeUI({ renderPreview: true });
+  renderAICoverState();
 };
 
-const currentClipCoverFrameMs = () => {
-  if (!clipEditorState) return null;
-  const current = (
-    clipPreviewPlayer?.readyState >= 1
-    && Number.isFinite(clipPreviewPlayer.currentTime)
-  )
-    ? clipPreviewPlayer.currentTime * 1000
-    : clipEditorState.startMs;
-  const keptFrameMs = nearestClipKeptFrameMs(current);
-  return Number.isFinite(keptFrameMs)
-    ? Math.round(keptFrameMs / 100) * 100
-    : null;
-};
+const aiCoverIsAdmin = () => (
+  clipEditor?.dataset.aiCoverAdmin === "true"
+);
 
-const renderClipCoverState = () => {
-  if (!clipEditorState) return;
-  const available = clipCoverAvailable();
-  if (clipCoverPanel) clipCoverPanel.hidden = !available;
-  if (!available && clipCoverEnabled) {
-    clipCoverEnabled.checked = false;
+const aiCoverIsConfigured = () => (
+  clipEditor?.dataset.aiCoverConfigured === "true"
+);
+
+const aiCoverLayoutStyleValue = () => (
+  aiCoverLayoutStyles.find((input) => input.checked)?.value
+  || "sticker_pop"
+);
+
+const aiCoverTitleValue = () => (
+  String(aiCoverTitleInput?.value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80)
+);
+
+const aiCoverHighlightValue = () => (
+  String(aiCoverHighlightInput?.value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60)
+);
+
+const aiCoverDefaultCopy = (value) => {
+  const title = String(value || "").replace(/\s+/g, " ").trim();
+  for (const separator of ["与", "：", ":", "｜", "|", "—", "，", ","]) {
+    const index = title.indexOf(separator);
+    if (index >= 2 && title.length - index >= 3) {
+      return {
+        title: title.slice(0, index),
+        highlight: title.slice(index)
+      };
+    }
   }
-  const enabled = available && Boolean(clipCoverEnabled?.checked);
-  clipEditorState.coverEnabled = enabled;
-  if (!enabled) clipEditorState.coverPreviewing = false;
-  if (clipCoverControls) clipCoverControls.hidden = !enabled;
-  const title = clipCoverTitleValue();
-  const style = clipCoverStyleValue();
-  if (clipCoverTitleCount) {
-    clipCoverTitleCount.textContent = (
-      `${title.length}/${CLIP_COVER_TITLE_MAX_LENGTH}`
+  return { title, highlight: "" };
+};
+
+const aiCoverLayoutStyleLabel = (value) => {
+  const key = {
+    sticker_pop: "aiCoverStyleSticker",
+    editorial_arc: "aiCoverStyleEditorial",
+    banner_energy: "aiCoverStyleBanner"
+  }[value];
+  return key ? t(key) : value;
+};
+
+const aiCoverExtraInputValues = () => (
+  Array.from(
+    aiCoverExtraText?.querySelectorAll("input[data-ai-cover-extra]") || []
+  )
+    .map((input) => String(input.value || "").replace(/\s+/g, " ").trim())
+    .slice(0, AI_COVER_MAX_EXTRA_TEXT)
+);
+
+const aiCoverExtraValues = () => (
+  aiCoverExtraInputValues().filter(Boolean)
+);
+
+const setAICoverStatus = (message = "", { error = false } = {}) => {
+  if (!aiCoverStatus) return;
+  aiCoverStatus.textContent = message;
+  aiCoverStatus.classList.toggle("is-error", error);
+};
+
+const renderAICoverExtraInputs = (values = []) => {
+  if (!aiCoverExtraText) return;
+  aiCoverExtraText.replaceChildren();
+  values.slice(0, AI_COVER_MAX_EXTRA_TEXT).forEach((value, index) => {
+    const row = document.createElement("label");
+    row.className = "ai-cover-extra-row";
+    const label = document.createElement("span");
+    label.textContent = t("aiCoverExtraText", { index: index + 1 });
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 60;
+    input.autocomplete = "off";
+    input.value = value;
+    input.dataset.aiCoverExtra = String(index);
+    input.disabled = !aiCoverIsAdmin();
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "secondary-button";
+    remove.textContent = t("remove");
+    remove.disabled = !aiCoverIsAdmin();
+    remove.addEventListener("click", () => {
+      const nextValues = aiCoverExtraInputValues();
+      nextValues.splice(index, 1);
+      renderAICoverExtraInputs(nextValues);
+      renderAICoverState();
+    });
+    row.append(label, input, remove);
+    aiCoverExtraText.append(row);
+  });
+  if (aiCoverAddText) {
+    aiCoverAddText.disabled = (
+      !aiCoverIsAdmin()
+      || values.length >= AI_COVER_MAX_EXTRA_TEXT
     );
   }
-  if (clipCoverTime) {
-    clipCoverTime.textContent = Number.isFinite(
-      clipEditorState.coverTimestampMs
-    )
-      ? formatFineClock(clipEditorState.coverTimestampMs)
+};
+
+const aiCoverAsset = (generation, orientation) => (
+  generation?.assets?.find(
+    (asset) => asset.orientation === orientation
+  ) || null
+);
+
+const aiCoverGenerationMessage = (generation) => {
+  if (!generation) return "";
+  const errorCode = generation.error?.code || generation.error_code;
+  const errorMessage = (
+    generation.error?.message || generation.error_message
+  );
+  if (generation.status === "queued") return t("aiCoverQueued");
+  if (generation.status === "running") return t("aiCoverRunning");
+  if (generation.status === "completed") return t("aiCoverCompleted");
+  if (errorCode === "ai_cover_moderation_rejected") {
+    return t("aiCoverModerationRejected");
+  }
+  return errorMessage || t("aiCoverFailed");
+};
+
+const renderAICoverAsset = (
+  generation,
+  orientation,
+  image,
+  state,
+  download
+) => {
+  const asset = aiCoverAsset(generation, orientation);
+  const completed = (
+    asset?.status === "completed"
+    && asset.download_url
+  );
+  if (image) {
+    image.hidden = !completed;
+    if (completed) {
+      image.src = (
+        `${asset.download_url}?revision=${asset.text_revision || 0}`
+      );
+      image.alt = orientation === "four_three"
+        ? t("aiCoverFourThreeAlt")
+        : t("aiCoverLandscapeAlt");
+    } else {
+      image.removeAttribute("src");
+      image.alt = "";
+    }
+  }
+  if (state) {
+    state.hidden = completed;
+    state.textContent = asset
+      ? aiCoverGenerationMessage({
+        ...generation,
+        status: asset.status,
+        error: asset.error
+      })
+      : t("aiCoverWaiting");
+  }
+  if (download) {
+    download.hidden = !completed;
+    download.href = completed ? asset.download_url : "#";
+  }
+};
+
+const renderAICoverHistory = () => {
+  if (!aiCoverHistoryList || !clipEditorState) return;
+  aiCoverHistoryList.replaceChildren();
+  clipEditorState.aiCoverGenerations.forEach((generation, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ai-cover-history-item";
+    button.classList.toggle(
+      "is-active",
+      generation.id === clipEditorState.aiCoverGeneration?.id
+    );
+    button.classList.toggle(
+      "is-selected",
+      generation.id === clipEditorState.aiCoverGenerationId
+    );
+    const number = clipEditorState.aiCoverGenerations.length - index;
+    button.textContent = t("aiCoverHistoryItem", {
+      number,
+      time: formatFineClock(generation.source_timestamp_ms),
+      style: aiCoverLayoutStyleLabel(generation.layout_style),
+      status: i18n?.translateStatus(generation.status) || generation.status
+    });
+    button.addEventListener("click", () => {
+      showAICoverGeneration(generation, { syncText: true });
+    });
+    aiCoverHistoryList.append(button);
+  });
+  if (!clipEditorState.aiCoverGenerations.length) {
+    const empty = document.createElement("span");
+    empty.textContent = t("aiCoverNoHistory");
+    aiCoverHistoryList.append(empty);
+  }
+};
+
+const renderAICoverState = () => {
+  if (!clipEditorState || !aiCoverPanel) return;
+  const generation = clipEditorState.aiCoverGeneration;
+  const activeGeneration = clipEditorState.aiCoverGenerations.some(
+    (item) => ["queued", "running"].includes(item.status)
+  );
+  const validMark = (
+    Number.isFinite(clipEditorState.markerMs)
+    && clipTimeIsKept(clipEditorState.markerMs)
+  );
+  const title = aiCoverTitleValue();
+  if (aiCoverMarkTime) {
+    aiCoverMarkTime.textContent = validMark
+      ? formatFineClock(clipEditorState.markerMs)
       : "--:--:--.-";
   }
-  const previewing = (
-    enabled
-    && clipEditorState.coverPreviewing
-    && Number.isFinite(clipEditorState.coverTimestampMs)
-  );
-  if (clipCoverPreview) {
-    clipCoverPreview.hidden = !previewing;
-    clipCoverPreview.dataset.coverStyle = style;
+  if (aiCoverTitleCount) {
+    aiCoverTitleCount.textContent = `${title.length}/80`;
   }
-  if (clipCoverPreviewTitle) {
-    clipCoverPreviewTitle.textContent = title;
-  }
-  clipPreviewStage?.classList.toggle("is-cover-preview", previewing);
-  if (clipPreviewPlayer) clipPreviewPlayer.controls = !previewing;
-  if (clipCoverPreviewToggle) {
-    clipCoverPreviewToggle.textContent = previewing
-      ? t("returnClipPreview")
-      : t("previewCover");
-  }
-};
-
-const setClipCoverPreviewing = (active) => {
-  if (!clipEditorState) return;
-  const enabled = clipCoverAvailable() && Boolean(clipCoverEnabled?.checked);
-  if (active && enabled && !Number.isFinite(clipEditorState.coverTimestampMs)) {
-    clipEditorState.coverTimestampMs = currentClipCoverFrameMs();
-  }
-  const wasPreviewing = clipEditorState.coverPreviewing;
-  const previewing = Boolean(
-    active
-    && enabled
-    && Number.isFinite(clipEditorState.coverTimestampMs)
-  );
-  if (previewing && !wasPreviewing) {
-    clipEditorState.coverReturnMs = currentClipCoverFrameMs();
-  }
-  clipEditorState.coverPreviewing = previewing;
-  if (previewing && clipPreviewPlayer) {
-    clipPreviewPlayer.pause();
-    if (clipPreviewPlayer.readyState >= 1) {
-      clipPreviewPlayer.currentTime = (
-        clipEditorState.coverTimestampMs / 1000
-      );
-    } else {
-      clipPendingSeekMs = clipEditorState.coverTimestampMs;
-    }
-  } else if (
-    wasPreviewing
-    && clipPreviewPlayer
-    && Number.isFinite(clipEditorState.coverReturnMs)
-  ) {
-    if (clipPreviewPlayer.readyState >= 1) {
-      clipPreviewPlayer.currentTime = (
-        clipEditorState.coverReturnMs / 1000
-      );
-    } else {
-      clipPendingSeekMs = clipEditorState.coverReturnMs;
-    }
-    clipEditorState.coverReturnMs = null;
-  }
-  renderClipCoverState();
-  renderClipPreview();
-};
-
-const captureClipCoverFrame = () => {
-  if (!clipEditorState || !clipCoverAvailable()) return;
-  clipEditorState.coverTimestampMs = currentClipCoverFrameMs();
-  clipEditorState.requestId = null;
-  clipEditorState.notice = "";
-  if (clipCoverEnabled) clipCoverEnabled.checked = true;
-  if (clipCoverTitleInput && !clipCoverTitleValue()) {
-    clipCoverTitleInput.value = clipEditorState.title;
-  }
-  if (
-    Number.isFinite(clipEditorState.coverTimestampMs)
-    && clipPreviewPlayer?.readyState >= 1
-  ) {
-    clipPreviewPlayer.currentTime = (
-      clipEditorState.coverTimestampMs / 1000
+  if (aiCoverHighlightCount) {
+    aiCoverHighlightCount.textContent = (
+      `${aiCoverHighlightValue().length}/60`
     );
   }
-  setClipCoverPreviewing(true);
+  if (aiCoverGenerate) {
+    aiCoverGenerate.disabled = (
+      !aiCoverIsAdmin()
+      || !aiCoverIsConfigured()
+      || clipEditorState.aiCoverBusy
+      || activeGeneration
+      || !validMark
+      || !title
+    );
+  }
+  if (aiCoverUpdateText) {
+    aiCoverUpdateText.hidden = !(
+      aiCoverIsAdmin()
+      && generation?.status === "completed"
+    );
+    aiCoverUpdateText.disabled = (
+      clipEditorState.aiCoverBusy || !title
+    );
+  }
+  if (aiCoverRegenerate) {
+    aiCoverRegenerate.hidden = !(
+      aiCoverIsAdmin()
+      && aiCoverIsConfigured()
+      && generation
+      && ["completed", "failed"].includes(generation.status)
+    );
+    aiCoverRegenerate.disabled = (
+      clipEditorState.aiCoverBusy || activeGeneration
+    );
+  }
+  if (aiCoverRetry) {
+    aiCoverRetry.hidden = !(
+      aiCoverIsAdmin()
+      && aiCoverIsConfigured()
+      && generation?.status === "failed"
+    );
+    aiCoverRetry.disabled = (
+      clipEditorState.aiCoverBusy || activeGeneration
+    );
+  }
+  const selected = (
+    generation?.id
+    && generation.id === clipEditorState.aiCoverGenerationId
+  );
+  const landscapeOutput = clipOutputLayoutValue() === "landscape";
+  if (aiCoverSelect) {
+    aiCoverSelect.hidden = !(
+      aiCoverIsAdmin()
+      && generation?.status === "completed"
+    );
+    aiCoverSelect.disabled = (
+      clipEditorState.aiCoverBusy
+      || (!selected && !landscapeOutput)
+    );
+    aiCoverSelect.setAttribute("aria-pressed", String(Boolean(selected)));
+    aiCoverSelect.textContent = selected
+      ? t("aiCoverRemoveFromVideo")
+      : (
+        landscapeOutput
+          ? t("aiCoverUseForVideo")
+          : t("aiCoverLandscapeVideoOnly")
+      );
+  }
+  renderAICoverAsset(
+    generation,
+    "landscape",
+    aiCoverLandscapeImage,
+    aiCoverLandscapeState,
+    aiCoverLandscapeDownload
+  );
+  renderAICoverAsset(
+    generation,
+    "four_three",
+    aiCoverFourThreeImage,
+    aiCoverFourThreeState,
+    aiCoverFourThreeDownload
+  );
+  if (generation) {
+    setAICoverStatus(
+      aiCoverGenerationMessage(generation),
+      { error: generation.status === "failed" }
+    );
+  }
+  renderAICoverHistory();
+};
+
+const upsertAICoverGeneration = (generation) => {
+  if (!clipEditorState || !generation) return;
+  const generations = clipEditorState.aiCoverGenerations.filter(
+    (item) => item.id !== generation.id
+  );
+  generations.push(generation);
+  generations.sort((left, right) => (
+    String(right.created_at).localeCompare(String(left.created_at))
+  ));
+  clipEditorState.aiCoverGenerations = generations;
+};
+
+const stopAICoverPolling = () => {
+  if (aiCoverPollTimer !== null) {
+    window.clearTimeout(aiCoverPollTimer);
+    aiCoverPollTimer = null;
+  }
+};
+
+const scheduleAICoverPoll = () => {
+  stopAICoverPolling();
+  const activeGenerations = (
+    clipEditorState?.aiCoverGenerations.filter(
+      (generation) => ["queued", "running"].includes(generation.status)
+    ) || []
+  );
+  if (!activeGenerations.length) return;
+  const jobId = clipEditor?.dataset.jobId;
+  aiCoverPollTimer = window.setTimeout(async () => {
+    if (!clipEditorState || !clipEditor?.open) return;
+    try {
+      const results = await Promise.all(activeGenerations.map(
+        async (generation) => {
+          const response = await apiFetch(
+            `/api/jobs/${jobId}/ai-covers/${generation.id}`
+          );
+          const payload = await response.json().catch(() => ({}));
+          return response.ok ? payload : null;
+        }
+      ));
+      for (const payload of results.filter(Boolean)) {
+        upsertAICoverGeneration(payload);
+        if (clipEditorState.aiCoverGeneration?.id === payload.id) {
+          clipEditorState.aiCoverGeneration = payload;
+        }
+      }
+      renderAICoverState();
+    } finally {
+      scheduleAICoverPoll();
+    }
+  }, AI_COVER_POLL_MS);
+};
+
+const showAICoverGeneration = (
+  generation,
+  { syncText = false } = {}
+) => {
+  if (!clipEditorState) return;
+  clipEditorState.aiCoverGeneration = generation || null;
+  if (syncText && generation) {
+    for (const input of aiCoverLayoutStyles) {
+      input.checked = input.value === (
+        generation.layout_style || "sticker_pop"
+      );
+    }
+    if (aiCoverTitleInput) {
+      aiCoverTitleInput.value = generation.title_text || "";
+    }
+    if (aiCoverHighlightInput) {
+      aiCoverHighlightInput.value = generation.highlight_text || "";
+    }
+    renderAICoverExtraInputs(generation.extra_text || []);
+  }
+  renderAICoverState();
+  scheduleAICoverPoll();
+};
+
+const loadAICoverGenerations = async () => {
+  if (!clipEditorState || !clipEditor?.dataset.jobId) return;
+  const timelineIndex = clipEditorState.timelineIndex;
+  try {
+    const response = await apiFetch(
+      (
+        `/api/jobs/${clipEditor.dataset.jobId}/ai-covers`
+        + `?timeline_index=${timelineIndex}`
+      )
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(payload, "aiCoverLoadFailed"));
+    }
+    if (!clipEditorState || clipEditorState.timelineIndex !== timelineIndex) {
+      return;
+    }
+    clipEditorState.aiCoverGenerations = (payload.covers || []).filter(
+      (generation) => generation.timeline_index === timelineIndex
+    );
+    const selectedId = selectedAICoverByTimeline.get(timelineIndex) || null;
+    clipEditorState.aiCoverGenerationId = (
+      clipEditorState.aiCoverGenerations.some(
+        (generation) => generation.id === selectedId
+      )
+        ? selectedId
+        : null
+    );
+    const generation = (
+      clipEditorState.aiCoverGenerations.find(
+        (item) => item.id === clipEditorState.aiCoverGenerationId
+      )
+      || clipEditorState.aiCoverGenerations[0]
+      || null
+    );
+    showAICoverGeneration(generation, {
+      syncText: Boolean(generation)
+    });
+  } catch (error) {
+    setAICoverStatus(
+      error instanceof Error ? error.message : t("aiCoverLoadFailed"),
+      { error: true }
+    );
+  }
+};
+
+const runAICoverAction = async (request) => {
+  if (!clipEditorState) return null;
+  clipEditorState.aiCoverBusy = true;
+  renderAICoverState();
+  let failureMessage = "";
+  try {
+    const response = await request();
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(payload, "aiCoverRequestFailed"));
+    }
+    clipEditorState.requestId = null;
+    upsertAICoverGeneration(payload);
+    showAICoverGeneration(payload, { syncText: true });
+    return payload;
+  } catch (error) {
+    failureMessage = (
+      error instanceof Error ? error.message : t("aiCoverRequestFailed")
+    );
+    return null;
+  } finally {
+    if (clipEditorState) {
+      clipEditorState.aiCoverBusy = false;
+      renderAICoverState();
+      if (failureMessage) {
+        setAICoverStatus(failureMessage, { error: true });
+      }
+      scheduleAICoverPoll();
+    }
+  }
+};
+
+const newAICoverRequestId = () => (
+  window.crypto?.randomUUID?.()
+  || `ai-cover-${Date.now()}-${Math.random().toString(16).slice(2)}`
+);
+
+const createAICoverGeneration = () => {
+  if (
+    !clipEditorState
+    || !Number.isFinite(clipEditorState.markerMs)
+    || !clipTimeIsKept(clipEditorState.markerMs)
+  ) {
+    setAICoverStatus(t("aiCoverMarkRequired"), { error: true });
+    return;
+  }
+  const titleText = aiCoverTitleValue();
+  if (!titleText) {
+    setAICoverStatus(t("aiCoverTextRequired"), { error: true });
+    return;
+  }
+  void runAICoverAction(() => apiFetch(
+    `/api/jobs/${clipEditor.dataset.jobId}/ai-covers`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request_id: newAICoverRequestId(),
+        timeline_index: clipEditorState.timelineIndex,
+        source_timestamp_ms: Math.round(clipEditorState.markerMs),
+        layout_style: aiCoverLayoutStyleValue(),
+        title_text: titleText,
+        highlight_text: aiCoverHighlightValue(),
+        extra_text: aiCoverExtraValues()
+      })
+    }
+  ));
+};
+
+const updateAICoverText = () => {
+  const generation = clipEditorState?.aiCoverGeneration;
+  if (!generation) return;
+  const titleText = aiCoverTitleValue();
+  if (!titleText) {
+    setAICoverStatus(t("aiCoverTextRequired"), { error: true });
+    return;
+  }
+  void runAICoverAction(() => apiFetch(
+    (
+      `/api/jobs/${clipEditor.dataset.jobId}/ai-covers/`
+      + `${generation.id}/text`
+    ),
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        layout_style: aiCoverLayoutStyleValue(),
+        title_text: titleText,
+        highlight_text: aiCoverHighlightValue(),
+        extra_text: aiCoverExtraValues()
+      })
+    }
+  ));
+};
+
+const regenerateAICover = () => {
+  const generation = clipEditorState?.aiCoverGeneration;
+  if (!generation) return;
+  void runAICoverAction(() => apiFetch(
+    (
+      `/api/jobs/${clipEditor.dataset.jobId}/ai-covers/`
+      + `${generation.id}/regenerate`
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id: newAICoverRequestId() })
+    }
+  ));
+};
+
+const retryAICover = () => {
+  const generation = clipEditorState?.aiCoverGeneration;
+  if (!generation) return;
+  void runAICoverAction(() => apiFetch(
+    (
+      `/api/jobs/${clipEditor.dataset.jobId}/ai-covers/`
+      + `${generation.id}/retry`
+    ),
+    { method: "POST" }
+  ));
 };
 
 const clipOverlayLabel = (clip) => {
@@ -965,8 +1384,8 @@ const clipOverlayLabel = (clip) => {
   const layout = clip.output_layout === "landscape"
     ? t("clipLandscapeLayout")
     : t("clipPortraitLayout");
-  return `${layout} · ${overlay}${clip.cover_enabled
-    ? ` · ${t("customCover")}`
+  return `${layout} · ${overlay}${clip.ai_cover_generation_id
+    ? ` · ${t("aiCoverTitle")}`
     : ""}`;
 };
 
@@ -1176,17 +1595,6 @@ const clipValidationMessage = () => {
       return t("subtitleContrastRequired");
     }
   }
-  if (clipCoverAvailable() && clipCoverEnabled?.checked) {
-    if (!clipCoverTitleValue()) {
-      return t("coverTitleRequired");
-    }
-    if (
-      !Number.isFinite(clipEditorState.coverTimestampMs)
-      || !clipTimeIsKept(clipEditorState.coverTimestampMs)
-    ) {
-      return t("coverFrameRequired");
-    }
-  }
   return "";
 };
 
@@ -1312,6 +1720,7 @@ const updateClipRangeUI = ({ renderPreview = false } = {}) => {
   if (clipZoomIn) {
     clipZoomIn.disabled = clipEditorState.zoom >= CLIP_MAX_ZOOM;
   }
+  renderAICoverState();
   if (renderPreview) renderClipPreview();
 };
 
@@ -1351,7 +1760,6 @@ const setClipBoundary = (
     || previousEndMs !== clipEditorState.endMs
   ) {
     syncClipSegmentsToBounds();
-    reconcileClipCoverAfterCut();
   }
   updateClipRangeUI({ renderPreview });
   return clamped;
@@ -1752,7 +2160,6 @@ const toggleSelectedClipSegment = () => {
   clipEditorState.notice = t(
     segment.kept ? "clipSegmentRestoredNotice" : "clipSegmentDeletedNotice"
   );
-  reconcileClipCoverAfterCut();
   const currentMs = (
     clipPreviewPlayer?.readyState >= 1
     && Number.isFinite(clipPreviewPlayer.currentTime)
@@ -2249,18 +2656,6 @@ const renderClipPreview = () => {
   ) {
     milliseconds = clipEditorState.startMs;
   }
-  renderClipCoverState();
-  if (clipEditorState.coverPreviewing) {
-    clipPreviewStage?.classList.remove("is-deleted-frame");
-    if (clipPreviewCutNotice) clipPreviewCutNotice.hidden = true;
-    if (clipPreviewSubtitles) clipPreviewSubtitles.hidden = true;
-    if (clipPreviewDanmaku) {
-      clipPreviewDanmaku.hidden = true;
-      clipPreviewDanmaku.replaceChildren();
-      delete clipPreviewDanmaku.dataset.stackKey;
-    }
-    return;
-  }
   const deletedFrame = !clipTimeIsKept(
     milliseconds,
     { includeFinalEnd: true }
@@ -2441,10 +2836,12 @@ const openClipEditor = async (row, button) => {
     segments: [initialSegment],
     selectedSegmentId: initialSegment.id,
     markerMs: null,
-    coverEnabled: false,
-    coverTimestampMs: null,
-    coverReturnMs: null,
-    coverPreviewing: false,
+    aiCoverGenerationId: (
+      selectedAICoverByTimeline.get(Number(row.dataset.clipIndex)) || null
+    ),
+    aiCoverGeneration: null,
+    aiCoverGenerations: [],
+    aiCoverBusy: false,
     danmakuCacheKey: "",
     danmakuStream: [],
     startSource: "manual",
@@ -2461,11 +2858,18 @@ const openClipEditor = async (row, button) => {
   if (clipSnapEnabled) clipSnapEnabled.checked = true;
   if (clipSubtitleMode) clipSubtitleMode.value = "zh";
   if (clipDanmakuEnabled) clipDanmakuEnabled.checked = false;
-  if (clipCoverEnabled) clipCoverEnabled.checked = false;
-  if (clipCoverTitleInput) clipCoverTitleInput.value = clipEditorState.title;
-  for (const input of clipCoverStyleRadios) {
-    input.checked = input.value === CLIP_DEFAULT_COVER_STYLE;
+  const defaultCoverCopy = aiCoverDefaultCopy(clipEditorState.title);
+  for (const input of aiCoverLayoutStyles) {
+    input.checked = input.value === "sticker_pop";
   }
+  if (aiCoverTitleInput) {
+    aiCoverTitleInput.value = defaultCoverCopy.title;
+  }
+  if (aiCoverHighlightInput) {
+    aiCoverHighlightInput.value = defaultCoverCopy.highlight;
+  }
+  renderAICoverExtraInputs([]);
+  setAICoverStatus("");
   for (const input of clipOutputLayoutRadios) {
     input.checked = input.value === "portrait";
   }
@@ -2483,7 +2887,7 @@ const openClipEditor = async (row, button) => {
   }
   applyClipSubtitleStyle();
   applyClipOutputLayout({ resetRequest: false });
-  renderClipCoverState();
+  renderAICoverState();
   updateClipEnglishOptions();
   if (clipRangeControl) clipRangeControl.style.width = "100%";
   if (clipTimelineViewport) clipTimelineViewport.scrollLeft = 0;
@@ -2496,6 +2900,7 @@ const openClipEditor = async (row, button) => {
   clipPendingSeekMs = aiStartMs;
   if (clipPreviewPlayhead) clipPreviewPlayhead.hidden = false;
   fitClipTimeline();
+  void loadAICoverGenerations();
 };
 
 for (const row of clipRows) {
@@ -2620,7 +3025,6 @@ clipResetRange?.addEventListener("click", () => {
   clipEditorState.endSource = "manual";
   clipEditorState.requestId = null;
   clipEditorState.notice = "";
-  reconcileClipCoverAfterCut();
   updateClipRangeUI();
   seekClipPreview(clipEditorState.startMs);
   scrollClipTimelineTo(
@@ -2686,37 +3090,47 @@ clipThemeVibrantCalm?.addEventListener("click", () => {
   handleClipStyleChange();
 });
 
-clipCoverEnabled?.addEventListener("change", () => {
-  if (!clipEditorState) return;
-  clipEditorState.requestId = null;
-  clipEditorState.notice = "";
-  if (clipCoverEnabled.checked) {
-    captureClipCoverFrame();
-  } else {
-    setClipCoverPreviewing(false);
-  }
-  updateClipRangeUI();
-});
-clipCoverUseFrame?.addEventListener("click", captureClipCoverFrame);
-clipCoverPreviewToggle?.addEventListener("click", () => {
-  if (!clipEditorState) return;
-  setClipCoverPreviewing(!clipEditorState.coverPreviewing);
-});
-clipCoverTitleInput?.addEventListener("input", () => {
-  if (!clipEditorState) return;
-  clipEditorState.requestId = null;
-  clipEditorState.notice = "";
-  renderClipCoverState();
-  updateClipRangeUI();
-});
-for (const input of clipCoverStyleRadios) {
-  input.addEventListener("change", () => {
-    if (!clipEditorState || !input.checked) return;
-    clipEditorState.requestId = null;
-    clipEditorState.notice = "";
-    renderClipCoverState();
-  });
+for (const input of aiCoverLayoutStyles) {
+  input.addEventListener("change", renderAICoverState);
 }
+aiCoverTitleInput?.addEventListener("input", renderAICoverState);
+aiCoverHighlightInput?.addEventListener("input", renderAICoverState);
+aiCoverExtraText?.addEventListener("input", renderAICoverState);
+aiCoverAddText?.addEventListener("click", () => {
+  const values = aiCoverExtraInputValues();
+  if (values.length >= AI_COVER_MAX_EXTRA_TEXT) return;
+  values.push("");
+  renderAICoverExtraInputs(values);
+  renderAICoverState();
+  const inputs = aiCoverExtraText?.querySelectorAll(
+    "input[data-ai-cover-extra]"
+  );
+  inputs?.[inputs.length - 1]?.focus();
+});
+aiCoverGenerate?.addEventListener("click", createAICoverGeneration);
+aiCoverUpdateText?.addEventListener("click", updateAICoverText);
+aiCoverRegenerate?.addEventListener("click", regenerateAICover);
+aiCoverRetry?.addEventListener("click", retryAICover);
+aiCoverSelect?.addEventListener("click", () => {
+  if (
+    !clipEditorState
+    || clipEditorState.aiCoverGeneration?.status !== "completed"
+  ) return;
+  const generationId = clipEditorState.aiCoverGeneration.id;
+  const selected = clipEditorState.aiCoverGenerationId === generationId;
+  if (!selected && clipOutputLayoutValue() !== "landscape") return;
+  clipEditorState.aiCoverGenerationId = selected ? null : generationId;
+  if (clipEditorState.aiCoverGenerationId) {
+    selectedAICoverByTimeline.set(
+      clipEditorState.timelineIndex,
+      clipEditorState.aiCoverGenerationId
+    );
+  } else {
+    selectedAICoverByTimeline.delete(clipEditorState.timelineIndex);
+  }
+  clipEditorState.requestId = null;
+  renderAICoverState();
+});
 
 clipPreviewPlayer?.addEventListener("loadedmetadata", () => {
   if (clipPendingSeekMs !== null) {
@@ -2730,11 +3144,6 @@ clipPreviewPlayer?.addEventListener("loadedmetadata", () => {
   renderClipPreview();
 });
 clipPreviewPlayer?.addEventListener("play", () => {
-  if (clipEditorState?.coverPreviewing) {
-    clipEditorState.coverPreviewing = false;
-    clipEditorState.coverReturnMs = null;
-    renderClipCoverState();
-  }
   const keptRanges = clipKeptRanges();
   if (clipEditorState && keptRanges.length) {
     const currentMs = clipPreviewPlayer.currentTime * 1000;
@@ -2764,11 +3173,6 @@ clipPreviewSelection?.addEventListener("click", () => {
     clipEditorState.notice = t("clipNoKeptSegments");
     updateClipRangeUI();
     return;
-  }
-  if (clipEditorState.coverPreviewing) {
-    clipEditorState.coverPreviewing = false;
-    clipEditorState.coverReturnMs = null;
-    renderClipCoverState();
   }
   const seekAndPlay = () => {
     clipPreviewPlayer.currentTime = keptRanges[0].start_ms / 1000;
@@ -2838,9 +3242,7 @@ clipEditor?.addEventListener("close", () => {
   if (clipSnapMarker) clipSnapMarker.hidden = true;
   if (clipHoverMarker) clipHoverMarker.hidden = true;
   if (clipMarkedMarker) clipMarkedMarker.hidden = true;
-  if (clipCoverPreview) clipCoverPreview.hidden = true;
-  clipPreviewStage?.classList.remove("is-cover-preview");
-  if (clipPreviewPlayer) clipPreviewPlayer.controls = true;
+  stopAICoverPolling();
   clipTimelineCues?.replaceChildren();
   clipSegmentTrack?.replaceChildren();
   clipSegmentList?.replaceChildren();
@@ -2900,23 +3302,11 @@ clipEditorSubmit?.addEventListener("click", async () => {
           subtitle_background_color: backgroundColor,
           output_layout: clipOutputLayoutValue(),
           subtitle_font_family: fontFamily,
-          cover_enabled: (
-            clipCoverAvailable()
-            && Boolean(clipCoverEnabled?.checked)
-          ),
-          cover_timestamp_ms: (
-            clipCoverAvailable()
-            && clipCoverEnabled?.checked
-              ? clipEditorState.coverTimestampMs
+          ai_cover_generation_id: (
+            clipOutputLayoutValue() === "landscape"
+              ? clipEditorState.aiCoverGenerationId
               : null
-          ),
-          cover_title: (
-            clipCoverAvailable()
-            && clipCoverEnabled?.checked
-              ? clipCoverTitleValue()
-              : ""
-          ),
-          cover_style: clipCoverStyleValue()
+          )
         })
       }
     );
@@ -3650,6 +4040,9 @@ document.addEventListener("p48:languagechange", () => {
   if (lastTranslationPayload) renderTranslationState(lastTranslationPayload);
   renderPlaybackSyncSummary();
   renderClipExports();
+  if (clipEditorState) {
+    renderAICoverExtraInputs(aiCoverExtraInputValues());
+  }
   updateClipRangeUI();
   updateDanmakuAuthorFilter();
 });

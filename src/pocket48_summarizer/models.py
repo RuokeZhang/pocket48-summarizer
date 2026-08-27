@@ -5,6 +5,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+AICoverLayoutStyle = Literal[
+    "sticker_pop",
+    "editorial_arc",
+    "banner_energy",
+]
+
 
 class JobStatus(StrEnum):
     QUEUED = "queued"
@@ -311,12 +317,61 @@ class VideoClipExportRecord(BaseModel):
     cover_timestamp_ms: int | None = None
     cover_title: str
     cover_style: Literal["scrim", "display", "badge"]
+    ai_cover_generation_id: str | None = None
+    ai_cover_asset_id: str | None = None
+    ai_cover_final_oss_object_key: str | None = None
+    ai_cover_final_sha256: str | None = None
+    ai_cover_text_revision: int | None = None
     render_version: str
     filename: str
     status: Literal["running", "completed", "failed"]
     oss_object_key: str | None = None
     error_message: str | None = None
     warning_message: str | None = None
+    created_at: str
+    updated_at: str
+    completed_at: str | None = None
+
+
+class AICoverGenerationRecord(BaseModel):
+    id: str
+    job_id: str
+    timeline_index: int
+    requested_by_user_id: str | None = None
+    request_id: str
+    source_timestamp_ms: int
+    provider: str
+    model: str
+    prompt_version: str
+    shared_seed: int | None = None
+    layout_style: AICoverLayoutStyle
+    title_text: str
+    highlight_text: str
+    extra_text: list[str]
+    status: Literal["queued", "running", "completed", "failed"]
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: str
+    updated_at: str
+    completed_at: str | None = None
+
+
+class AICoverAssetRecord(BaseModel):
+    id: str
+    generation_id: str
+    orientation: Literal["landscape", "four_three"]
+    width: int
+    height: int
+    status: Literal["queued", "running", "completed", "failed"]
+    provider_task_id: str | None = None
+    provider_request_id: str | None = None
+    background_oss_object_key: str | None = None
+    final_oss_object_key: str | None = None
+    background_sha256: str | None = None
+    final_sha256: str | None = None
+    text_revision: int
+    error_code: str | None = None
+    error_message: str | None = None
     created_at: str
     updated_at: str
     completed_at: str | None = None

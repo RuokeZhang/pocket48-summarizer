@@ -19,20 +19,27 @@ from .auth import AuthContext
 from .errors import AppError
 from .media.clips import ClipState
 from .media.overlays import (
+    AI_COVER_EXTRA_TEXT_MAX_ITEMS,
+    AI_COVER_HIGHLIGHT_MAX_LENGTH,
+    AI_COVER_TITLE_MAX_LENGTH,
     COVER_DURATION_MS,
-    COVER_TITLE_MAX_LENGTH,
-    DEFAULT_COVER_STYLE,
     DEFAULT_SUBTITLE_BACKGROUND_COLOR,
     DEFAULT_SUBTITLE_FONT_SCALE,
     DEFAULT_SUBTITLE_TEXT_COLOR,
     MIN_SUBTITLE_CONTRAST_RATIO,
     SUBTITLE_FONT_SCALE_MAX,
     SUBTITLE_FONT_SCALE_MIN,
-    normalize_cover_title,
     normalize_subtitle_color,
+    normalize_ai_cover_extra_text,
+    normalize_ai_cover_highlight,
+    normalize_ai_cover_layout_style,
+    normalize_ai_cover_title,
     subtitle_contrast_ratio,
 )
 from .models import (
+    AICoverLayoutStyle,
+    AICoverAssetRecord,
+    AICoverGenerationRecord,
     ClipRange,
     FinalSummary,
     GlossaryTermType,
@@ -91,11 +98,11 @@ class CreateClipExportRequest(BaseModel):
     )
     output_layout: Literal["portrait", "landscape"] = "portrait"
     subtitle_font_family: Literal["wenkai", "serif", "sans"] = "wenkai"
-    cover_enabled: bool = False
-    cover_timestamp_ms: int | None = Field(default=None, ge=0)
-    cover_title: str = Field(default="", max_length=COVER_TITLE_MAX_LENGTH)
-    cover_style: Literal["scrim", "display", "badge"] = (
-        DEFAULT_COVER_STYLE
+    ai_cover_generation_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
     )
 
     @field_validator(
@@ -105,11 +112,6 @@ class CreateClipExportRequest(BaseModel):
     @classmethod
     def normalize_color(cls, value: str) -> str:
         return normalize_subtitle_color(value)
-
-    @field_validator("cover_title")
-    @classmethod
-    def clean_cover_title(cls, value: str) -> str:
-        return normalize_cover_title(value)
 
     @model_validator(mode="after")
     def validate_clip_style(self) -> CreateClipExportRequest:
@@ -137,24 +139,102 @@ class CreateClipExportRequest(BaseModel):
             < MIN_SUBTITLE_CONTRAST_RATIO
         ):
             raise ValueError("subtitle colors need at least 3:1 contrast")
-        if self.cover_enabled:
-            if not self.cover_title:
-                raise ValueError("cover title is required")
-            if (
-                self.cover_timestamp_ms is None
-                or not any(
-                    item.start_ms
-                    <= self.cover_timestamp_ms
-                    < item.end_ms
-                    for item in ranges
-                )
-            ):
-                raise ValueError("cover frame must be inside a kept range")
-        else:
-            self.cover_timestamp_ms = None
-            self.cover_title = ""
-            self.cover_style = DEFAULT_COVER_STYLE
         return self
+
+
+class CreateAICoverRequest(BaseModel):
+    request_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    timeline_index: int = Field(ge=0)
+    source_timestamp_ms: int = Field(ge=0)
+    layout_style: AICoverLayoutStyle = "sticker_pop"
+    title_text: str = Field(
+        min_length=1,
+        max_length=AI_COVER_TITLE_MAX_LENGTH,
+    )
+    highlight_text: str = Field(
+        default="",
+        max_length=AI_COVER_HIGHLIGHT_MAX_LENGTH,
+    )
+    extra_text: list[str] = Field(
+        default_factory=list,
+        max_length=AI_COVER_EXTRA_TEXT_MAX_ITEMS,
+    )
+
+    @field_validator("title_text")
+    @classmethod
+    def clean_title(cls, value: str) -> str:
+        return normalize_ai_cover_title(value)
+
+    @field_validator("layout_style")
+    @classmethod
+    def clean_layout_style(
+        cls, value: AICoverLayoutStyle
+    ) -> AICoverLayoutStyle:
+        return normalize_ai_cover_layout_style(value)
+
+    @field_validator("highlight_text")
+    @classmethod
+    def clean_highlight(cls, value: str) -> str:
+        return normalize_ai_cover_highlight(value)
+
+    @field_validator("extra_text")
+    @classmethod
+    def clean_extra_text(cls, value: list[str]) -> list[str]:
+        return normalize_ai_cover_extra_text(value)
+
+
+class UpdateAICoverTextRequest(BaseModel):
+    layout_style: AICoverLayoutStyle | None = None
+    title_text: str = Field(
+        min_length=1,
+        max_length=AI_COVER_TITLE_MAX_LENGTH,
+    )
+    highlight_text: str | None = Field(
+        default=None,
+        max_length=AI_COVER_HIGHLIGHT_MAX_LENGTH,
+    )
+    extra_text: list[str] = Field(
+        default_factory=list,
+        max_length=AI_COVER_EXTRA_TEXT_MAX_ITEMS,
+    )
+
+    @field_validator("title_text")
+    @classmethod
+    def clean_title(cls, value: str) -> str:
+        return normalize_ai_cover_title(value)
+
+    @field_validator("layout_style")
+    @classmethod
+    def clean_layout_style(
+        cls, value: AICoverLayoutStyle | None
+    ) -> AICoverLayoutStyle | None:
+        if value is None:
+            return None
+        return normalize_ai_cover_layout_style(value)
+
+    @field_validator("highlight_text")
+    @classmethod
+    def clean_highlight(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_ai_cover_highlight(value)
+
+    @field_validator("extra_text")
+    @classmethod
+    def clean_extra_text(cls, value: list[str]) -> list[str]:
+        return normalize_ai_cover_extra_text(value)
+
+
+class RegenerateAICoverRequest(BaseModel):
+    request_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
 
 def format_china_datetime(value: str | None) -> str:
@@ -182,8 +262,50 @@ def optional_auth(request: Request) -> AuthContext | None:
 def require_admin(request: Request) -> AuthContext:
     context = require_auth(request)
     if not context.user.is_admin:
-        raise AppError("admin_required", "仅管理员可以访问词库管理", False)
+        raise AppError("admin_required", "仅管理员可以执行此操作", False)
     return context
+
+
+def require_ai_cover_service(request: Request):
+    service = request.app.state.services.ai_covers
+    if service is None:
+        raise AppError(
+            "ai_cover_configuration_missing",
+            "管理员尚未配置 Seedream，AI 封面暂不可用",
+            True,
+        )
+    return service
+
+
+def reject_ai_cover_maintenance(request: Request) -> None:
+    if request.app.state.settings.clip_maintenance_path.exists():
+        raise AppError(
+            "ai_cover_maintenance",
+            "服务正在发布新版本，请稍后再生成封面",
+            True,
+        )
+
+
+async def signed_ai_cover_download_url(
+    request: Request, asset: AICoverAssetRecord
+) -> str:
+    service = request.app.state.services.ai_covers
+    if service is not None:
+        return await service.signed_download_url(asset)
+    clipper = request.app.state.services.clipper
+    if (
+        clipper is None
+        or asset.status != "completed"
+        or not asset.final_oss_object_key
+    ):
+        raise AppError(
+            "ai_cover_not_ready",
+            "AI 封面尚未生成完成",
+            True,
+        )
+    return await clipper.oss.signed_ai_cover_url(
+        asset.final_oss_object_key
+    )
 
 
 def require_owned_job(
@@ -532,6 +654,8 @@ def clip_export_payload(
         "cover_timestamp_ms": record.cover_timestamp_ms,
         "cover_title": record.cover_title,
         "cover_style": record.cover_style,
+        "ai_cover_generation_id": record.ai_cover_generation_id,
+        "ai_cover_text_revision": record.ai_cover_text_revision,
         "cover_duration_ms": (
             COVER_DURATION_MS if record.cover_enabled else 0
         ),
@@ -548,6 +672,76 @@ def clip_export_payload(
             f"/jobs/{job_id}/clip-exports/{record.id}/download"
         )
     return payload
+
+
+def ai_cover_asset_payload(
+    job_id: str,
+    generation_id: str,
+    asset: AICoverAssetRecord,
+) -> dict:
+    payload = {
+        "id": asset.id,
+        "orientation": asset.orientation,
+        "width": asset.width,
+        "height": asset.height,
+        "status": asset.status,
+        "text_revision": asset.text_revision,
+        "error": (
+            {
+                "code": asset.error_code,
+                "message": asset.error_message,
+            }
+            if asset.error_code or asset.error_message
+            else None
+        ),
+        "updated_at": asset.updated_at,
+        "completed_at": asset.completed_at,
+    }
+    if asset.status == "completed" and asset.final_oss_object_key:
+        payload["image_url"] = (
+            f"/jobs/{job_id}/ai-covers/{generation_id}/"
+            f"{asset.orientation}/download"
+        )
+        payload["download_url"] = payload["image_url"]
+    return payload
+
+
+def ai_cover_payload(
+    repository,
+    generation: AICoverGenerationRecord,
+) -> dict:
+    return {
+        "id": generation.id,
+        "timeline_index": generation.timeline_index,
+        "source_timestamp_ms": generation.source_timestamp_ms,
+        "provider": generation.provider,
+        "model": generation.model,
+        "prompt_version": generation.prompt_version,
+        "layout_style": generation.layout_style,
+        "title_text": generation.title_text,
+        "highlight_text": generation.highlight_text,
+        "extra_text": generation.extra_text,
+        "status": generation.status,
+        "error": (
+            {
+                "code": generation.error_code,
+                "message": generation.error_message,
+            }
+            if generation.error_code or generation.error_message
+            else None
+        ),
+        "assets": [
+            ai_cover_asset_payload(
+                generation.job_id,
+                generation.id,
+                asset,
+            )
+            for asset in repository.list_ai_cover_assets(generation.id)
+        ],
+        "created_at": generation.created_at,
+        "updated_at": generation.updated_at,
+        "completed_at": generation.completed_at,
+    }
 
 
 def translation_payload(
@@ -820,6 +1014,13 @@ async def job_page(request: Request, job_id: str) -> Response:
                 and job.media_url is not None
             ),
             "can_request_translation": context is not None,
+            "can_generate_ai_covers": bool(
+                context and context.user.is_admin
+            ),
+            "ai_cover_configured": not (
+                request.app.state.settings
+                .missing_ai_cover_configuration()
+            ),
             "clip_context_ms": round(
                 request.app.state.settings.clip_editor_context_minutes
                 * 60
@@ -992,6 +1193,242 @@ async def retry_job(request: Request, job_id: str) -> dict:
     return public_job_payload(job)
 
 
+@router.post("/api/jobs/{job_id}/ai-covers")
+async def create_ai_cover(
+    request: Request,
+    job_id: str,
+    payload: CreateAICoverRequest,
+) -> Response:
+    context = require_admin(request)
+    request.app.state.auth.require_csrf(request, context)
+    job, item = timeline_clip_context(
+        request, job_id, payload.timeline_index
+    )
+    lower_bound, upper_bound = clip_editor_bounds(request, job, item)
+    if not lower_bound <= payload.source_timestamp_ms <= upper_bound:
+        raise AppError(
+            "ai_cover_timestamp_out_of_window",
+            "AI 封面标记时间超出当前时间线条目的可编辑窗口",
+            False,
+        )
+    service = require_ai_cover_service(request)
+    settings = request.app.state.settings
+    with shared_runtime_lock(settings.clip_operation_lock_path):
+        reject_ai_cover_maintenance(request)
+        generation = service.start_generation(
+            job_id=job.id,
+            timeline_index=payload.timeline_index,
+            requested_by_user_id=context.user.id,
+            request_id=payload.request_id,
+            source_timestamp_ms=payload.source_timestamp_ms,
+            layout_style=payload.layout_style,
+            title_text=payload.title_text,
+            highlight_text=payload.highlight_text,
+            extra_text=payload.extra_text,
+            manifest_url=job.media_url,
+        )
+    return JSONResponse(
+        ai_cover_payload(
+            request.app.state.services.repository, generation
+        ),
+        status_code=(
+            200 if generation.status == "completed" else 202
+        ),
+    )
+
+
+@router.get("/api/jobs/{job_id}/ai-covers")
+async def list_ai_covers(
+    request: Request,
+    job_id: str,
+    timeline_index: int | None = None,
+) -> dict:
+    require_readable_job(request, job_id)
+    if timeline_index is not None and timeline_index < 0:
+        raise AppError(
+            "timeline_item_not_found",
+            "时间线话题不存在",
+            False,
+        )
+    repository = request.app.state.services.repository
+    return {
+        "covers": [
+            ai_cover_payload(repository, generation)
+            for generation in repository.list_ai_cover_generations(
+                job_id,
+                timeline_index=timeline_index,
+                limit=30,
+            )
+        ],
+        "configured": not (
+            request.app.state.settings.missing_ai_cover_configuration()
+        ),
+    }
+
+
+@router.get("/api/jobs/{job_id}/ai-covers/{generation_id}")
+async def ai_cover_status(
+    request: Request,
+    job_id: str,
+    generation_id: str,
+) -> dict:
+    require_readable_job(request, job_id)
+    repository = request.app.state.services.repository
+    generation = repository.get_ai_cover_generation(
+        job_id, generation_id
+    )
+    if generation is None:
+        raise AppError(
+            "ai_cover_not_found",
+            "AI 封面不存在",
+            False,
+        )
+    return ai_cover_payload(repository, generation)
+
+
+@router.patch(
+    "/api/jobs/{job_id}/ai-covers/{generation_id}/text"
+)
+async def update_ai_cover_text(
+    request: Request,
+    job_id: str,
+    generation_id: str,
+    payload: UpdateAICoverTextRequest,
+) -> Response:
+    context = require_admin(request)
+    request.app.state.auth.require_csrf(request, context)
+    require_readable_job(request, job_id)
+    service = require_ai_cover_service(request)
+    settings = request.app.state.settings
+    with shared_runtime_lock(settings.clip_operation_lock_path):
+        reject_ai_cover_maintenance(request)
+        generation = service.update_text(
+            job_id=job_id,
+            generation_id=generation_id,
+            layout_style=payload.layout_style,
+            title_text=payload.title_text,
+            highlight_text=payload.highlight_text,
+            extra_text=payload.extra_text,
+        )
+    return JSONResponse(
+        ai_cover_payload(
+            request.app.state.services.repository, generation
+        ),
+        status_code=202,
+    )
+
+
+@router.post(
+    "/api/jobs/{job_id}/ai-covers/{generation_id}/retry"
+)
+async def retry_ai_cover(
+    request: Request,
+    job_id: str,
+    generation_id: str,
+) -> Response:
+    context = require_admin(request)
+    request.app.state.auth.require_csrf(request, context)
+    _, job = require_readable_job(request, job_id)
+    if not job.media_url:
+        raise AppError("media_not_ready", "回放媒体地址尚未生成", True)
+    service = require_ai_cover_service(request)
+    settings = request.app.state.settings
+    with shared_runtime_lock(settings.clip_operation_lock_path):
+        reject_ai_cover_maintenance(request)
+        generation = service.retry_generation(
+            job_id=job_id,
+            generation_id=generation_id,
+            manifest_url=job.media_url,
+        )
+    return JSONResponse(
+        ai_cover_payload(
+            request.app.state.services.repository, generation
+        ),
+        status_code=(
+            200 if generation.status == "completed" else 202
+        ),
+    )
+
+
+@router.post(
+    "/api/jobs/{job_id}/ai-covers/{generation_id}/regenerate"
+)
+async def regenerate_ai_cover(
+    request: Request,
+    job_id: str,
+    generation_id: str,
+    payload: RegenerateAICoverRequest,
+) -> Response:
+    context = require_admin(request)
+    request.app.state.auth.require_csrf(request, context)
+    _, job = require_readable_job(request, job_id)
+    repository = request.app.state.services.repository
+    source = repository.get_ai_cover_generation(job_id, generation_id)
+    if source is None:
+        raise AppError(
+            "ai_cover_not_found",
+            "AI 封面不存在",
+            False,
+        )
+    if not job.media_url:
+        raise AppError("media_not_ready", "回放媒体地址尚未生成", True)
+    service = require_ai_cover_service(request)
+    settings = request.app.state.settings
+    with shared_runtime_lock(settings.clip_operation_lock_path):
+        reject_ai_cover_maintenance(request)
+        generation = service.start_generation(
+            job_id=job_id,
+            timeline_index=source.timeline_index,
+            requested_by_user_id=context.user.id,
+            request_id=payload.request_id,
+            source_timestamp_ms=source.source_timestamp_ms,
+            layout_style=source.layout_style,
+            title_text=source.title_text,
+            highlight_text=source.highlight_text,
+            extra_text=source.extra_text,
+            manifest_url=job.media_url,
+        )
+    return JSONResponse(
+        ai_cover_payload(repository, generation),
+        status_code=202,
+    )
+
+
+@router.get(
+    "/jobs/{job_id}/ai-covers/{generation_id}/{orientation}/download"
+)
+async def download_ai_cover(
+    request: Request,
+    job_id: str,
+    generation_id: str,
+    orientation: Literal["landscape", "four_three"],
+) -> Response:
+    require_readable_job(request, job_id)
+    repository = request.app.state.services.repository
+    generation = repository.get_ai_cover_generation(
+        job_id, generation_id
+    )
+    if generation is None:
+        raise AppError(
+            "ai_cover_not_found",
+            "AI 封面不存在",
+            False,
+        )
+    asset = repository.get_ai_cover_asset(
+        generation.id, orientation
+    )
+    if asset is None:
+        raise AppError(
+            "ai_cover_asset_not_found",
+            "AI 封面图片不存在",
+            False,
+        )
+    return RedirectResponse(
+        await signed_ai_cover_download_url(request, asset),
+        status_code=303,
+    )
+
+
 @router.post("/api/jobs/{job_id}/clip-boundaries/suggest")
 async def suggest_clip_boundary(
     request: Request,
@@ -1069,6 +1506,50 @@ async def create_clip_export(
         ranges=payload.kept_ranges,
         subtitle_mode=payload.subtitle_mode,
     )
+    existing = (
+        request.app.state.services.repository
+        .get_video_clip_export_by_request_id(job.id, payload.request_id)
+    )
+    if existing is not None:
+        return JSONResponse(
+            clip_export_payload(job.id, existing),
+            status_code=(
+                200 if existing.status == "completed" else 202
+            ),
+        )
+    if payload.ai_cover_generation_id:
+        if not context.user.is_admin:
+            raise AppError(
+                "admin_required",
+                "仅管理员可以把 AI 封面用于视频剪辑",
+                False,
+            )
+        if payload.output_layout != "landscape":
+            raise AppError(
+                "ai_cover_landscape_only",
+                "AI 封面只能用于横屏成片；4:3 版本仅供下载",
+                False,
+            )
+        generation = (
+            request.app.state.services.repository.get_ai_cover_generation(
+                job.id, payload.ai_cover_generation_id
+            )
+        )
+        if (
+            generation is None
+            or generation.timeline_index != payload.timeline_index
+        ):
+            raise AppError(
+                "ai_cover_not_found",
+                "AI 封面不存在或不属于当前时间线条目",
+                False,
+            )
+        if generation.status != "completed":
+            raise AppError(
+                "ai_cover_not_ready",
+                "AI 封面尚未生成完成",
+                True,
+            )
     clipper = request.app.state.services.clipper
     if clipper is None:
         raise AppError(
@@ -1103,10 +1584,7 @@ async def create_clip_export(
             ),
             output_layout=payload.output_layout,
             subtitle_font_family=payload.subtitle_font_family,
-            cover_enabled=payload.cover_enabled,
-            cover_timestamp_ms=payload.cover_timestamp_ms,
-            cover_title=payload.cover_title,
-            cover_style=payload.cover_style,
+            ai_cover_generation_id=payload.ai_cover_generation_id,
         )
     return JSONResponse(
         clip_export_payload(job.id, record),

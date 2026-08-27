@@ -51,6 +51,7 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
     assert payload.subtitle_background_color == "#EBE9E1"
     assert payload.output_layout == "portrait"
     assert payload.subtitle_font_family == "wenkai"
+    assert payload.ai_cover_generation_id is None
     assert payload.kept_ranges == [
         ClipRange(start_ms=1000, end_ms=5000)
     ]
@@ -66,23 +67,6 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
         output_layout="landscape",
     )
     assert landscape.output_layout == "landscape"
-
-    with pytest.raises(ValueError, match="kept range"):
-        CreateClipExportRequest(
-            request_id="request-cover-deleted",
-            timeline_index=0,
-            start_ms=1000,
-            end_ms=9000,
-            kept_ranges=[
-                ClipRange(start_ms=1000, end_ms=3000),
-                ClipRange(start_ms=6000, end_ms=9000),
-            ],
-            subtitle_mode="off",
-            cover_enabled=True,
-            cover_timestamp_ms=4500,
-            cover_title="已删除画面",
-        )
-
 
 class DummyClipper:
     def __init__(self, output_path, repository=None):
@@ -121,10 +105,7 @@ class DummyClipper:
             ),
             output_layout=kwargs["output_layout"],
             subtitle_font_family=kwargs["subtitle_font_family"],
-            cover_enabled=kwargs["cover_enabled"],
-            cover_timestamp_ms=kwargs["cover_timestamp_ms"],
-            cover_title=kwargs["cover_title"],
-            cover_style=kwargs["cover_style"],
+            ai_cover_generation_id=kwargs["ai_cover_generation_id"],
             render_version="ass-v2",
             filename=self.state.output_path.name,
         )
@@ -169,6 +150,92 @@ class DummyClipper:
 
     async def close(self):
         return None
+
+
+class DummyAICovers:
+    def __init__(self, repository):
+        self.repository = repository
+        self.generated = []
+
+    async def startup(self):
+        return None
+
+    async def close(self):
+        return None
+
+    def start_generation(self, **kwargs):
+        self.generated.append(kwargs)
+        generation, _ = self.repository.begin_ai_cover_generation(
+            generation_id=f"ai-cover-{len(self.generated)}",
+            job_id=kwargs["job_id"],
+            timeline_index=kwargs["timeline_index"],
+            requested_by_user_id=kwargs["requested_by_user_id"],
+            request_id=kwargs["request_id"],
+            source_timestamp_ms=kwargs["source_timestamp_ms"],
+            provider="seedream",
+            model="seedream-test",
+            prompt_version="variety-v1",
+            shared_seed=42,
+            layout_style=kwargs["layout_style"],
+            title_text=kwargs["title_text"],
+            highlight_text=kwargs["highlight_text"],
+            extra_text=kwargs["extra_text"],
+            landscape_size=(2560, 1440),
+            four_three_size=(2048, 1536),
+        )
+        self.repository.mark_ai_cover_generation_running(generation.id)
+        for asset in self.repository.list_ai_cover_assets(generation.id):
+            self.repository.mark_ai_cover_asset_running(asset.id)
+            self.repository.complete_ai_cover_asset(
+                asset.id,
+                background_oss_object_key=(
+                    f"covers/{asset.orientation}-background.png"
+                ),
+                final_oss_object_key=(
+                    f"covers/{asset.orientation}-final.png"
+                ),
+                background_sha256=f"background-{asset.orientation}",
+                final_sha256=f"final-{asset.orientation}",
+            )
+        return self.repository.get_ai_cover_generation(
+            kwargs["job_id"], generation.id
+        )
+
+    def update_text(self, **kwargs):
+        generation = self.repository.update_ai_cover_text(
+            kwargs["job_id"],
+            kwargs["generation_id"],
+            layout_style=kwargs["layout_style"],
+            title_text=kwargs["title_text"],
+            highlight_text=kwargs["highlight_text"],
+            extra_text=kwargs["extra_text"],
+        )
+        for asset in self.repository.list_ai_cover_assets(generation.id):
+            self.repository.complete_ai_cover_asset(
+                asset.id,
+                background_oss_object_key=(
+                    asset.background_oss_object_key or "background.png"
+                ),
+                final_oss_object_key=(
+                    asset.final_oss_object_key or "final.png"
+                ),
+                background_sha256=asset.background_sha256 or "background",
+                final_sha256=f"revision-{asset.text_revision}",
+            )
+        return self.repository.get_ai_cover_generation(
+            kwargs["job_id"], generation.id
+        )
+
+    def retry_generation(self, **kwargs):
+        return self.repository.get_ai_cover_generation(
+            kwargs["job_id"], kwargs["generation_id"]
+        )
+
+    async def signed_download_url(self, asset):
+        return (
+            f"https://oss.example/{asset.final_oss_object_key}"
+            "?signed=cover"
+        )
 
 
 class DummyMemberCatalog:
@@ -373,6 +440,7 @@ def test_timeline_clip_can_be_created_and_downloaded(
 
     assert 'class="clip-button"' in page.text
     assert 'id="clip-editor"' in page.text
+    assert f'data-job-id="{job.id}"' in page.text
     assert 'data-duration-ms="600000"' in page.text
     assert 'data-clip-start-ms="61250"' in page.text
     assert 'data-clip-end-ms="125750"' in page.text
@@ -404,10 +472,14 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'id="clip-subtitle-font-scale"' in page.text
     assert 'value="100"' in page.text
     assert 'id="clip-subtitle-font-scale-value">100%</output>' in page.text
-    assert 'id="clip-cover-panel"' in page.text
-    assert 'id="clip-cover-use-frame"' in page.text
-    assert 'id="clip-cover-title-input"' in page.text
-    assert 'name="clip-cover-style"' in page.text
+    assert 'id="ai-cover-panel"' in page.text
+    assert 'id="ai-cover-generate"' in page.text
+    assert 'id="ai-cover-title-input"' in page.text
+    assert 'id="ai-cover-landscape-image"' in page.text
+    assert 'id="ai-cover-four-three-image"' in page.text
+    assert "data-ai-cover-admin=" in page.text
+    assert 'id="clip-cover-panel"' not in page.text
+    assert 'name="clip-cover-style"' not in page.text
     assert 'id="clip-subtitle-font-family"' in page.text
     assert 'id="clip-subtitle-text-color"' in page.text
     assert 'id="clip-subtitle-background-color"' in page.text
@@ -471,6 +543,34 @@ def test_configurable_clip_export_routes_preserve_versions(
     )
     repository.claim_next_job("worker", 120)
     repository.mark_completed(job.id)
+    generation, _ = repository.begin_ai_cover_generation(
+        generation_id="ai-cover-route-1",
+        job_id=job.id,
+        timeline_index=0,
+        requested_by_user_id=None,
+        request_id="ai-cover-route-request-1",
+        source_timestamp_ms=45_000,
+        provider="seedream",
+        model="seedream-test",
+        prompt_version="variety-v1",
+        shared_seed=42,
+        title_text="灯光亮起时",
+        extra_text=[],
+        landscape_size=(2560, 1440),
+        four_three_size=(2048, 1536),
+    )
+    repository.mark_ai_cover_generation_running(generation.id)
+    for asset in repository.list_ai_cover_assets(generation.id):
+        repository.mark_ai_cover_asset_running(asset.id)
+        repository.complete_ai_cover_asset(
+            asset.id,
+            background_oss_object_key=(
+                f"covers/{asset.orientation}-background.png"
+            ),
+            final_oss_object_key=f"covers/{asset.orientation}-final.png",
+            background_sha256=f"background-{asset.orientation}",
+            final_sha256=f"final-{asset.orientation}",
+        )
     output_path = tmp_path / "clip-export-1.mp4"
     output_path.write_bytes(b"configurable clip")
     clipper = DummyClipper(output_path, repository)
@@ -484,20 +584,6 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "timeline_index": 0,
                 "boundary": "start",
                 "target_ms": 30_400,
-            },
-            headers=csrf_headers(alice),
-        )
-        invalid_cover = alice.post(
-            f"/api/jobs/{job.id}/clip-exports",
-            json={
-                "request_id": "request-cover-invalid",
-                "timeline_index": 0,
-                "start_ms": 30_000,
-                "end_ms": 60_000,
-                "subtitle_mode": "off",
-                "cover_enabled": True,
-                "cover_timestamp_ms": 70_000,
-                "cover_title": "超出范围",
             },
             headers=csrf_headers(alice),
         )
@@ -515,10 +601,7 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "subtitle_background_color": "#EBE9E1",
                 "output_layout": "landscape",
                 "subtitle_font_family": "serif",
-                "cover_enabled": True,
-                "cover_timestamp_ms": 45_000,
-                "cover_title": "灯光亮起时",
-                "cover_style": "badge",
+                "ai_cover_generation_id": generation.id,
             },
             headers=csrf_headers(alice),
         )
@@ -536,10 +619,20 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "subtitle_background_color": "#EBE9E1",
                 "output_layout": "landscape",
                 "subtitle_font_family": "serif",
-                "cover_enabled": True,
-                "cover_timestamp_ms": 45_000,
-                "cover_title": "灯光亮起时",
-                "cover_style": "badge",
+                "ai_cover_generation_id": generation.id,
+            },
+            headers=csrf_headers(alice),
+        )
+        portrait_cover = alice.post(
+            f"/api/jobs/{job.id}/clip-exports",
+            json={
+                "request_id": "request-portrait-cover",
+                "timeline_index": 0,
+                "start_ms": 30_000,
+                "end_ms": 60_000,
+                "subtitle_mode": "off",
+                "output_layout": "portrait",
+                "ai_cover_generation_id": generation.id,
             },
             headers=csrf_headers(alice),
         )
@@ -635,25 +728,27 @@ def test_configurable_clip_export_routes_preserve_versions(
     assert suggestion.json()["suggested_ms"] == 29_850
     assert created.status_code == 200
     assert repeated.json()["id"] == created.json()["id"]
+    assert portrait_cover.status_code == 400
+    assert (
+        portrait_cover.json()["error"]["code"]
+        == "ai_cover_landscape_only"
+    )
     assert created.json()["subtitle_mode"] == "zh"
     assert created.json()["subtitle_font_scale"] == 125
     assert created.json()["subtitle_text_color"] == "#E43D12"
     assert created.json()["subtitle_background_color"] == "#EBE9E1"
     assert created.json()["output_layout"] == "landscape"
     assert created.json()["subtitle_font_family"] == "serif"
-    assert created.json()["cover_enabled"] is True
-    assert created.json()["cover_timestamp_ms"] == 45_000
-    assert created.json()["cover_title"] == "灯光亮起时"
-    assert created.json()["cover_style"] == "badge"
-    assert created.json()["cover_duration_ms"] == 1500
-    assert created.json()["duration_ms"] == 32_150
+    assert created.json()["cover_enabled"] is False
+    assert created.json()["ai_cover_generation_id"] == generation.id
+    assert created.json()["cover_duration_ms"] == 0
+    assert created.json()["duration_ms"] == 30_650
     first_started = clipper.started_exports[0]
     assert first_started["start_ms"] == 29_850
     assert first_started["subtitle_font_scale"] == 125
     assert first_started["output_layout"] == "landscape"
     assert first_started["subtitle_font_family"] == "serif"
-    assert first_started["cover_timestamp_ms"] == 45_000
-    assert first_started["cover_title"] == "灯光亮起时"
+    assert first_started["ai_cover_generation_id"] == generation.id
     cut_started = next(
         item
         for item in clipper.started_exports
@@ -665,7 +760,6 @@ def test_configurable_clip_export_routes_preserve_versions(
     ]
     assert low_contrast.status_code == 422
     assert english_blocked.status_code == 409
-    assert invalid_cover.status_code == 422
     assert cut_created.status_code == 200
     assert cut_created.json()["kept_ranges"] == [
         {"start_ms": 30_000, "end_ms": 40_000},
@@ -689,12 +783,200 @@ def test_configurable_clip_export_routes_preserve_versions(
     )
 
 
+def test_ai_cover_routes_are_admin_only_and_keep_paired_assets(
+    settings, repository
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=556688",
+        "556688",
+    )
+    repository.set_media_details(
+        job.id,
+        "https://idol-vod.48.cn/path/replay.m3u8",
+        600_000,
+    )
+    repository.save_summary(
+        job.id,
+        FinalSummary(
+            overview="测试",
+            timeline=[
+                TimelineItem(
+                    start_ms=30_000,
+                    end_ms=60_000,
+                    title="AI 封面测试",
+                    detail="测试详情",
+                    evidence_segment_ids=[1],
+                )
+            ],
+            topics=[],
+            highlights=[],
+        ).model_dump_json(),
+        "# 测试",
+    )
+    repository.claim_next_job("worker", 120)
+    repository.mark_completed(job.id)
+    ai_covers = DummyAICovers(repository)
+    configured_settings = settings.model_copy(
+        update={
+            "ark_api_key": "test-ark-key",
+            "ark_seedream_model": "seedream-test",
+        }
+    )
+    app = auth_app(
+        configured_settings,
+        repository,
+        ai_covers=ai_covers,
+    )
+
+    with TestClient(app) as bob:
+        login(bob, "bob", "bob also has secure password")
+        member_page = bob.get(f"/jobs/{job.id}")
+        forbidden = bob.post(
+            f"/api/jobs/{job.id}/ai-covers",
+            json={
+                "request_id": "ai-cover-bob-request",
+                "timeline_index": 0,
+                "source_timestamp_ms": 45_000,
+                "layout_style": "sticker_pop",
+                "title_text": "普通用户不能生成",
+                "highlight_text": "",
+                "extra_text": [],
+            },
+            headers=csrf_headers(bob),
+        )
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        admin_page = alice.get(f"/jobs/{job.id}")
+        settings.clip_maintenance_path.touch()
+        maintenance = alice.post(
+            f"/api/jobs/{job.id}/ai-covers",
+            json={
+                "request_id": "ai-cover-maintenance-request",
+                "timeline_index": 0,
+                "source_timestamp_ms": 45_000,
+                "layout_style": "sticker_pop",
+                "title_text": "维护中",
+                "highlight_text": "",
+                "extra_text": [],
+            },
+            headers=csrf_headers(alice),
+        )
+        settings.clip_maintenance_path.unlink()
+        created = alice.post(
+            f"/api/jobs/{job.id}/ai-covers",
+            json={
+                "request_id": "ai-cover-admin-request",
+                "timeline_index": 0,
+                "source_timestamp_ms": 45_000,
+                "layout_style": "editorial_arc",
+                "title_text": "AI 封面测试",
+                "highlight_text": "重点文字",
+                "extra_text": ["名场面"],
+            },
+            headers=csrf_headers(alice),
+        )
+        generation_id = created.json()["id"]
+        updated = alice.patch(
+            (
+                f"/api/jobs/{job.id}/ai-covers/"
+                f"{generation_id}/text"
+            ),
+            json={
+                "layout_style": "banner_energy",
+                "title_text": "更新后的标题",
+                "highlight_text": "更新后的重点",
+                "extra_text": ["全场爆笑", "高能"],
+            },
+            headers=csrf_headers(alice),
+        )
+        preserved = alice.patch(
+            (
+                f"/api/jobs/{job.id}/ai-covers/"
+                f"{generation_id}/text"
+            ),
+            json={
+                "title_text": "只修改主标题",
+                "extra_text": ["仍然自定义"],
+            },
+            headers=csrf_headers(alice),
+        )
+        regenerated = alice.post(
+            (
+                f"/api/jobs/{job.id}/ai-covers/"
+                f"{generation_id}/regenerate"
+            ),
+            json={"request_id": "ai-cover-regenerate-request"},
+            headers=csrf_headers(alice),
+        )
+
+    with TestClient(app) as anonymous:
+        guest_page = anonymous.get(f"/jobs/{job.id}")
+        listed = anonymous.get(f"/api/jobs/{job.id}/ai-covers")
+        status = anonymous.get(
+            f"/api/jobs/{job.id}/ai-covers/{generation_id}"
+        )
+        download = anonymous.get(
+            (
+                f"/jobs/{job.id}/ai-covers/{generation_id}/"
+                "four_three/download"
+            ),
+            follow_redirects=False,
+        )
+
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "admin_required"
+    assert 'data-ai-cover-admin="false"' in member_page.text
+    assert 'data-ai-cover-configured="true"' in member_page.text
+    assert 'data-ai-cover-admin="true"' in admin_page.text
+    assert 'data-ai-cover-configured="true"' in admin_page.text
+    assert 'data-i18n="aiCoverAdminOnly"' in member_page.text
+    assert 'data-i18n="aiCoverReadyHint"' in admin_page.text
+    assert 'data-i18n="aiCoverLoginRequired"' in guest_page.text
+    assert 'name="ai-cover-layout-style"' in admin_page.text
+    assert 'value="sticker_pop"' in admin_page.text
+    assert 'value="editorial_arc"' in admin_page.text
+    assert 'value="banner_energy"' in admin_page.text
+    assert 'id="ai-cover-highlight-input"' in admin_page.text
+    assert maintenance.status_code == 503
+    assert maintenance.json()["error"]["code"] == "ai_cover_maintenance"
+    assert created.status_code == 200
+    assert created.json()["status"] == "completed"
+    assert created.json()["layout_style"] == "editorial_arc"
+    assert created.json()["highlight_text"] == "重点文字"
+    assert [
+        (asset["orientation"], asset["width"], asset["height"])
+        for asset in created.json()["assets"]
+    ] == [
+        ("landscape", 2560, 1440),
+        ("four_three", 2048, 1536),
+    ]
+    assert updated.status_code == 202
+    assert updated.json()["layout_style"] == "banner_energy"
+    assert updated.json()["title_text"] == "更新后的标题"
+    assert updated.json()["highlight_text"] == "更新后的重点"
+    assert updated.json()["extra_text"] == ["全场爆笑", "高能"]
+    assert preserved.status_code == 202
+    assert preserved.json()["layout_style"] == "banner_energy"
+    assert preserved.json()["highlight_text"] == "更新后的重点"
+    assert regenerated.status_code == 202
+    assert regenerated.json()["id"] != generation_id
+    assert listed.status_code == 200
+    assert len(listed.json()["covers"]) == 2
+    assert status.json()["id"] == generation_id
+    assert download.status_code == 303
+    assert download.headers["location"].startswith(
+        "https://oss.example/"
+    )
+
+
 def auth_app(
     settings,
     repository,
     *,
     daily_limit=3,
     clipper=None,
+    ai_covers=None,
     member_catalog=None,
 ):
     auth_settings = settings.model_copy(
@@ -723,6 +1005,7 @@ def auth_app(
             repository=repository,
             worker=DummyWorker(),
             clipper=clipper,
+            ai_covers=ai_covers,
             member_catalog=member_catalog,
         ),
     )
@@ -1291,9 +1574,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260826-17" in page.text
-    assert "styles.css?v=20260826-23" in page.text
-    assert "app.js?v=20260826-18" in page.text
+    assert "i18n.js?v=20260827-3" in page.text
+    assert "styles.css?v=20260827-3" in page.text
+    assert "app.js?v=20260827-3" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -1344,13 +1627,14 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "renderClipTimelineMarkedMarker" in javascript.text
     assert "CLIP_DEFAULT_FONT_SCALE = 100" in javascript.text
     assert "CLIP_SUBTITLE_BASE_SCALE = 1.6" in javascript.text
-    assert "captureClipCoverFrame" in javascript.text
-    assert "coverReturnMs" in javascript.text
-    assert "cover_timestamp_ms" in javascript.text
-    assert (
-        "renderClipLyricPreview(clipEditorState.coverTimestampMs)"
-        not in javascript.text
-    )
+    assert "createAICoverGeneration" in javascript.text
+    assert "loadAICoverGenerations" in javascript.text
+    assert "aiCoverLayoutStyleValue" in javascript.text
+    assert "highlight_text: aiCoverHighlightValue()" in javascript.text
+    assert "ai_cover_generation_id" in javascript.text
+    assert "captureClipCoverFrame" not in javascript.text
+    assert "coverReturnMs" not in javascript.text
+    assert "cover_timestamp_ms" not in javascript.text
     assert "clipMarkerTime" not in javascript.text
     assert "nearestClipMarker" in javascript.text
     assert 'locked?.kind === "sentence"' in javascript.text

@@ -8,9 +8,11 @@ from .clients.llm import OpenAICompatibleClient
 from .clients.member_catalog import MemberCatalogClient
 from .clients.oss_store import OSSStore
 from .clients.pocket48 import Pocket48Client
+from .clients.seedream import SeedreamClient
 from .config import Settings
 from .glossary import MemberCatalogService
 from .media.clips import VideoClipService
+from .media.ai_covers import AICoverService
 from .media.ffmpeg import FFmpegRunner
 from .media.hls import HLSInspector
 from .pipeline import ReplayPipeline
@@ -27,6 +29,7 @@ class ApplicationServices:
     auth: AuthService | None = None
     worker: DurableWorker | None = None
     clipper: VideoClipService | None = None
+    ai_covers: AICoverService | None = None
     pocket48: Pocket48Client | None = None
     hls: HLSInspector | None = None
     dashscope: DashScopeClient | None = None
@@ -41,6 +44,8 @@ class ApplicationServices:
             await self.worker.stop()
         if self.clipper:
             await self.clipper.close()
+        if self.ai_covers:
+            await self.ai_covers.close()
         for client in (
             self.pocket48,
             self.hls,
@@ -100,6 +105,16 @@ def build_services(
         clipper=(
             VideoClipService(settings, repository, oss)
             if include_clipper
+            else None
+        ),
+        ai_covers=(
+            AICoverService(
+                settings,
+                repository,
+                oss,
+                SeedreamClient(settings),
+            )
+            if not settings.missing_ai_cover_configuration()
             else None
         ),
         pocket48=pocket48,

@@ -189,6 +189,8 @@ class FFmpegRunner:
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: ClipOutputLayout = "portrait",
+        cover_path: Path | None = None,
+        cover_dimensions: VideoDimensions | None = None,
     ) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -240,13 +242,22 @@ class FFmpegRunner:
             f"{start_ms / 1000:.3f}",
             "-i",
             manifest_url,
-            "-t",
-            f"{(end_ms - start_ms) / 1000:.3f}",
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0?",
         ]
+        if cover_path is not None:
+            if (
+                cover_dimensions is None
+                or cover_dimensions.width <= 0
+                or cover_dimensions.height <= 0
+            ):
+                raise AppError(
+                    "ai_cover_dimensions_invalid",
+                    "AI 封面输出尺寸无效",
+                    False,
+                )
+            command.extend(["-i", str(cover_path)])
+        command.extend(
+            ["-t", f"{(end_ms - start_ms) / 1000:.3f}"]
+        )
         filters: list[str] = []
         if output_layout == "landscape":
             filters.extend(landscape_video_filters())
@@ -260,7 +271,31 @@ class FFmpegRunner:
             filters.append(
                 f"ass=filename='{self._escape_filter_path(ass_path)}'"
             )
-        if filters:
+        if cover_path is not None:
+            base_filter = ",".join(filters) if filters else "null"
+            width = cover_dimensions.width
+            height = cover_dimensions.height
+            filter_complex = (
+                f"[0:v]{base_filter}[base];"
+                f"[1:v]scale={width}:{height}:"
+                "force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},setsar=1[cover];"
+                "[base][cover]overlay=0:0:eof_action=pass:"
+                "repeatlast=0:enable='eq(n,0)'[v]"
+            )
+            command.extend(
+                [
+                    "-filter_complex",
+                    filter_complex,
+                    "-map",
+                    "[v]",
+                    "-map",
+                    "0:a:0?",
+                ]
+            )
+        else:
+            command.extend(["-map", "0:v:0", "-map", "0:a:0?"])
+        if filters and cover_path is None:
             command.extend(
                 [
                     "-vf",
@@ -288,6 +323,115 @@ class FFmpegRunner:
             ]
         )
         return command
+
+    def build_extract_cover_source_command(
+        self,
+        manifest_url: str,
+        output_path: Path,
+        timestamp_ms: int,
+    ) -> list[str]:
+        validate_https_url(
+            manifest_url,
+            MEDIA_HOSTS,
+            code="invalid_media_url",
+            label="回放媒体",
+        )
+        if timestamp_ms < 0:
+            raise AppError(
+                "ai_cover_timestamp_invalid",
+                "AI 封面标记时间无效",
+                False,
+            )
+        return [
+            self.require_executable(),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-user_agent",
+            "pocket48-summarizer/0.1",
+            "-rw_timeout",
+            "30000000",
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_on_network_error",
+            "1",
+            "-reconnect_on_http_error",
+            "4xx,5xx",
+            "-reconnect_delay_max",
+            "5",
+            "-headers",
+            "Origin: https://h5.48.cn\r\nReferer: https://h5.48.cn/\r\n",
+            "-ss",
+            f"{timestamp_ms / 1000:.3f}",
+            "-i",
+            manifest_url,
+            "-frames:v",
+            "1",
+            "-an",
+            "-y",
+            str(output_path),
+        ]
+
+    def build_normalize_cover_image_command(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        width: int,
+        height: int,
+    ) -> list[str]:
+        if width <= 0 or height <= 0 or width > 8192 or height > 8192:
+            raise AppError(
+                "ai_cover_dimensions_invalid",
+                "AI 封面输出尺寸无效",
+                False,
+            )
+        return [
+            self.require_executable(),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(input_path),
+            "-vf",
+            (
+                f"scale={width}:{height}:"
+                "force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},setsar=1"
+            ),
+            "-frames:v",
+            "1",
+            "-an",
+            "-y",
+            str(output_path),
+        ]
+
+    def build_render_ai_cover_text_command(
+        self,
+        background_path: Path,
+        output_path: Path,
+        ass_path: Path,
+    ) -> list[str]:
+        return [
+            self.require_executable(),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(background_path),
+            "-vf",
+            f"ass=filename='{self._escape_filter_path(ass_path)}'",
+            "-frames:v",
+            "1",
+            "-an",
+            "-y",
+            str(output_path),
+        ]
 
     def build_cover_frame_command(
         self,
@@ -641,6 +785,8 @@ class FFmpegRunner:
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: ClipOutputLayout = "portrait",
+        cover_path: Path | None = None,
+        cover_dimensions: VideoDimensions | None = None,
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = output_path.with_suffix(".part.mp4")
@@ -654,6 +800,8 @@ class FFmpegRunner:
                     end_ms,
                     ass_path,
                     output_layout,
+                    cover_path,
+                    cover_dimensions,
                 ),
                 timeout_seconds=max(
                     15 * 60, int((end_ms - start_ms) / 1000 * 2 + 300)
@@ -670,6 +818,132 @@ class FFmpegRunner:
                 raise AppError(
                     "video_clip_missing",
                     "FFmpeg 未生成视频片段",
+                    True,
+                )
+            temporary_path.replace(output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return output_path
+
+    async def extract_cover_source_frame(
+        self,
+        manifest_url: str,
+        output_path: Path,
+        timestamp_ms: int,
+    ) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = output_path.with_suffix(".part.png")
+        temporary_path.unlink(missing_ok=True)
+        try:
+            await self._run_command(
+                self.build_extract_cover_source_command(
+                    manifest_url,
+                    temporary_path,
+                    timestamp_ms,
+                ),
+                timeout_seconds=10 * 60,
+                heartbeat=None,
+                error_code="ai_cover_source_failed",
+                error_message="提取 AI 封面参考画面失败",
+                redact_value=manifest_url,
+            )
+            if (
+                not temporary_path.is_file()
+                or temporary_path.stat().st_size == 0
+            ):
+                raise AppError(
+                    "ai_cover_source_missing",
+                    "FFmpeg 未生成 AI 封面参考画面",
+                    True,
+                )
+            temporary_path.replace(output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return output_path
+
+    async def normalize_cover_image(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        width: int,
+        height: int,
+    ) -> Path:
+        if not input_path.is_file():
+            raise AppError(
+                "ai_cover_image_missing",
+                "AI 封面图片不存在",
+                True,
+            )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = output_path.with_suffix(".part.png")
+        temporary_path.unlink(missing_ok=True)
+        try:
+            await self._run_command(
+                self.build_normalize_cover_image_command(
+                    input_path,
+                    temporary_path,
+                    width=width,
+                    height=height,
+                ),
+                timeout_seconds=5 * 60,
+                heartbeat=None,
+                error_code="ai_cover_normalize_failed",
+                error_message="规范化 AI 封面图片失败",
+                redact_value=None,
+            )
+            if (
+                not temporary_path.is_file()
+                or temporary_path.stat().st_size == 0
+            ):
+                raise AppError(
+                    "ai_cover_image_missing",
+                    "FFmpeg 未生成规范化 AI 封面",
+                    True,
+                )
+            temporary_path.replace(output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return output_path
+
+    async def render_ai_cover_text(
+        self,
+        background_path: Path,
+        output_path: Path,
+        ass_path: Path,
+    ) -> Path:
+        if not background_path.is_file() or not ass_path.is_file():
+            raise AppError(
+                "ai_cover_text_input_missing",
+                "AI 封面背景或文字布局不存在",
+                True,
+            )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = output_path.with_suffix(".part.png")
+        temporary_path.unlink(missing_ok=True)
+        try:
+            await self._run_command(
+                self.build_render_ai_cover_text_command(
+                    background_path,
+                    temporary_path,
+                    ass_path,
+                ),
+                timeout_seconds=5 * 60,
+                heartbeat=None,
+                error_code="ai_cover_text_render_failed",
+                error_message="渲染 AI 封面文字失败",
+                redact_value=None,
+            )
+            if (
+                not temporary_path.is_file()
+                or temporary_path.stat().st_size == 0
+            ):
+                raise AppError(
+                    "ai_cover_text_output_missing",
+                    "FFmpeg 未生成带文字的 AI 封面",
                     True,
                 )
             temporary_path.replace(output_path)

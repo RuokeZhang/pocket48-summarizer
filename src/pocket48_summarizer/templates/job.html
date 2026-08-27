@@ -230,11 +230,14 @@
     <dialog
       id="clip-editor"
       class="clip-editor"
+      data-job-id="{{ job.id }}"
       data-can-submit="{{ 'true' if can_create_clips else 'false' }}"
       data-duration-ms="{{ job.duration_ms or 0 }}"
       data-context-ms="{{ clip_context_ms }}"
       data-max-clip-ms="{{ max_clip_ms }}"
       data-snap-threshold-ms="{{ clip_snap_threshold_ms }}"
+      data-ai-cover-admin="{{ 'true' if can_generate_ai_covers else 'false' }}"
+      data-ai-cover-configured="{{ 'true' if ai_cover_configured else 'false' }}"
       aria-labelledby="clip-editor-title"
     >
       <div class="clip-editor-shell">
@@ -294,20 +297,6 @@
                 hidden
                 data-i18n="clipDeletedPreview"
               >此片段不会出现在导出视频中</div>
-              <div
-                id="clip-cover-preview"
-                class="clip-cover-preview"
-                data-cover-style="scrim"
-                hidden
-              >
-                <span
-                  class="clip-cover-preview-badge"
-                  data-i18n="coverPreview"
-                >封面预览</span>
-                <div class="clip-cover-title-surface">
-                  <p id="clip-cover-preview-title"></p>
-                </div>
-              </div>
             </div>
             <fieldset
               id="clip-output-layout"
@@ -628,90 +617,193 @@
             </section>
 
             <section
-              id="clip-cover-panel"
-              class="clip-cover-panel"
-              aria-labelledby="clip-cover-title"
+              id="ai-cover-panel"
+              class="ai-cover-panel"
+              aria-labelledby="ai-cover-heading"
             >
-              <header class="clip-cover-heading">
+              <header class="ai-cover-heading">
                 <div>
-                  <strong id="clip-cover-title" data-i18n="customCover">自定义封面</strong>
-                  <small data-i18n="customCoverHint">选择视频画面并添加两行以内的标题</small>
+                  <span class="ai-cover-beta">Seedream beta</span>
+                  <strong id="ai-cover-heading" data-i18n="aiCoverTitle">AI 生成封面</strong>
+                  <small data-i18n="aiCoverHint">用 MARK 截图生成 16:9 与 4:3 横屏背景，再免费切换三种中文短视频排版；所有可见文字都可编辑。</small>
                 </div>
-                <label class="toggle-control">
-                  <input id="clip-cover-enabled" type="checkbox">
-                  <span data-i18n="enableCustomCover">启用封面</span>
-                </label>
               </header>
-              <div id="clip-cover-controls" class="clip-cover-controls" hidden>
-                <div class="clip-cover-frame-controls">
-                  <button
-                    id="clip-cover-use-frame"
-                    class="secondary-button"
-                    type="button"
-                    data-i18n="useCurrentCoverFrame"
-                  >使用当前画面</button>
-                  <time id="clip-cover-time">--:--:--.-</time>
-                  <button
-                    id="clip-cover-preview-toggle"
-                    class="secondary-button"
-                    type="button"
-                    data-i18n="previewCover"
-                  >预览封面</button>
+              <p
+                id="ai-cover-access-note"
+                class="ai-cover-access-note"
+                data-i18n="{% if not current_user %}aiCoverLoginRequired{% elif not can_generate_ai_covers %}aiCoverAdminOnly{% elif not ai_cover_configured %}aiCoverNotConfigured{% else %}aiCoverReadyHint{% endif %}"
+              >
+                {% if not current_user %}
+                  登录后由管理员生成 AI 封面。
+                {% elif not can_generate_ai_covers %}
+                  当前为管理员内测功能，你可以查看生成效果。
+                {% elif not ai_cover_configured %}
+                  管理员尚未配置 Seedream。
+                {% else %}
+                  先在精细时间线上点击 MARK，再生成封面。
+                {% endif %}
+              </p>
+              <div class="ai-cover-mark">
+                <div>
+                  <span data-i18n="aiCoverMarkedFrame">MARK 截图</span>
+                  <time id="ai-cover-mark-time">--:--:--.-</time>
                 </div>
-                <label class="clip-cover-title-control">
-                  <span data-i18n="coverTitleText">封面标题</span>
-                  <input
-                    id="clip-cover-title-input"
-                    type="text"
-                    maxlength="40"
-                    autocomplete="off"
-                    placeholder="输入封面标题"
-                    data-i18n-placeholder="coverTitlePlaceholder"
-                  >
-                  <output id="clip-cover-title-count">0/40</output>
-                </label>
-                <fieldset class="clip-cover-styles">
-                  <legend data-i18n="coverTitleStyle">标题样式</legend>
-                  <label>
+                <small data-i18n="aiCoverMarkHint">红色标记所在画面会作为人物与场景参考。</small>
+              </div>
+              <div class="ai-cover-copy">
+                <fieldset class="ai-cover-style-picker">
+                  <legend data-i18n="aiCoverLayoutStyle">排版模板</legend>
+                  <label class="ai-cover-style-option is-sticker">
                     <input
                       type="radio"
-                      name="clip-cover-style"
-                      value="scrim"
+                      name="ai-cover-layout-style"
+                      value="sticker_pop"
                       checked
+                      {% if not can_generate_ai_covers %}disabled{% endif %}
                     >
-                    <span class="clip-cover-style-sample is-scrim">标题</span>
                     <span>
-                      <strong data-i18n="coverStyleScrim">暗幕粗体</strong>
-                      <small data-i18n="coverStyleScrimHint">最稳定，适合复杂画面</small>
+                      <strong data-i18n="aiCoverStyleSticker">A · 贴纸高亮</strong>
+                      <small data-i18n="aiCoverStyleStickerHint">关键词撞色、双层描边</small>
                     </span>
                   </label>
-                  <label>
+                  <label class="ai-cover-style-option is-editorial">
                     <input
                       type="radio"
-                      name="clip-cover-style"
-                      value="display"
+                      name="ai-cover-layout-style"
+                      value="editorial_arc"
+                      {% if not can_generate_ai_covers %}disabled{% endif %}
                     >
-                    <span class="clip-cover-style-sample is-display">标题</span>
                     <span>
-                      <strong data-i18n="coverStyleDisplay">高亮描边</strong>
-                      <small data-i18n="coverStyleDisplayHint">更醒目，适合短标题</small>
+                      <strong data-i18n="aiCoverStyleEditorial">B · 轻弧杂志</strong>
+                      <small data-i18n="aiCoverStyleEditorialHint">清透留白、轻微弧度</small>
                     </span>
                   </label>
-                  <label>
+                  <label class="ai-cover-style-option is-banner">
                     <input
                       type="radio"
-                      name="clip-cover-style"
-                      value="badge"
+                      name="ai-cover-layout-style"
+                      value="banner_energy"
+                      {% if not can_generate_ai_covers %}disabled{% endif %}
                     >
-                    <span class="clip-cover-style-sample is-badge">标题</span>
                     <span>
-                      <strong data-i18n="coverStyleBadge">玫红标题条</strong>
-                      <small data-i18n="coverStyleBadgeHint">对比最强，画面再亮也清楚</small>
+                      <strong data-i18n="aiCoverStyleBanner">C · 贴条叠画面</strong>
+                      <small data-i18n="aiCoverStyleBannerHint">标题压画面、节奏更强</small>
                     </span>
                   </label>
                 </fieldset>
-                <small class="clip-cover-duration-note" data-i18n="coverDurationHint">封面会以 1.5 秒静帧放在视频开头，原视频声音随后开始。</small>
+                <label>
+                  <span data-i18n="aiCoverMainText">主标题</span>
+                  <input
+                    id="ai-cover-title-input"
+                    type="text"
+                    maxlength="80"
+                    autocomplete="off"
+                    {% if not can_generate_ai_covers %}disabled{% endif %}
+                  >
+                  <output id="ai-cover-title-count">0/80</output>
+                </label>
+                <label>
+                  <span data-i18n="aiCoverHighlightText">重点文字</span>
+                  <input
+                    id="ai-cover-highlight-input"
+                    type="text"
+                    maxlength="60"
+                    autocomplete="off"
+                    {% if not can_generate_ai_covers %}disabled{% endif %}
+                  >
+                  <output id="ai-cover-highlight-count">0/60</output>
+                </label>
+                <div id="ai-cover-extra-text" class="ai-cover-extra-text"></div>
+                <button
+                  id="ai-cover-add-text"
+                  class="secondary-button"
+                  type="button"
+                  {% if not can_generate_ai_covers %}disabled{% endif %}
+                  data-i18n="aiCoverAddText"
+                >添加补充文字</button>
               </div>
+              <div class="ai-cover-actions">
+                <button
+                  id="ai-cover-generate"
+                  type="button"
+                  {% if not can_generate_ai_covers or not ai_cover_configured %}disabled{% endif %}
+                  data-i18n="aiCoverGenerate"
+                >一键生成双尺寸</button>
+                <button
+                  id="ai-cover-update-text"
+                  class="secondary-button"
+                  type="button"
+                  hidden
+                  data-i18n="aiCoverUpdateText"
+                >更新排版与文字</button>
+                <button
+                  id="ai-cover-regenerate"
+                  class="secondary-button"
+                  type="button"
+                  hidden
+                  data-i18n="aiCoverRegenerate"
+                >换一版</button>
+                <button
+                  id="ai-cover-retry"
+                  class="secondary-button"
+                  type="button"
+                  hidden
+                  data-i18n="aiCoverRetry"
+                >重试失败任务</button>
+                <button
+                  id="ai-cover-select"
+                  class="secondary-button"
+                  type="button"
+                  hidden
+                  aria-pressed="false"
+                  data-i18n="aiCoverUseForVideo"
+                >设为视频封面</button>
+              </div>
+              <p id="ai-cover-status" class="ai-cover-status" role="status"></p>
+              <div class="ai-cover-previews">
+                <article data-orientation="landscape">
+                  <header>
+                    <strong data-i18n="aiCoverLandscape">16:9 横屏</strong>
+                    <small>2560 × 1440</small>
+                  </header>
+                  <div class="ai-cover-image is-landscape">
+                    <img id="ai-cover-landscape-image" alt="" hidden>
+                    <span id="ai-cover-landscape-state" data-i18n="aiCoverWaiting">等待生成</span>
+                  </div>
+                  <a
+                    id="ai-cover-landscape-download"
+                    class="secondary-button"
+                    href="#"
+                    hidden
+                    data-i18n="aiCoverDownloadPng"
+                  >下载 PNG</a>
+                </article>
+                <article data-orientation="four_three">
+                  <header>
+                    <strong data-i18n="aiCoverFourThree">4:3 横屏</strong>
+                    <small>2048 × 1536</small>
+                  </header>
+                  <div class="ai-cover-image is-four-three">
+                    <img id="ai-cover-four-three-image" alt="" hidden>
+                    <span id="ai-cover-four-three-state" data-i18n="aiCoverWaiting">等待生成</span>
+                  </div>
+                  <a
+                    id="ai-cover-four-three-download"
+                    class="secondary-button"
+                    href="#"
+                    hidden
+                    data-i18n="aiCoverDownloadPng"
+                  >下载 PNG</a>
+                </article>
+              </div>
+              <div class="ai-cover-history">
+                <strong data-i18n="aiCoverHistory">历史版本</strong>
+                <div
+                  id="ai-cover-history-list"
+                  class="ai-cover-history-list"
+                ></div>
+              </div>
+              <small class="ai-cover-frame-note" data-i18n="aiCoverFrameNote">16:9 可用于横屏成片第 0 帧；4:3 仅用于下载。两者都不会增加视频时长或延后声音。</small>
             </section>
 
             <p id="clip-editor-error" class="clip-editor-error" role="alert"></p>

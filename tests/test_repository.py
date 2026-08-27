@@ -163,6 +163,137 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
     assert unchanged.oss_object_key == "clips/clip-1.mp4"
 
 
+def test_ai_cover_generations_keep_paired_assets_and_text_revisions(
+    repository,
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=876502",
+        "876502",
+    )
+    generation, created = repository.begin_ai_cover_generation(
+        generation_id="cover-1",
+        job_id=job.id,
+        timeline_index=0,
+        requested_by_user_id=None,
+        request_id="cover-request-1",
+        source_timestamp_ms=12_300,
+        provider="seedream",
+        model="seedream-test",
+        prompt_version="variety-v1",
+        shared_seed=42,
+        layout_style="editorial_arc",
+        title_text="第一段封面",
+        highlight_text="重点文字",
+        extra_text=["名场面"],
+        landscape_size=(1920, 1080),
+        four_three_size=(1600, 1200),
+    )
+    duplicate, duplicate_created = repository.begin_ai_cover_generation(
+        generation_id="cover-duplicate",
+        job_id=job.id,
+        timeline_index=0,
+        requested_by_user_id=None,
+        request_id="cover-request-1",
+        source_timestamp_ms=99_999,
+        provider="seedream",
+        model="other-model",
+        prompt_version="other-prompt",
+        shared_seed=None,
+        layout_style="banner_energy",
+        title_text="不会覆盖",
+        highlight_text="不会覆盖重点",
+        extra_text=[],
+        landscape_size=(1280, 720),
+        four_three_size=(1200, 900),
+    )
+
+    assert created
+    assert not duplicate_created
+    assert duplicate.id == generation.id
+    assert duplicate.source_timestamp_ms == 12_300
+    assert duplicate.layout_style == "editorial_arc"
+    assert duplicate.highlight_text == "重点文字"
+    assert duplicate.extra_text == ["名场面"]
+    assets = repository.list_ai_cover_assets(generation.id)
+    assert [
+        (asset.orientation, asset.width, asset.height, asset.status)
+        for asset in assets
+    ] == [
+        ("landscape", 1920, 1080, "queued"),
+        ("four_three", 1600, 1200, "queued"),
+    ]
+
+    repository.mark_ai_cover_generation_running(generation.id)
+    repository.mark_ai_cover_asset_running(assets[0].id)
+    repository.fail_ai_cover_asset(
+        assets[0].id,
+        "temporary_failure",
+        "第一张暂时失败",
+    )
+    still_running = repository.get_ai_cover_generation(
+        job.id, generation.id
+    )
+    assert still_running is not None
+    assert still_running.status == "running"
+    for asset in assets:
+        repository.mark_ai_cover_asset_running(asset.id)
+        repository.complete_ai_cover_asset(
+            asset.id,
+            background_oss_object_key=(
+                f"covers/{generation.id}/{asset.orientation}-background.png"
+            ),
+            final_oss_object_key=(
+                f"covers/{generation.id}/{asset.orientation}-final.png"
+            ),
+            background_sha256=f"background-{asset.orientation}",
+            final_sha256=f"final-{asset.orientation}",
+            provider_request_id=f"request-{asset.orientation}",
+        )
+
+    completed = repository.get_ai_cover_generation(job.id, generation.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.completed_at is not None
+
+    updating = repository.update_ai_cover_text(
+        job.id,
+        generation.id,
+        layout_style="banner_energy",
+        title_text="更新后的标题",
+        highlight_text="更新后的重点",
+        extra_text=["全场爆笑", "高能"],
+    )
+    assert updating.status == "running"
+    assert updating.layout_style == "banner_energy"
+    assert updating.highlight_text == "更新后的重点"
+    assert updating.extra_text == ["全场爆笑", "高能"]
+    revision_assets = repository.list_ai_cover_assets(generation.id)
+    assert {asset.text_revision for asset in revision_assets} == {1}
+    assert {asset.status for asset in revision_assets} == {"running"}
+
+    for asset in revision_assets:
+        repository.complete_ai_cover_asset(
+            asset.id,
+            background_oss_object_key=(
+                asset.background_oss_object_key
+                or f"covers/{generation.id}/{asset.orientation}-background.png"
+            ),
+            final_oss_object_key=(
+                f"covers/{generation.id}/{asset.orientation}-final-v2.png"
+            ),
+            background_sha256=asset.background_sha256 or "background",
+            final_sha256=f"final-v2-{asset.orientation}",
+        )
+
+    completed = repository.get_ai_cover_generation(job.id, generation.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert [
+        item.id
+        for item in repository.list_ai_cover_generations(job.id)
+    ] == [generation.id]
+
+
 def test_clip_export_retry_and_boundary_cache(repository):
     job, _ = repository.create_or_get_job(
         "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=876502",

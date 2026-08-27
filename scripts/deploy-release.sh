@@ -121,6 +121,8 @@ standby_slot="$(other_slot "$active_slot")"
 activate_clip_maintenance
 wait_for_status_zero video_clips "$clip_drain_seconds"
 wait_for_status_zero video_clip_exports "$clip_drain_seconds"
+wait_for_status_zero \
+  ai_cover_generations "$clip_drain_seconds" "'queued','running'"
 
 systemctl disable --now "pocket48-web@$standby_slot.service" || true
 if [[ -L "$SLOTS_DIR/$standby_slot" ]]; then

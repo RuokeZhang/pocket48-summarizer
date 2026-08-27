@@ -78,6 +78,32 @@ class Settings(BaseSettings):
     )
     clip_analysis_concurrency: int = Field(default=2, ge=1, le=4)
     clip_font_name: str = "Noto Sans CJK SC"
+    enable_ai_covers: bool = True
+    ai_cover_provider: Literal["seedream"] = "seedream"
+    ark_api_key: SecretStr | None = None
+    ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    ark_seedream_model: str | None = None
+    ai_cover_landscape_width: int = Field(default=2560, ge=512, le=4096)
+    ai_cover_landscape_height: int = Field(default=1440, ge=512, le=4096)
+    ai_cover_four_three_width: int = Field(default=2048, ge=512, le=4096)
+    ai_cover_four_three_height: int = Field(default=1536, ge=512, le=4096)
+    ai_cover_request_timeout_seconds: float = Field(
+        default=180.0, gt=0, le=600
+    )
+    ai_cover_download_max_bytes: int = Field(
+        default=30 * 1024 * 1024,
+        ge=1024,
+        le=100 * 1024 * 1024,
+    )
+    ai_cover_source_url_seconds: int = Field(
+        default=900, ge=300, le=3600
+    )
+    ai_cover_signed_url_seconds: int = Field(
+        default=3600, ge=300, le=86_400
+    )
+    ai_cover_concurrency: int = Field(default=1, ge=1, le=2)
+    ai_cover_font_name: str = "Noto Sans CJK SC"
+    ai_cover_prompt_version: str = "source-preserve-templates-v4"
     max_audio_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1024)
     failed_audio_retention_hours: int = Field(default=24, ge=1, le=168)
 
@@ -135,6 +161,22 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bind_address(self) -> "Settings":
+        if (
+            self.ai_cover_landscape_width * 9
+            != self.ai_cover_landscape_height * 16
+        ):
+            raise ValueError(
+                "AI_COVER_LANDSCAPE_WIDTH and "
+                "AI_COVER_LANDSCAPE_HEIGHT must use a 16:9 ratio"
+            )
+        if (
+            self.ai_cover_four_three_width * 3
+            != self.ai_cover_four_three_height * 4
+        ):
+            raise ValueError(
+                "AI_COVER_FOUR_THREE_WIDTH and "
+                "AI_COVER_FOUR_THREE_HEIGHT must use a 4:3 ratio"
+            )
         if self.dashscope_vocabulary_enabled:
             prefix = self.dashscope_vocabulary_prefix
             if (
@@ -154,6 +196,28 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "SESSION_COOKIE_SECURE must be true when authentication "
                     "is enabled outside localhost"
+                )
+        if (
+            self.enable_ai_covers
+            and self.ark_api_key
+            and self.ark_seedream_model
+        ):
+            retry_backoff_seconds = (
+                2 ** (self.external_retry_attempts - 1) - 1
+            )
+            minimum_source_url_seconds = (
+                self.ai_cover_request_timeout_seconds
+                * self.external_retry_attempts
+                + retry_backoff_seconds
+                + 30
+            )
+            if (
+                self.ai_cover_source_url_seconds
+                < minimum_source_url_seconds
+            ):
+                raise ValueError(
+                    "AI_COVER_SOURCE_URL_SECONDS must cover the complete "
+                    "Seedream retry window"
                 )
         if self.allow_remote_bind:
             return self
@@ -249,6 +313,17 @@ class Settings(BaseSettings):
         }
         missing.extend(name for name, value in required.items() if not value)
         return missing
+
+    def missing_ai_cover_configuration(self) -> list[str]:
+        if not self.enable_ai_covers:
+            return ["ENABLE_AI_COVERS"]
+        missing = self.missing_clip_configuration()
+        required: dict[str, Any] = {
+            "ARK_API_KEY": self.ark_api_key,
+            "ARK_SEEDREAM_MODEL": self.ark_seedream_model,
+        }
+        missing.extend(name for name, value in required.items() if not value)
+        return sorted(set(missing))
 
     def missing_processing_configuration(self) -> list[str]:
         missing: list[str] = []

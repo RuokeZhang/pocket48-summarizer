@@ -43,6 +43,28 @@ class OSSStore:
         prefix = self.settings.aliyun_oss_clip_prefix.strip("/")
         return f"{prefix}/{job_id}/{filename}"
 
+    def ai_cover_source_object_key(
+        self, job_id: str, generation_id: str
+    ) -> str:
+        prefix = self.settings.aliyun_oss_prefix.strip("/")
+        return (
+            f"{prefix}/ai-cover-sources/{job_id}/"
+            f"{generation_id}/source.png"
+        )
+
+    def ai_cover_object_key(
+        self,
+        job_id: str,
+        generation_id: str,
+        orientation: str,
+        kind: str,
+    ) -> str:
+        prefix = self.settings.aliyun_oss_clip_prefix.strip("/")
+        return (
+            f"{prefix}/{job_id}/ai-covers/{generation_id}/"
+            f"{orientation}-{kind}.png"
+        )
+
     async def upload(self, path: Path, key: str) -> None:
         try:
             await asyncio.to_thread(
@@ -68,6 +90,68 @@ class OSSStore:
             raise ExternalServiceError(
                 "oss_sign_failed",
                 "生成 OSS 临时访问地址失败",
+                True,
+            ) from exc
+
+    async def signed_ai_cover_source_url(self, key: str) -> str:
+        try:
+            return await asyncio.to_thread(
+                self.signing_bucket.sign_url,
+                "GET",
+                key,
+                self.settings.ai_cover_source_url_seconds,
+                slash_safe=True,
+            )
+        except oss2.exceptions.OssError as exc:
+            raise ExternalServiceError(
+                "ai_cover_source_sign_failed",
+                "生成 AI 封面参考图临时地址失败",
+                True,
+            ) from exc
+
+    async def upload_ai_cover_image(self, path: Path, key: str) -> None:
+        try:
+            await asyncio.to_thread(
+                self.bucket.put_object_from_file,
+                key,
+                str(path),
+                headers={"Content-Type": "image/png"},
+            )
+        except oss2.exceptions.OssError as exc:
+            raise ExternalServiceError(
+                "ai_cover_upload_failed",
+                "上传 AI 封面图片到 OSS 失败",
+                True,
+            ) from exc
+
+    async def download_ai_cover_image(self, key: str, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            await asyncio.to_thread(
+                self.bucket.get_object_to_file,
+                key,
+                str(path),
+            )
+        except oss2.exceptions.OssError as exc:
+            raise ExternalServiceError(
+                "ai_cover_download_failed",
+                "下载 AI 封面图片失败",
+                True,
+            ) from exc
+
+    async def signed_ai_cover_url(self, key: str) -> str:
+        try:
+            return await asyncio.to_thread(
+                self.signing_bucket.sign_url,
+                "GET",
+                key,
+                self.settings.ai_cover_signed_url_seconds,
+                slash_safe=True,
+            )
+        except oss2.exceptions.OssError as exc:
+            raise ExternalServiceError(
+                "ai_cover_sign_failed",
+                "生成 AI 封面下载地址失败",
                 True,
             ) from exc
 

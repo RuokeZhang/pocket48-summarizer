@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import uuid
@@ -42,7 +43,15 @@ LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v10"
+RENDER_VERSION = "ass-v11"
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass(slots=True)
@@ -166,7 +175,53 @@ class VideoClipService:
         cover_timestamp_ms: int | None = None,
         cover_title: str = "",
         cover_style: CoverStyle = DEFAULT_COVER_STYLE,
+        ai_cover_generation_id: str | None = None,
     ) -> VideoClipExportRecord:
+        existing = self.repository.get_video_clip_export_by_request_id(
+            job_id, request_id
+        )
+        if existing is not None:
+            return existing
+        ai_cover_asset = None
+        if ai_cover_generation_id:
+            if output_layout != "landscape":
+                raise AppError(
+                    "ai_cover_landscape_only",
+                    "AI 封面只能用于横屏成片；4:3 版本仅供下载",
+                    False,
+                )
+            generation = self.repository.get_ai_cover_generation(
+                job_id, ai_cover_generation_id
+            )
+            if (
+                generation is None
+                or generation.timeline_index != timeline_index
+            ):
+                raise AppError(
+                    "ai_cover_not_found",
+                    "AI 封面不存在或不属于当前时间线条目",
+                    False,
+                )
+            if generation.status != "completed":
+                raise AppError(
+                    "ai_cover_not_ready",
+                    "AI 封面尚未生成完成",
+                    True,
+                )
+            ai_cover_asset = self.repository.get_ai_cover_asset(
+                generation.id,
+                "landscape",
+            )
+            if (
+                ai_cover_asset is None
+                or ai_cover_asset.status != "completed"
+                or not ai_cover_asset.final_oss_object_key
+            ):
+                raise AppError(
+                    "ai_cover_not_ready",
+                    "AI 封面图片尚未生成完成",
+                    True,
+                )
         clip_id = str(uuid.uuid4())
         filename = self.output_filename(
             clip_id=clip_id,
@@ -176,7 +231,7 @@ class VideoClipService:
             subtitle_mode=subtitle_mode,
             include_danmaku=include_danmaku,
             output_layout=output_layout,
-            cover_enabled=cover_enabled,
+            cover_enabled=cover_enabled or ai_cover_generation_id is not None,
             kept_range_count=len(kept_ranges or []),
         )
         record, created = self.repository.begin_video_clip_export(
@@ -200,6 +255,25 @@ class VideoClipService:
             cover_timestamp_ms=cover_timestamp_ms,
             cover_title=cover_title,
             cover_style=cover_style,
+            ai_cover_generation_id=ai_cover_generation_id,
+            ai_cover_asset_id=(
+                ai_cover_asset.id if ai_cover_asset else None
+            ),
+            ai_cover_final_oss_object_key=(
+                ai_cover_asset.final_oss_object_key
+                if ai_cover_asset
+                else None
+            ),
+            ai_cover_final_sha256=(
+                ai_cover_asset.final_sha256
+                if ai_cover_asset
+                else None
+            ),
+            ai_cover_text_revision=(
+                ai_cover_asset.text_revision
+                if ai_cover_asset
+                else None
+            ),
             render_version=RENDER_VERSION,
             filename=filename,
         )
@@ -354,6 +428,9 @@ class VideoClipService:
         ]
         cover_ass_path = state.output_path.with_suffix(".cover.ass")
         cover_frame_path = state.output_path.with_suffix(".cover.png")
+        ai_cover_frame_path = state.output_path.with_suffix(
+            ".ai-cover.png"
+        )
         main_output_path = state.output_path.with_suffix(".main.mp4")
         try:
             async with self._capacity:
@@ -374,9 +451,17 @@ class VideoClipService:
                                 record.subtitle_mode != "off"
                                 or record.include_danmaku
                             )
+                            needs_ai_cover = (
+                                record.ai_cover_generation_id is not None
+                            )
                             dimensions: VideoDimensions | None = None
                             if needs_clip_overlay or record.cover_enabled:
                                 await self._require_ass_support()
+                            if (
+                                needs_clip_overlay
+                                or record.cover_enabled
+                                or needs_ai_cover
+                            ):
                                 dimensions = (
                                     VideoDimensions(
                                         width=LANDSCAPE_CANVAS_WIDTH,
@@ -387,6 +472,56 @@ class VideoClipService:
                                         manifest_url
                                     )
                                 )
+                            if needs_ai_cover:
+                                cover_object_key = (
+                                    record.ai_cover_final_oss_object_key
+                                )
+                                if not cover_object_key:
+                                    generation = (
+                                        self.repository
+                                        .get_ai_cover_generation(
+                                            record.job_id,
+                                            (
+                                                record
+                                                .ai_cover_generation_id
+                                                or ""
+                                            ),
+                                        )
+                                    )
+                                    asset = (
+                                        self.repository.get_ai_cover_asset(
+                                            generation.id,
+                                            record.output_layout,
+                                        )
+                                        if generation
+                                        else None
+                                    )
+                                    cover_object_key = (
+                                        asset.final_oss_object_key
+                                        if asset
+                                        and asset.status == "completed"
+                                        else None
+                                    )
+                                if not cover_object_key:
+                                    raise AppError(
+                                        "ai_cover_not_ready",
+                                        "AI 封面图片尚未生成完成",
+                                        True,
+                                    )
+                                await self.oss.download_ai_cover_image(
+                                    cover_object_key,
+                                    ai_cover_frame_path,
+                                )
+                                if (
+                                    record.ai_cover_final_sha256
+                                    and file_sha256(ai_cover_frame_path)
+                                    != record.ai_cover_final_sha256
+                                ):
+                                    raise AppError(
+                                        "ai_cover_asset_changed",
+                                        "AI 封面文件校验失败，请重新选择封面",
+                                        False,
+                                    )
                             overlay_documents = []
                             if needs_clip_overlay:
                                 if dimensions is None:
@@ -522,13 +657,23 @@ class VideoClipService:
                                     if len(record.kept_ranges) == 1
                                     else part_paths[index]
                                 )
+                                clip_kwargs = {
+                                    "output_layout": record.output_layout
+                                }
+                                if needs_ai_cover and index == 0:
+                                    clip_kwargs.update(
+                                        {
+                                            "cover_path": ai_cover_frame_path,
+                                            "cover_dimensions": dimensions,
+                                        }
+                                    )
                                 await self.ffmpeg.clip_video(
                                     manifest_url,
                                     clip_output_path,
                                     clip_range.start_ms,
                                     clip_range.end_ms,
                                     ass_input,
-                                    output_layout=record.output_layout,
+                                    **clip_kwargs,
                                 )
                             if len(record.kept_ranges) > 1:
                                 await self.ffmpeg.concat_clips(
@@ -592,6 +737,7 @@ class VideoClipService:
                         path.unlink(missing_ok=True)
                     cover_ass_path.unlink(missing_ok=True)
                     cover_frame_path.unlink(missing_ok=True)
+                    ai_cover_frame_path.unlink(missing_ok=True)
                     main_output_path.unlink(missing_ok=True)
                     await asyncio.sleep(
                         self._retry_delay_seconds * (2 ** (attempt - 1))
@@ -624,6 +770,7 @@ class VideoClipService:
                 path.unlink(missing_ok=True)
             cover_ass_path.unlink(missing_ok=True)
             cover_frame_path.unlink(missing_ok=True)
+            ai_cover_frame_path.unlink(missing_ok=True)
             main_output_path.unlink(missing_ok=True)
             self._tasks.pop(record.id, None)
 

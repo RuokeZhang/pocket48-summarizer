@@ -6,6 +6,7 @@ from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.media.ffmpeg import (
     FFmpegRunner,
     SilenceInterval,
+    VideoDimensions,
 )
 
 
@@ -177,6 +178,53 @@ def test_prepend_cover_command_delays_audio_until_cover_finishes(settings):
     assert "trim=duration=1.500" in filter_complex
     assert "2:a:0?" in command
     assert command[-1] == "/tmp/final.mp4"
+
+
+def test_ai_cover_command_overlays_frame_zero_without_audio_offset(settings):
+    runner = FFmpegRunner(settings)
+
+    command = runner.build_clip_command(
+        MANIFEST_URL,
+        Path("/tmp/clip.mp4"),
+        start_ms=1000,
+        end_ms=5000,
+        ass_path=Path("/tmp/overlay.ass"),
+        output_layout="landscape",
+        cover_path=Path("/tmp/ai-cover.png"),
+        cover_dimensions=VideoDimensions(width=1920, height=1080),
+    )
+
+    input_indexes = [
+        index for index, value in enumerate(command) if value == "-i"
+    ]
+    assert [command[index + 1] for index in input_indexes] == [
+        MANIFEST_URL,
+        "/tmp/ai-cover.png",
+    ]
+    assert command.index("-t") > input_indexes[-1]
+    assert command[command.index("-t") + 1] == "4.000"
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "ass=filename='/tmp/overlay.ass'[base]" in filter_complex
+    assert "scale=1920:1080" in filter_complex
+    assert "enable='eq(n,0)'" in filter_complex
+    assert "concat=" not in filter_complex
+    assert "-itsoffset" not in command
+    assert "0:a:0?" in command
+
+
+def test_ai_cover_source_command_extracts_clean_marked_frame(settings):
+    runner = FFmpegRunner(settings)
+
+    command = runner.build_extract_cover_source_command(
+        MANIFEST_URL,
+        Path("/tmp/source.png"),
+        timestamp_ms=12_300,
+    )
+
+    assert command[command.index("-ss") + 1] == "12.300"
+    assert command[command.index("-frames:v") + 1] == "1"
+    assert "-vf" not in command
+    assert "-an" in command
 
 
 def test_concat_command_uses_internal_manifest_without_reencoding(settings):
