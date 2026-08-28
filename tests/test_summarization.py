@@ -447,3 +447,148 @@ def test_timeline_keeps_all_model_items_and_fills_late_chunks():
         for item in timeline
         for evidence_id in item.evidence_segment_ids
     } >= {1, 2, 3, 4}
+
+
+class MiscalculatedTimestampLLM:
+    """模型引用了正确的字幕，但把 HH:MM:SS 换算成毫秒时算错了。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def chat_json(self, **_):
+        self.calls += 1
+        return {
+            "start_ms": 120_000,
+            "end_ms": 180_000,
+            "summary": "主播讲解了新歌。",
+            "topics": [],
+            "timeline_candidates": [
+                {
+                    "start_ms": 120,
+                    "end_ms": 180,
+                    "title": "讲解新歌",
+                    "detail": "主播介绍新歌创作过程。",
+                    "evidence_segment_ids": [7],
+                }
+            ],
+            "highlight_candidates": [
+                {
+                    "start_ms": 0,
+                    "end_ms": 999_999,
+                    "title": "新歌片段",
+                    "detail": "主播清唱了一段。",
+                    "evidence_segment_ids": [7],
+                }
+            ],
+            "verification_needed": [],
+            "evidence_segment_ids": [7],
+        }
+
+
+def test_chunk_prompt_gives_millisecond_attributes_to_avoid_conversion():
+    chunk = build_transcript_chunks(
+        [
+            TranscriptSegment(
+                sequence=7,
+                start_ms=120_000,
+                end_ms=180_000,
+                text="这首新歌写了很久。",
+            )
+        ],
+        max_chars=100_000,
+        max_duration_ms=360_000,
+        overlap_segments=0,
+    )[0]
+    prompt = chunk_prompt(chunk)
+
+    assert 'start_ms="120000"' in prompt
+    assert 'end_ms="180000"' in prompt
+    assert 'start="00:02:00"' in prompt
+    assert "必须直接复制自 evidence_segment_ids" in prompt
+    assert "禁止自行从" in prompt
+
+
+def test_final_prompt_requires_copying_candidate_windows():
+    assert "必须直接复制自 trusted_chunk_summaries" in final_prompt([], [])
+
+
+@pytest.mark.asyncio
+async def test_miscalculated_windows_are_repaired_from_evidence(
+    settings, repository
+):
+    llm = MiscalculatedTimestampLLM()
+    service = SummarizationService(settings, repository, llm)
+
+    summary = await service._request_chunk(
+        "测试提示词",
+        {7},
+        {7: (120_000, 180_000)},
+        expected_start_ms=120_000,
+        expected_end_ms=180_000,
+    )
+
+    assert llm.calls == 1
+    candidate = summary.timeline_candidates[0]
+    assert (candidate.start_ms, candidate.end_ms) == (120_000, 180_000)
+    highlight = summary.highlight_candidates[0]
+    assert (highlight.start_ms, highlight.end_ms) == (120_000, 180_000)
+
+
+def test_repair_clamps_overlong_evidence_span_to_max_duration():
+    repaired = SummarizationService._repair_window(
+        SummaryCandidate(
+            start_ms=0,
+            end_ms=900_000,
+            title="跨度过长",
+            detail="引用了很长的证据。",
+            evidence_segment_ids=[1, 2],
+        ),
+        {1: (0, 10_000), 2: (600_000, 900_000)},
+        bound_start_ms=0,
+        bound_end_ms=900_000,
+        require_evidence_overlap=True,
+        max_duration_ms=MAX_TIMELINE_EVENT_DURATION_MS,
+    )
+
+    assert repaired.start_ms == 0
+    assert repaired.end_ms == MAX_TIMELINE_EVENT_DURATION_MS
+
+
+def test_repair_leaves_sound_windows_untouched():
+    item = TimelineItem(
+        start_ms=130_000,
+        end_ms=150_000,
+        title="正常事件",
+        detail="时间范围合理。",
+        evidence_segment_ids=[7],
+    )
+    repaired = SummarizationService._repair_window(
+        item,
+        {7: (120_000, 180_000)},
+        bound_start_ms=0,
+        bound_end_ms=180_000,
+        require_evidence_overlap=True,
+        max_duration_ms=MAX_TIMELINE_EVENT_DURATION_MS,
+    )
+
+    assert repaired is item
+
+
+def test_repair_skips_items_whose_evidence_is_unknown():
+    item = TimelineItem(
+        start_ms=0,
+        end_ms=1000,
+        title="幻觉证据",
+        detail="引用了不存在的字幕。",
+        evidence_segment_ids=[999],
+    )
+    repaired = SummarizationService._repair_window(
+        item,
+        {7: (120_000, 180_000)},
+        bound_start_ms=0,
+        bound_end_ms=180_000,
+        require_evidence_overlap=True,
+        max_duration_ms=MAX_TIMELINE_EVENT_DURATION_MS,
+    )
+
+    assert repaired is item

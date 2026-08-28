@@ -41,6 +41,7 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "015_resummarize_coarse_timelines.sql",
         "016_retry_normalized_chunk_windows.sql",
         "017_ai_cover_generations.sql",
+        "018_retry_repaired_timeline_windows.sql",
     ]
 
 

@@ -83,7 +83,9 @@ def format_clock(milliseconds: int) -> str:
 def _format_segment(segment: TranscriptSegment) -> str:
     speaker = f" speaker={segment.speaker_id}" if segment.speaker_id else ""
     return (
-        f'<segment id="{segment.sequence}" start="{format_clock(segment.start_ms)}"'
+        f'<segment id="{segment.sequence}"'
+        f' start_ms="{segment.start_ms}" end_ms="{segment.end_ms}"'
+        f' start="{format_clock(segment.start_ms)}"'
         f' end="{format_clock(segment.end_ms)}"{speaker}>'
         f"{segment.text}</segment>"
     )

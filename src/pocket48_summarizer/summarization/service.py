@@ -84,6 +84,12 @@ class SummarizationService:
                         expected_start_ms=chunk.start_ms,
                         expected_end_ms=chunk.end_ms,
                     )
+                    chunk_summary = self._repair_chunk_windows(
+                        chunk_summary,
+                        chunk_segment_windows,
+                        expected_start_ms=chunk.start_ms,
+                        expected_end_ms=chunk.end_ms,
+                    )
                     self._validate_chunk_evidence(
                         chunk_summary,
                         valid_chunk_ids,
@@ -164,6 +170,12 @@ class SummarizationService:
                     expected_start_ms=expected_start_ms,
                     expected_end_ms=expected_end_ms,
                 )
+                summary = self._repair_chunk_windows(
+                    summary,
+                    segment_windows,
+                    expected_start_ms=expected_start_ms,
+                    expected_end_ms=expected_end_ms,
+                )
                 self._validate_chunk_evidence(
                     summary,
                     valid_ids,
@@ -202,6 +214,7 @@ class SummarizationService:
             )
             try:
                 summary = FinalSummary.model_validate(payload)
+                summary = self._repair_final_windows(summary, segment_windows)
                 for item in summary.timeline:
                     self._validate_evidence(
                         item.evidence_segment_ids, valid_ids, "时间线"
@@ -269,6 +282,119 @@ class SummarizationService:
             update={
                 "start_ms": expected_start_ms,
                 "end_ms": expected_end_ms,
+            }
+        )
+
+    @classmethod
+    def _evidence_span(
+        cls,
+        item: SummaryCandidate | TimelineItem,
+        segment_windows: dict[int, tuple[int, int]],
+    ) -> tuple[int, int] | None:
+        known = [
+            segment_windows[evidence_id]
+            for evidence_id in item.evidence_segment_ids
+            if evidence_id in segment_windows
+        ]
+        if not known:
+            return None
+        return min(window[0] for window in known), max(
+            window[1] for window in known
+        )
+
+    @classmethod
+    def _repair_window(
+        cls,
+        item: SummaryCandidate | TimelineItem,
+        segment_windows: dict[int, tuple[int, int]],
+        *,
+        bound_start_ms: int,
+        bound_end_ms: int,
+        require_evidence_overlap: bool,
+        max_duration_ms: int | None = None,
+    ) -> SummaryCandidate | TimelineItem:
+        span = cls._evidence_span(item, segment_windows)
+        if span is None:
+            return item
+        evidence_start, evidence_end = span
+        sound = (
+            item.end_ms > item.start_ms
+            and item.start_ms >= bound_start_ms
+            and item.end_ms <= bound_end_ms
+        )
+        if sound and max_duration_ms is not None:
+            sound = item.end_ms - item.start_ms <= max_duration_ms
+        if sound and require_evidence_overlap:
+            sound = evidence_end > item.start_ms and evidence_start < item.end_ms
+        if sound:
+            return item
+        start = min(max(evidence_start, bound_start_ms), bound_end_ms)
+        end = max(min(evidence_end, bound_end_ms), start)
+        if max_duration_ms is not None:
+            end = min(end, start + max_duration_ms)
+        if end <= start:
+            end = min(start + 1000, bound_end_ms)
+            start = max(bound_start_ms, end - 1000)
+        return item.model_copy(update={"start_ms": start, "end_ms": end})
+
+    @classmethod
+    def _repair_chunk_windows(
+        cls,
+        summary: ChunkSummary,
+        segment_windows: dict[int, tuple[int, int]],
+        *,
+        expected_start_ms: int,
+        expected_end_ms: int,
+    ) -> ChunkSummary:
+        return summary.model_copy(
+            update={
+                "timeline_candidates": [
+                    cls._repair_window(
+                        item,
+                        segment_windows,
+                        bound_start_ms=expected_start_ms,
+                        bound_end_ms=expected_end_ms,
+                        require_evidence_overlap=True,
+                        max_duration_ms=MAX_TIMELINE_EVENT_DURATION_MS,
+                    )
+                    for item in summary.timeline_candidates
+                ],
+                "highlight_candidates": [
+                    cls._repair_window(
+                        item,
+                        segment_windows,
+                        bound_start_ms=expected_start_ms,
+                        bound_end_ms=expected_end_ms,
+                        require_evidence_overlap=False,
+                    )
+                    for item in summary.highlight_candidates
+                ],
+            }
+        )
+
+    @classmethod
+    def _repair_final_windows(
+        cls,
+        summary: FinalSummary,
+        segment_windows: dict[int, tuple[int, int]],
+    ) -> FinalSummary:
+        if not segment_windows:
+            return summary
+        bound_start = min(window[0] for window in segment_windows.values())
+        bound_end = max(window[1] for window in segment_windows.values())
+        return summary.model_copy(
+            update={
+                "timeline": [
+                    cls._repair_window(
+                        item,
+                        segment_windows,
+                        bound_start_ms=bound_start,
+                        bound_end_ms=bound_end,
+                        require_evidence_overlap=True,
+                        max_duration_ms=MAX_TIMELINE_EVENT_DURATION_MS,
+                    )
+                    for item in summary.timeline
+                ]
             }
         )
 
