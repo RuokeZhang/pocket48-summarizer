@@ -841,7 +841,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   border: 1px solid #2d323f;
   border-radius: 15px;
   background: #050608;
-  container-type: size;
 }
 .clip-preview-stage video {
   display: block;
@@ -854,6 +853,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   aspect-ratio: 16 / 9;
   background: #ebe9e1;
   isolation: isolate;
+  /* Only the landscape stage has a definite height for cq* units, and only
+     it may be size-contained: containment would flatten the portrait
+     stage onto its min-height and crop the video into a wide band. */
+  container-type: size;
 }
 .clip-preview-stage.is-landscape-layout video {
   position: absolute;
@@ -898,7 +901,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   opacity: .62;
   filter: saturate(.7);
 }
-.clip-preview-subtitles p {
+.clip-preview-stage:not(.is-landscape-layout) .clip-preview-subtitles p {
   width: fit-content;
   max-width: 94%;
   margin: 3px auto 0;
@@ -914,7 +917,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   paint-order: stroke fill;
   -webkit-text-stroke: .14em #000;
 }
-.clip-preview-subtitles p + p {
+.clip-preview-stage:not(.is-landscape-layout) .clip-preview-subtitles p + p {
   color: #fff;
   font-size: var(--clip-subtitle-en-size);
   font-weight: 650;
@@ -946,6 +949,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     sans-serif
   );
   font-size: var(--clip-landscape-subtitle-zh-size);
+  font-weight: 800;
   line-height: 1.55;
   overflow-wrap: anywhere;
   text-align: left;
@@ -954,6 +958,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .clip-preview-stage.is-landscape-layout .clip-preview-subtitles p + p {
   color: #d6536d;
   font-size: var(--clip-landscape-subtitle-en-size);
+  opacity: .88;
 }
 .clip-preview-danmaku {
   position: absolute;

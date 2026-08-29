@@ -1558,9 +1558,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-3" in page.text
-    assert "styles.css?v=20260829-3" in page.text
-    assert "app.js?v=20260829-3" in page.text
+    assert "i18n.js?v=20260829-4" in page.text
+    assert "styles.css?v=20260829-4" in page.text
+    assert "app.js?v=20260829-4" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -1652,3 +1652,45 @@ def test_playback_track_is_public_and_user_can_request_translation(
 
     assert requested.status_code == 202
     assert requested.json()["status"] == "queued"
+
+
+def test_portrait_clip_preview_styles_stay_scoped_to_portrait(settings, repository):
+    """Portrait-only styling must never leak into the landscape stage.
+
+    Two production regressions came from this file: ``container-type: size``
+    drifted onto the shared stage rule and flattened the portrait preview onto
+    its ``min-height``, and the portrait white/outline caption look was written
+    on the shared caption rule where the landscape override forgot to reset the
+    stroke.
+    """
+
+    app = create_app(
+        settings,
+        ApplicationServices(repository=repository, worker=DummyWorker()),
+    )
+
+    with TestClient(app) as client:
+        styles = client.get("/static/styles.css")
+
+    assert styles.status_code == 200
+    sheet = styles.text
+
+    containment = [
+        line.strip()
+        for line in sheet.splitlines()
+        if "container-type" in line
+    ]
+    assert containment == ["container-type: size;"]
+    landscape_stage = sheet.split(".clip-preview-stage.is-landscape-layout {", 1)[1]
+    assert "container-type: size;" in landscape_stage.split("}", 1)[0]
+
+    assert "\n.clip-preview-subtitles p {" not in sheet
+    assert (
+        ".clip-preview-stage:not(.is-landscape-layout) .clip-preview-subtitles p {"
+        in sheet
+    )
+    portrait_caption = sheet.split(
+        ".clip-preview-stage:not(.is-landscape-layout) .clip-preview-subtitles p {",
+        1,
+    )[1].split("}", 1)[0]
+    assert "-webkit-text-stroke" in portrait_caption
