@@ -29,6 +29,7 @@ from .layouts import (
     LANDSCAPE_DANMAKU_RIGHT,
     LANDSCAPE_DANMAKU_TEXT_COLOR,
     LANDSCAPE_DANMAKU_TEXT_GAP,
+    LANDSCAPE_DANMAKU_TOP,
     LANDSCAPE_DANMAKU_WIDTH,
     LANDSCAPE_LIBASS_DANMAKU_AUTHOR_SCALE,
     LANDSCAPE_LIBASS_FONT_SCALE,
@@ -49,6 +50,9 @@ SubtitleMode = Literal["off", "zh", "en", "bilingual"]
 CoverStyle = Literal["scrim", "display", "badge"]
 DANMAKU_MIN_GAP_MS = 450
 DANMAKU_MAX_VISIBLE = 5
+# Landscape cards vary in height, so the stack is bounded by the column
+# instead of a fixed count; this only guards pathological input.
+DANMAKU_MAX_STACK = 16
 DANMAKU_RISE_MS = 220
 SUBTITLE_FONT_SCALE_MIN = 50
 SUBTITLE_FONT_SCALE_MAX = 150
@@ -603,15 +607,26 @@ def _danmaku_events(
         if landscape
         else []
     )
+    landscape_budget = max(
+        0,
+        height - LANDSCAPE_DANMAKU_BOTTOM - LANDSCAPE_DANMAKU_TOP,
+    )
     for index, item in enumerate(prepared):
         style = "LandscapeDanmakuAuthor" if landscape else "Danmaku"
         body_style = "LandscapeDanmaku" if landscape else "Danmaku"
         maximum_age = min(
-            DANMAKU_MAX_VISIBLE - 1,
+            (DANMAKU_MAX_STACK if landscape else DANMAKU_MAX_VISIBLE) - 1,
             len(prepared) - index - 1,
         )
         for age in range(maximum_age + 1):
             latest_index = index + age
+            if landscape:
+                stack_height = (
+                    sum(landscape_heights[index : latest_index + 1])
+                    + age * LANDSCAPE_DANMAKU_GAP
+                )
+                if stack_height > landscape_budget:
+                    break
             segment_start_ms = prepared[latest_index].relative_ms
             segment_end_ms = (
                 prepared[latest_index + 1].relative_ms

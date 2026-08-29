@@ -8,6 +8,7 @@ from pocket48_summarizer.media.layouts import (
     LANDSCAPE_CANVAS_WIDTH,
     LANDSCAPE_DANMAKU_BOTTOM,
     LANDSCAPE_DANMAKU_RIGHT,
+    LANDSCAPE_DANMAKU_TOP,
     LANDSCAPE_DANMAKU_WIDTH,
     LANDSCAPE_SUBTITLE_EN_COLOR,
     LANDSCAPE_SUBTITLE_LEFT,
@@ -483,3 +484,84 @@ def test_cover_overlay_rejects_empty_title():
             height=1920,
             title="   ",
         )
+
+
+def test_landscape_danmaku_stack_fills_the_column_beyond_five_cards():
+    danmaku = [
+        DanmakuEntry(
+            sequence=index,
+            timestamp_ms=1000 + index * 500,
+            author=f"观众{index}",
+            text=f"第 {index} 条",
+        )
+        for index in range(12)
+    ]
+    document = build_clip_overlay(
+        width=1920,
+        height=1080,
+        clip_start_ms=0,
+        clip_end_ms=20_000,
+        subtitle_mode="off",
+        include_danmaku=True,
+        font_name="Noto Sans CJK SC",
+        transcript=[],
+        translations={},
+        danmaku=danmaku,
+        output_layout="landscape",
+    )
+
+    boxes = [
+        line
+        for line in document.content.splitlines()
+        if line.startswith("Dialogue: 9,")
+    ]
+    # Count the cards alive at the moment the newest entry appears.
+    newest_start = "0:00:06.50"
+    concurrent = [line for line in boxes if newest_start in line]
+    assert len(concurrent) > 5
+
+    tops = [
+        int(match.group(1))
+        for line in boxes
+        for match in [re.search(r"\\pos\(\d+,(-?\d+)\)", line)]
+        if match is not None
+    ] + [
+        int(match.group(2))
+        for line in boxes
+        for match in [
+            re.search(r"\\move\(\d+,-?\d+,\d+,(-?)(\d+),0,\d+\)", line)
+        ]
+        if match is not None
+    ]
+    assert tops
+    assert min(tops) >= LANDSCAPE_DANMAKU_TOP
+
+
+def test_portrait_danmaku_stack_stays_capped_at_five():
+    document = build_clip_overlay(
+        width=1280,
+        height=720,
+        clip_start_ms=0,
+        clip_end_ms=20_000,
+        subtitle_mode="off",
+        include_danmaku=True,
+        font_name="Noto Sans CJK SC",
+        transcript=[],
+        translations={},
+        danmaku=[
+            DanmakuEntry(
+                sequence=index,
+                timestamp_ms=1000 + index * 500,
+                author=f"用户{index}",
+                text=f"第 {index} 条",
+            )
+            for index in range(12)
+        ],
+    )
+
+    oldest = [
+        line
+        for line in document.content.splitlines()
+        if "用户0" in line
+    ]
+    assert len(oldest) == 5

@@ -357,6 +357,7 @@ const CLIP_MAX_ZOOM = 64;
 const CLIP_SNAP_ENTER_PX = 12;
 const CLIP_SNAP_RELEASE_PX = 22;
 const CLIP_DANMAKU_MAX_VISIBLE = 5;
+const CLIP_DANMAKU_MAX_STACK = 16;
 const CLIP_DANMAKU_MIN_GAP_MS = 450;
 const CLIP_DANMAKU_RISE_MS = 220;
 const CLIP_AUTO_SCROLL_EDGE_PX = 52;
@@ -2475,8 +2476,14 @@ const renderClipDanmakuPreview = (milliseconds) => {
     milliseconds + 1,
     "timestamp_ms"
   );
+  const landscape = Boolean(
+    clipPreviewStage?.classList.contains("is-landscape-layout")
+  );
+  const stackLimit = landscape
+    ? CLIP_DANMAKU_MAX_STACK
+    : CLIP_DANMAKU_MAX_VISIBLE;
   const visible = stream.slice(
-    Math.max(0, endIndex - CLIP_DANMAKU_MAX_VISIBLE),
+    Math.max(0, endIndex - stackLimit),
     endIndex
   );
   const stackKey = visible.map(clipDanmakuEntryKey).join("|");
@@ -2501,6 +2508,30 @@ const renderClipDanmakuPreview = (milliseconds) => {
     rendered.push({ bubble, previousTop: existing?.top });
   }
   clipPreviewDanmaku.replaceChildren(fragment);
+  // Cards vary in height, so trim the oldest until the column fits rather
+  // than letting `overflow: hidden` slice one in half.
+  // `justify-content: end` overflows past the top edge, where scrollHeight
+  // stops reporting it, so measure the cards themselves.
+  const stackGap = parseFloat(
+    window.getComputedStyle(clipPreviewDanmaku).rowGap
+  ) || 0;
+  const stackBudget = clipPreviewDanmaku.clientHeight;
+  const stackHeight = () => Array.from(
+    clipPreviewDanmaku.children,
+    (bubble) => bubble.offsetHeight
+  ).reduce(
+    (total, value, index) => total + value + (index ? stackGap : 0),
+    0
+  );
+  while (
+    clipPreviewDanmaku.children.length > 1
+    && stackHeight() > stackBudget
+  ) {
+    const dropped = clipPreviewDanmaku.firstElementChild;
+    dropped.remove();
+    const index = rendered.findIndex((item) => item.bubble === dropped);
+    if (index >= 0) rendered.splice(index, 1);
+  }
   clipPreviewDanmaku.dataset.stackKey = stackKey;
 
   if (
