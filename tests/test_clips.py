@@ -589,6 +589,7 @@ async def test_ai_cover_replaces_only_first_encoded_frame(
         provider="seedream",
         model="seedream-test",
         prompt_version="variety-v1",
+        prompt_template="测试提示词 {title}",
         shared_seed=42,
         title_text="灯光亮起时",
         extra_text=[],
@@ -631,12 +632,6 @@ async def test_ai_cover_replaces_only_first_encoded_frame(
         ai_cover_generation_id=generation.id,
     )
     record = service.start_export(**export_kwargs)
-    repository.update_ai_cover_text(
-        job.id,
-        generation.id,
-        title_text="后来修改的标题",
-        extra_text=[],
-    )
     duplicate = service.start_export(**export_kwargs)
     assert duplicate.id == record.id
     for asset in repository.list_ai_cover_assets(generation.id):
@@ -700,6 +695,7 @@ async def test_ai_cover_export_rejects_hash_mismatch(
         provider="seedream",
         model="seedream-test",
         prompt_version="variety-v1",
+        prompt_template="测试提示词 {title}",
         shared_seed=42,
         title_text="封面校验",
         extra_text=[],

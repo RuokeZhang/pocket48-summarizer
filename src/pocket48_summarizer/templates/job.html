@@ -625,7 +625,7 @@
                 <div>
                   <span class="ai-cover-beta">Seedream beta</span>
                   <strong id="ai-cover-heading" data-i18n="aiCoverTitle">AI 生成封面</strong>
-                  <small data-i18n="aiCoverHint">用 MARK 截图生成 16:9 与 4:3 横屏背景，再免费切换三种中文短视频排版；所有可见文字都可编辑。</small>
+                  <small data-i18n="aiCoverHint">用 MARK 截图生成 16:9 与 4:3 横屏封面，标题文字由 Seedream 直接画在图上；提示词可自行修改。</small>
                 </div>
               </header>
               <p
@@ -651,48 +651,8 @@
                 <small data-i18n="aiCoverMarkHint">红色标记所在画面会作为人物与场景参考。</small>
               </div>
               <div class="ai-cover-copy">
-                <fieldset class="ai-cover-style-picker">
-                  <legend data-i18n="aiCoverLayoutStyle">排版模板</legend>
-                  <label class="ai-cover-style-option is-sticker">
-                    <input
-                      type="radio"
-                      name="ai-cover-layout-style"
-                      value="sticker_pop"
-                      checked
-                      {% if not can_generate_ai_covers %}disabled{% endif %}
-                    >
-                    <span>
-                      <strong data-i18n="aiCoverStyleSticker">A · 贴纸高亮</strong>
-                      <small data-i18n="aiCoverStyleStickerHint">关键词撞色、双层描边</small>
-                    </span>
-                  </label>
-                  <label class="ai-cover-style-option is-editorial">
-                    <input
-                      type="radio"
-                      name="ai-cover-layout-style"
-                      value="editorial_arc"
-                      {% if not can_generate_ai_covers %}disabled{% endif %}
-                    >
-                    <span>
-                      <strong data-i18n="aiCoverStyleEditorial">B · 轻弧杂志</strong>
-                      <small data-i18n="aiCoverStyleEditorialHint">清透留白、轻微弧度</small>
-                    </span>
-                  </label>
-                  <label class="ai-cover-style-option is-banner">
-                    <input
-                      type="radio"
-                      name="ai-cover-layout-style"
-                      value="banner_energy"
-                      {% if not can_generate_ai_covers %}disabled{% endif %}
-                    >
-                    <span>
-                      <strong data-i18n="aiCoverStyleBanner">C · 贴条叠画面</strong>
-                      <small data-i18n="aiCoverStyleBannerHint">标题压画面、节奏更强</small>
-                    </span>
-                  </label>
-                </fieldset>
                 <label>
-                  <span data-i18n="aiCoverMainText">主标题</span>
+                  <span data-i18n="aiCoverMainText">封面文字</span>
                   <input
                     id="ai-cover-title-input"
                     type="text"
@@ -702,25 +662,28 @@
                   >
                   <output id="ai-cover-title-count">0/80</output>
                 </label>
-                <label>
-                  <span data-i18n="aiCoverHighlightText">重点文字</span>
-                  <input
-                    id="ai-cover-highlight-input"
-                    type="text"
-                    maxlength="60"
-                    autocomplete="off"
+                <label class="ai-cover-prompt-field">
+                  <span data-i18n="aiCoverPrompt">生图提示词</span>
+                  <textarea
+                    id="ai-cover-prompt-input"
+                    rows="12"
+                    maxlength="{{ ai_cover_prompt_max_length }}"
+                    spellcheck="false"
                     {% if not can_generate_ai_covers %}disabled{% endif %}
-                  >
-                  <output id="ai-cover-highlight-count">0/60</output>
+                  >{{ ai_cover_default_prompt }}</textarea>
+                  <output id="ai-cover-prompt-count">0/{{ ai_cover_prompt_max_length }}</output>
                 </label>
-                <div id="ai-cover-extra-text" class="ai-cover-extra-text"></div>
+                <p class="ai-cover-prompt-hint" data-i18n="aiCoverPromptHint">
+                  提示词里的 {title} 会替换成上面的封面文字，{ratio} 会替换成 16:9 或 4:3。
+                  删掉 {title} 也可以，系统会把文字追加到末尾。
+                </p>
                 <button
-                  id="ai-cover-add-text"
+                  id="ai-cover-prompt-reset"
                   class="secondary-button"
                   type="button"
                   {% if not can_generate_ai_covers %}disabled{% endif %}
-                  data-i18n="aiCoverAddText"
-                >添加补充文字</button>
+                  data-i18n="aiCoverPromptReset"
+                >恢复默认提示词</button>
               </div>
               <div class="ai-cover-actions">
                 <button
@@ -730,19 +693,12 @@
                   data-i18n="aiCoverGenerate"
                 >一键生成双尺寸</button>
                 <button
-                  id="ai-cover-update-text"
-                  class="secondary-button"
-                  type="button"
-                  hidden
-                  data-i18n="aiCoverUpdateText"
-                >更新排版与文字</button>
-                <button
                   id="ai-cover-regenerate"
                   class="secondary-button"
                   type="button"
                   hidden
                   data-i18n="aiCoverRegenerate"
-                >换一版</button>
+                >用当前文字与提示词重新生成</button>
                 <button
                   id="ai-cover-retry"
                   class="secondary-button"

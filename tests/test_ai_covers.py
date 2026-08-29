@@ -3,7 +3,14 @@ from pathlib import Path
 import pytest
 
 from pocket48_summarizer.errors import ExternalServiceError
-from pocket48_summarizer.media.ai_covers import AICoverService
+from pocket48_summarizer.errors import AppError
+from pocket48_summarizer.media.ai_covers import (
+    AI_COVER_PROMPT_MAX_LENGTH,
+    DEFAULT_AI_COVER_PROMPT,
+    AICoverService,
+    normalize_ai_cover_prompt,
+    render_ai_cover_prompt,
+)
 from pocket48_summarizer.media.cover_providers import GeneratedCoverImage
 
 
@@ -139,8 +146,35 @@ def test_ai_cover_settings_require_exact_output_ratios(settings):
         )
 
 
+def test_normalize_ai_cover_prompt_rules():
+    assert normalize_ai_cover_prompt(None) == DEFAULT_AI_COVER_PROMPT
+    assert normalize_ai_cover_prompt("   \n  ") == DEFAULT_AI_COVER_PROMPT
+    assert normalize_ai_cover_prompt("  自定义\r\n提示词  ") == (
+        "自定义\n提示词"
+    )
+    with pytest.raises(AppError, match="提示词最多"):
+        normalize_ai_cover_prompt("字" * (AI_COVER_PROMPT_MAX_LENGTH + 1))
+
+
+def test_render_ai_cover_prompt_substitutes_and_tolerates_braces():
+    rendered = render_ai_cover_prompt(
+        "画成 {ratio} 封面，标题是 {title}",
+        title="第一版标题",
+        ratio="16:9",
+    )
+    assert rendered == "画成 16:9 封面，标题是 第一版标题"
+
+    appended = render_ai_cover_prompt(
+        "只描述画面 {ratio}，作者留了一个 { 花括号",
+        title="补充标题",
+        ratio="4:3",
+    )
+    assert "只描述画面 4:3" in appended
+    assert appended.endswith("画面上需要写出的文字内容是：补充标题")
+
+
 @pytest.mark.asyncio
-async def test_ai_cover_service_generates_pair_and_rerenders_text(
+async def test_ai_cover_service_generates_pair_with_custom_prompt(
     settings, repository
 ):
     job, _ = repository.create_or_get_job(
@@ -169,10 +203,9 @@ async def test_ai_cover_service_generates_pair_and_rerenders_text(
         requested_by_user_id=None,  # type: ignore[arg-type]
         request_id="ai-cover-request-1",
         source_timestamp_ms=12_300,
-        layout_style="sticker_pop",
         title_text="第一版标题",
-        highlight_text="第一版重点",
-        extra_text=["名场面"],
+        extra_text=[],
+        prompt_template="自定义 {ratio} 提示词，标题写：{title}",
         manifest_url="https://idol-vod.48.cn/replay.m3u8",
     )
     await service._tasks[generation.id]
@@ -180,54 +213,40 @@ async def test_ai_cover_service_generates_pair_and_rerenders_text(
     completed = repository.get_ai_cover_generation(job.id, generation.id)
     assert completed is not None
     assert completed.status == "completed"
-    assert completed.layout_style == "sticker_pop"
-    assert completed.highlight_text == "第一版重点"
+    assert completed.prompt_template == (
+        "自定义 {ratio} 提示词，标题写：{title}"
+    )
     assert [
         (call["width"], call["height"]) for call in provider.calls
     ] == [(2560, 1440), (2048, 1536)]
-    assert all("Do not generate any" in call["prompt"] for call in provider.calls)
+    assert [call["prompt"] for call in provider.calls] == [
+        "自定义 16:9 提示词，标题写：第一版标题",
+        "自定义 4:3 提示词，标题写：第一版标题",
+    ]
+    assert ffmpeg.render_calls == 0
+    assert ffmpeg.ass_documents == []
+
     assets = repository.list_ai_cover_assets(generation.id)
     assert {asset.status for asset in assets} == {"completed"}
     assert {asset.orientation for asset in assets} == {
         "landscape",
         "four_three",
     }
-    assert any("第一版标题" in item for item in ffmpeg.ass_documents)
+    for asset in assets:
+        assert asset.final_oss_object_key == asset.background_oss_object_key
+        assert asset.final_sha256 == asset.background_sha256
     assert oss.deleted == [
         (
             "temporary/ai-cover-sources/"
             f"{job.id}/{generation.id}/source.png"
         )
     ]
-
-    updated = service.update_text(
-        job_id=job.id,
-        generation_id=generation.id,
-        layout_style="banner_energy",
-        title_text="第二版标题",
-        highlight_text="第二版重点",
-        extra_text=["全场爆笑", "高能"],
-    )
-    await service._tasks[updated.id]
-
-    assert len(provider.calls) == 2
-    completed = repository.get_ai_cover_generation(job.id, generation.id)
-    assert completed is not None
-    assert completed.status == "completed"
-    assert completed.layout_style == "banner_energy"
-    assert completed.title_text == "第二版标题"
-    assert completed.highlight_text == "第二版重点"
-    assert completed.extra_text == ["全场爆笑", "高能"]
-    assert {asset.text_revision for asset in (
-        repository.list_ai_cover_assets(generation.id)
-    )} == {1}
-    assert any("第二版标题" in item for item in ffmpeg.ass_documents)
     await service.close()
     assert provider.closed
 
 
 @pytest.mark.asyncio
-async def test_ai_cover_retry_reuses_background_after_text_failure(
+async def test_ai_cover_default_prompt_is_used_and_regeneration_reuses_it(
     settings, repository
 ):
     job, _ = repository.create_or_get_job(
@@ -236,59 +255,50 @@ async def test_ai_cover_retry_reuses_background_after_text_failure(
     )
     provider = FakeSeedreamProvider()
     oss = FakeCoverOSS()
-    ffmpeg = FakeCoverFFmpeg(fail_render_calls={3})
     service = AICoverService(
         cover_settings(settings),
         repository,
         oss,  # type: ignore[arg-type]
         provider,
-        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+        ffmpeg=FakeCoverFFmpeg(),  # type: ignore[arg-type]
     )
 
     generation = service.start_generation(
         job_id=job.id,
         timeline_index=0,
         requested_by_user_id=None,  # type: ignore[arg-type]
-        request_id="ai-cover-local-retry",
+        request_id="ai-cover-default-prompt",
         source_timestamp_ms=18_000,
         title_text="初始标题",
         extra_text=[],
         manifest_url="https://idol-vod.48.cn/replay.m3u8",
     )
     await service._tasks[generation.id]
-    assert len(provider.calls) == 2
 
-    updated = service.update_text(
-        job_id=job.id,
-        generation_id=generation.id,
-        layout_style="banner_energy",
-        title_text="更新标题",
-        highlight_text="重点",
-        extra_text=["补充文字"],
-    )
-    await service._tasks[updated.id]
-    failed = repository.get_ai_cover_generation(job.id, generation.id)
-    assert failed is not None
-    assert failed.status == "failed"
-    assert len(provider.calls) == 2
-    assert all(
-        asset.background_oss_object_key
-        for asset in repository.list_ai_cover_assets(generation.id)
-    )
+    stored = repository.get_ai_cover_generation(job.id, generation.id)
+    assert stored is not None
+    assert stored.prompt_template == DEFAULT_AI_COVER_PROMPT
+    assert "初始标题" in provider.calls[0]["prompt"]
+    assert "{title}" not in provider.calls[0]["prompt"]
+    assert "16:9" in provider.calls[0]["prompt"]
+    assert "4:3" in provider.calls[1]["prompt"]
 
-    retried = service.retry_generation(
+    regenerated = service.start_generation(
         job_id=job.id,
-        generation_id=generation.id,
+        timeline_index=0,
+        requested_by_user_id=None,  # type: ignore[arg-type]
+        request_id="ai-cover-default-prompt-again",
+        source_timestamp_ms=stored.source_timestamp_ms,
+        title_text=stored.title_text,
+        extra_text=[],
+        prompt_template=stored.prompt_template,
         manifest_url="https://idol-vod.48.cn/replay.m3u8",
     )
-    await service._tasks[retried.id]
-    completed = repository.get_ai_cover_generation(
-        job.id, generation.id
-    )
-    assert completed is not None
-    assert completed.status == "completed"
-    assert len(provider.calls) == 2
-    assert len(oss.deleted) == 1
+    await service._tasks[regenerated.id]
+
+    assert regenerated.id != generation.id
+    assert regenerated.prompt_template == DEFAULT_AI_COVER_PROMPT
+    assert len(provider.calls) == 4
     await service.close()
 
 

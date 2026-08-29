@@ -16,30 +16,60 @@ from ..repository import JobRepository
 from .cover_providers import CoverImageProvider
 from .ffmpeg import FFmpegRunner
 from .overlays import (
-    build_ai_cover_overlay,
     normalize_ai_cover_extra_text,
     normalize_ai_cover_highlight,
     normalize_ai_cover_layout_style,
     normalize_ai_cover_title,
 )
 
-AI_COVER_PROMPT = """
-Use the supplied livestream frame as the primary image, not merely as an
-identity reference. Preserve the person's exact face, expression, pose, body
-proportions, hairstyle, clothing, camera angle, and the recognizable original
-room. Compose a natural full-bleed horizontal {ratio} frame around the source's
-existing visual balance. Extend the real room organically where the wider
-canvas needs more image, but do not force the person to the left or right and
-do not manufacture a blank title panel. Keep the original scene palette and
-dominant colors; do not default to pink or introduce a new theme color. Apply
-only restrained professional polish such as natural exposure, white-balance
-correction, realistic skin texture, gentle detail cleanup, and subtle color
-grading. Keep the result recognizably derived from the original livestream
-frame, not a new poster illustration. Do not add a stage, fantasy scenery,
-flowers, particles, sparkles, wings, ribbons, dramatic light beams, or ornate
-broadcast graphics. Do not generate any words, Chinese characters, Latin
-letters, digits, subtitles, logos, signatures, or watermarks.
+AI_COVER_PROMPT_MAX_LENGTH = 4000
+
+DEFAULT_AI_COVER_PROMPT = """
+以提供的直播画面为主体进行再创作，保留人物的五官、表情、姿态、发型、服装，
+以及可辨认的原始房间，不要改变长相或身体比例。输出一张完整的横版 {ratio} 封面。
+人物完整位于画面左侧，整张脸、头发、下巴和肩膀都不被裁切、不被遮挡。
+画面右半侧是原房间的自然延伸，视觉干净、细节少，留出放标题的空间。
+保持原场景的配色与主色调，不要默认使用粉色，也不要更换主题色。
+只做克制的专业修饰：自然曝光、白平衡校正、真实皮肤质感、轻微调色。
+不要添加舞台、幻想场景、花朵、粒子、闪光、翅膀、丝带、光束或繁复的播报图形。
+
+在画面右半侧写出这行中文标题：{title}
+标题使用粗壮有力的中文黑体，字号很大，占据右半侧的显著位置，
+纯白色字体配深色描边或柔和阴影，保证在任何底色上都清晰可读。
+文字必须完整、写法正确、不重复、不出现多余字符或乱码，并且不遮挡人物的脸。
+除这行标题外，画面上不得出现任何其他文字、字母、数字、字幕、logo、签名或水印。
 """.strip()
+
+
+def normalize_ai_cover_prompt(value: str | None) -> str:
+    if value is None:
+        return DEFAULT_AI_COVER_PROMPT
+    cleaned = "".join(
+        character
+        for character in value.replace("\r\n", "\n").replace("\r", "\n")
+        if character == "\n" or character >= " "
+    ).strip()
+    if not cleaned:
+        return DEFAULT_AI_COVER_PROMPT
+    if len(cleaned) > AI_COVER_PROMPT_MAX_LENGTH:
+        raise AppError(
+            "ai_cover_prompt_too_long",
+            f"提示词最多 {AI_COVER_PROMPT_MAX_LENGTH} 个字符",
+            False,
+        )
+    return cleaned
+
+
+def render_ai_cover_prompt(
+    template: str,
+    *,
+    title: str,
+    ratio: str,
+) -> str:
+    resolved = template.replace("{ratio}", ratio)
+    if "{title}" in resolved:
+        return resolved.replace("{title}", title)
+    return resolved + f"\n\n画面上需要写出的文字内容是：{title}"
 
 
 class AICoverService:
@@ -60,8 +90,6 @@ class AICoverService:
         self.logger = logging.getLogger(__name__)
         self._capacity = asyncio.Semaphore(settings.ai_cover_concurrency)
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._ass_supported: bool | None = None
-        self._ass_probe_lock = asyncio.Lock()
 
     async def startup(self) -> None:
         if self.output_dir.exists():
@@ -89,8 +117,10 @@ class AICoverService:
         manifest_url: str,
         layout_style: str = "sticker_pop",
         highlight_text: str = "",
+        prompt_template: str | None = None,
     ) -> AICoverGenerationRecord:
         style = normalize_ai_cover_layout_style(layout_style)
+        prompt = normalize_ai_cover_prompt(prompt_template)
         title = normalize_ai_cover_title(title_text)
         highlight = normalize_ai_cover_highlight(highlight_text)
         extras = normalize_ai_cover_extra_text(extra_text)
@@ -118,6 +148,7 @@ class AICoverService:
             provider=self.settings.ai_cover_provider,
             model=self.settings.ark_seedream_model or "",
             prompt_version=self.settings.ai_cover_prompt_version,
+            prompt_template=prompt,
             shared_seed=secrets.randbelow(2_147_483_647),
             layout_style=style,
             title_text=title,
@@ -149,44 +180,6 @@ class AICoverService:
         current = self._tasks.get(generation.id)
         if current is None or current.done():
             self._start_generation_task(generation, manifest_url)
-        return generation
-
-    def update_text(
-        self,
-        *,
-        job_id: str,
-        generation_id: str,
-        title_text: str,
-        extra_text: list[str],
-        layout_style: str | None = None,
-        highlight_text: str | None = None,
-    ) -> AICoverGenerationRecord:
-        current = self._tasks.get(generation_id)
-        if current is not None and not current.done():
-            raise AppError(
-                "ai_cover_already_running",
-                "AI 封面正在处理中，请稍后再修改文字",
-                True,
-            )
-        generation = self.repository.update_ai_cover_text(
-            job_id,
-            generation_id,
-            layout_style=(
-                normalize_ai_cover_layout_style(layout_style)
-                if layout_style is not None
-                else None
-            ),
-            title_text=normalize_ai_cover_title(title_text),
-            highlight_text=(
-                normalize_ai_cover_highlight(highlight_text)
-                if highlight_text is not None
-                else None
-            ),
-            extra_text=normalize_ai_cover_extra_text(extra_text),
-        )
-        self._tasks[generation.id] = asyncio.create_task(
-            self._rerender_text(generation)
-        )
         return generation
 
     async def signed_download_url(
@@ -224,7 +217,6 @@ class AICoverService:
         source_uploaded = False
         try:
             async with self._capacity:
-                await self._require_ass_support()
                 self.repository.mark_ai_cover_generation_running(
                     generation.id
                 )
@@ -316,8 +308,6 @@ class AICoverService:
         self.repository.mark_ai_cover_asset_running(asset.id)
         provider_path = work_dir / f"{asset.orientation}-provider.image"
         background_path = work_dir / f"{asset.orientation}-background.png"
-        ass_path = work_dir / f"{asset.orientation}.ass"
-        final_path = work_dir / f"{asset.orientation}-final.png"
         try:
             background_key = asset.background_oss_object_key
             background_sha256 = asset.background_sha256
@@ -342,12 +332,15 @@ class AICoverService:
             else:
                 generated = await self.provider.generate(
                     reference_image_url=source_url,
-                    prompt=AI_COVER_PROMPT.format(
+                    prompt=render_ai_cover_prompt(
+                        generation.prompt_template
+                        or DEFAULT_AI_COVER_PROMPT,
+                        title=generation.title_text,
                         ratio=(
                             "4:3"
                             if asset.orientation == "four_three"
                             else "16:9"
-                        )
+                        ),
                     ),
                     width=asset.width,
                     height=asset.height,
@@ -380,41 +373,18 @@ class AICoverService:
                     provider_task_id=provider_task_id,
                     provider_request_id=provider_request_id,
                 )
-            document = build_ai_cover_overlay(
-                width=asset.width,
-                height=asset.height,
-                layout_style=generation.layout_style,
-                title=generation.title_text,
-                highlight_text=generation.highlight_text,
-                extra_text=generation.extra_text,
-                font_name=self.settings.ai_cover_font_name,
-                orientation=asset.orientation,
-            )
-            ass_path.write_text(document.content, encoding="utf-8")
-            await self.ffmpeg.render_ai_cover_text(
-                background_path,
-                final_path,
-                ass_path,
-            )
-            final_key = self.oss.ai_cover_object_key(
-                generation.job_id,
-                generation.id,
-                asset.orientation,
-                f"final-r{asset.text_revision}",
-            )
-            await self.oss.upload_ai_cover_image(final_path, final_key)
             if not background_key or not background_sha256:
                 raise AppError(
                     "ai_cover_background_missing",
-                    "AI 封面背景不存在，请重新生成",
+                    "AI 封面图片不存在，请重新生成",
                     False,
                 )
             self.repository.complete_ai_cover_asset(
                 asset.id,
                 background_oss_object_key=background_key,
-                final_oss_object_key=final_key,
+                final_oss_object_key=background_key,
                 background_sha256=background_sha256,
-                final_sha256=self._sha256(final_path),
+                final_sha256=background_sha256,
                 provider_task_id=provider_task_id,
                 provider_request_id=provider_request_id,
             )
@@ -436,132 +406,8 @@ class AICoverService:
                 "AI 封面图片生成失败，请查看服务日志",
             )
         finally:
-            for path in (
-                provider_path,
-                background_path,
-                ass_path,
-                final_path,
-            ):
+            for path in (provider_path, background_path):
                 path.unlink(missing_ok=True)
-
-    async def _rerender_text(
-        self, generation: AICoverGenerationRecord
-    ) -> None:
-        work_dir = self.output_dir / generation.job_id / generation.id
-        try:
-            async with self._capacity:
-                await self._require_ass_support()
-                for asset in self.repository.list_ai_cover_assets(
-                    generation.id
-                ):
-                    if not asset.background_oss_object_key:
-                        self.repository.fail_ai_cover_asset(
-                            asset.id,
-                            "ai_cover_background_missing",
-                            "AI 封面背景不存在，请重新生成",
-                        )
-                        continue
-                    background_path = (
-                        work_dir / f"{asset.orientation}-background.png"
-                    )
-                    ass_path = work_dir / f"{asset.orientation}.ass"
-                    final_path = work_dir / f"{asset.orientation}-final.png"
-                    try:
-                        await self.oss.download_ai_cover_image(
-                            asset.background_oss_object_key,
-                            background_path,
-                        )
-                        document = build_ai_cover_overlay(
-                            width=asset.width,
-                            height=asset.height,
-                            layout_style=generation.layout_style,
-                            title=generation.title_text,
-                            highlight_text=generation.highlight_text,
-                            extra_text=generation.extra_text,
-                            font_name=self.settings.ai_cover_font_name,
-                            orientation=asset.orientation,
-                        )
-                        ass_path.write_text(
-                            document.content, encoding="utf-8"
-                        )
-                        await self.ffmpeg.render_ai_cover_text(
-                            background_path,
-                            final_path,
-                            ass_path,
-                        )
-                        final_key = self.oss.ai_cover_object_key(
-                            generation.job_id,
-                            generation.id,
-                            asset.orientation,
-                            f"final-r{asset.text_revision}",
-                        )
-                        await self.oss.upload_ai_cover_image(
-                            final_path, final_key
-                        )
-                        self.repository.complete_ai_cover_asset(
-                            asset.id,
-                            background_oss_object_key=(
-                                asset.background_oss_object_key
-                            ),
-                            final_oss_object_key=final_key,
-                            background_sha256=(
-                                asset.background_sha256
-                                or self._sha256(background_path)
-                            ),
-                            final_sha256=self._sha256(final_path),
-                            provider_task_id=asset.provider_task_id,
-                            provider_request_id=asset.provider_request_id,
-                        )
-                    except AppError as exc:
-                        self.repository.fail_ai_cover_asset(
-                            asset.id, exc.code, exc.message
-                        )
-                    finally:
-                        background_path.unlink(missing_ok=True)
-                        ass_path.unlink(missing_ok=True)
-                        final_path.unlink(missing_ok=True)
-        except asyncio.CancelledError:
-            self.repository.fail_ai_cover_generation(
-                generation.id,
-                "ai_cover_interrupted",
-                "服务重启中，请重试 AI 封面",
-            )
-            raise
-        except Exception:
-            self.logger.exception(
-                "Unexpected AI cover text rendering failure",
-                extra={"generation_id": generation.id},
-            )
-            self.repository.fail_ai_cover_generation(
-                generation.id,
-                "ai_cover_text_render_failed",
-                "AI 封面文字渲染失败，请查看服务日志",
-            )
-        finally:
-            try:
-                work_dir.rmdir()
-            except FileNotFoundError:
-                pass
-            except OSError:
-                self.logger.warning(
-                    "AI cover text work directory was not empty",
-                    extra={"generation_id": generation.id},
-                )
-            self._tasks.pop(generation.id, None)
-
-    async def _require_ass_support(self) -> None:
-        if self._ass_supported is None:
-            async with self._ass_probe_lock:
-                if self._ass_supported is None:
-                    self._ass_supported = (
-                        await self.ffmpeg.supports_ass_filter()
-                    )
-        if not self._ass_supported:
-            raise AppError(
-                "ai_cover_text_unavailable",
-                "当前 FFmpeg 不支持 ASS 字幕滤镜，无法渲染 AI 封面文字",
-                False,
-            )
 
     @staticmethod
     def _sha256(path: Path) -> str:

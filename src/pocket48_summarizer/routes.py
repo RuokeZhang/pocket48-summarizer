@@ -18,6 +18,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .auth import AuthContext
 from .errors import AppError
 from .media.clips import ClipState
+from .media.ai_covers import (
+    AI_COVER_PROMPT_MAX_LENGTH,
+    DEFAULT_AI_COVER_PROMPT,
+)
 from .media.overlays import (
     AI_COVER_EXTRA_TEXT_MAX_ITEMS,
     AI_COVER_HIGHLIGHT_MAX_LENGTH,
@@ -163,6 +167,10 @@ class CreateAICoverRequest(BaseModel):
         default_factory=list,
         max_length=AI_COVER_EXTRA_TEXT_MAX_ITEMS,
     )
+    prompt_template: str | None = Field(
+        default=None,
+        max_length=AI_COVER_PROMPT_MAX_LENGTH,
+    )
 
     @field_validator("title_text")
     @classmethod
@@ -187,54 +195,27 @@ class CreateAICoverRequest(BaseModel):
         return normalize_ai_cover_extra_text(value)
 
 
-class UpdateAICoverTextRequest(BaseModel):
-    layout_style: AICoverLayoutStyle | None = None
-    title_text: str = Field(
-        min_length=1,
-        max_length=AI_COVER_TITLE_MAX_LENGTH,
-    )
-    highlight_text: str | None = Field(
-        default=None,
-        max_length=AI_COVER_HIGHLIGHT_MAX_LENGTH,
-    )
-    extra_text: list[str] = Field(
-        default_factory=list,
-        max_length=AI_COVER_EXTRA_TEXT_MAX_ITEMS,
-    )
-
-    @field_validator("title_text")
-    @classmethod
-    def clean_title(cls, value: str) -> str:
-        return normalize_ai_cover_title(value)
-
-    @field_validator("layout_style")
-    @classmethod
-    def clean_layout_style(
-        cls, value: AICoverLayoutStyle | None
-    ) -> AICoverLayoutStyle | None:
-        if value is None:
-            return None
-        return normalize_ai_cover_layout_style(value)
-
-    @field_validator("highlight_text")
-    @classmethod
-    def clean_highlight(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return normalize_ai_cover_highlight(value)
-
-    @field_validator("extra_text")
-    @classmethod
-    def clean_extra_text(cls, value: list[str]) -> list[str]:
-        return normalize_ai_cover_extra_text(value)
-
-
 class RegenerateAICoverRequest(BaseModel):
     request_id: str = Field(
         min_length=8,
         max_length=128,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+    title_text: str | None = Field(
+        default=None,
+        max_length=AI_COVER_TITLE_MAX_LENGTH,
+    )
+    prompt_template: str | None = Field(
+        default=None,
+        max_length=AI_COVER_PROMPT_MAX_LENGTH,
+    )
+
+    @field_validator("title_text")
+    @classmethod
+    def clean_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_ai_cover_title(value)
 
 
 def format_china_datetime(value: str | None) -> str:
@@ -717,6 +698,9 @@ def ai_cover_payload(
         "provider": generation.provider,
         "model": generation.model,
         "prompt_version": generation.prompt_version,
+        "prompt_template": (
+            generation.prompt_template or DEFAULT_AI_COVER_PROMPT
+        ),
         "layout_style": generation.layout_style,
         "title_text": generation.title_text,
         "highlight_text": generation.highlight_text,
@@ -1017,6 +1001,8 @@ async def job_page(request: Request, job_id: str) -> Response:
             "can_generate_ai_covers": bool(
                 context and context.user.is_admin
             ),
+            "ai_cover_default_prompt": DEFAULT_AI_COVER_PROMPT,
+            "ai_cover_prompt_max_length": AI_COVER_PROMPT_MAX_LENGTH,
             "ai_cover_configured": not (
                 request.app.state.settings
                 .missing_ai_cover_configuration()
@@ -1225,6 +1211,7 @@ async def create_ai_cover(
             title_text=payload.title_text,
             highlight_text=payload.highlight_text,
             extra_text=payload.extra_text,
+            prompt_template=payload.prompt_template,
             manifest_url=job.media_url,
         )
     return JSONResponse(
@@ -1284,38 +1271,6 @@ async def ai_cover_status(
             False,
         )
     return ai_cover_payload(repository, generation)
-
-
-@router.patch(
-    "/api/jobs/{job_id}/ai-covers/{generation_id}/text"
-)
-async def update_ai_cover_text(
-    request: Request,
-    job_id: str,
-    generation_id: str,
-    payload: UpdateAICoverTextRequest,
-) -> Response:
-    context = require_admin(request)
-    request.app.state.auth.require_csrf(request, context)
-    require_readable_job(request, job_id)
-    service = require_ai_cover_service(request)
-    settings = request.app.state.settings
-    with shared_runtime_lock(settings.clip_operation_lock_path):
-        reject_ai_cover_maintenance(request)
-        generation = service.update_text(
-            job_id=job_id,
-            generation_id=generation_id,
-            layout_style=payload.layout_style,
-            title_text=payload.title_text,
-            highlight_text=payload.highlight_text,
-            extra_text=payload.extra_text,
-        )
-    return JSONResponse(
-        ai_cover_payload(
-            request.app.state.services.repository, generation
-        ),
-        status_code=202,
-    )
 
 
 @router.post(
@@ -1383,9 +1338,14 @@ async def regenerate_ai_cover(
             request_id=payload.request_id,
             source_timestamp_ms=source.source_timestamp_ms,
             layout_style=source.layout_style,
-            title_text=source.title_text,
+            title_text=payload.title_text or source.title_text,
             highlight_text=source.highlight_text,
             extra_text=source.extra_text,
+            prompt_template=(
+                payload.prompt_template
+                if payload.prompt_template is not None
+                else source.prompt_template
+            ),
             manifest_url=job.media_url,
         )
     return JSONResponse(

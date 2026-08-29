@@ -315,17 +315,12 @@ const clipSubtitleBackgroundColorValue = document.querySelector("#clip-subtitle-
 const clipSubtitleContrast = document.querySelector("#clip-subtitle-contrast");
 const aiCoverPanel = document.querySelector("#ai-cover-panel");
 const aiCoverMarkTime = document.querySelector("#ai-cover-mark-time");
-const aiCoverLayoutStyles = Array.from(
-  document.querySelectorAll('input[name="ai-cover-layout-style"]')
-);
 const aiCoverTitleInput = document.querySelector("#ai-cover-title-input");
 const aiCoverTitleCount = document.querySelector("#ai-cover-title-count");
-const aiCoverHighlightInput = document.querySelector("#ai-cover-highlight-input");
-const aiCoverHighlightCount = document.querySelector("#ai-cover-highlight-count");
-const aiCoverExtraText = document.querySelector("#ai-cover-extra-text");
-const aiCoverAddText = document.querySelector("#ai-cover-add-text");
 const aiCoverGenerate = document.querySelector("#ai-cover-generate");
-const aiCoverUpdateText = document.querySelector("#ai-cover-update-text");
+const aiCoverPromptInput = document.querySelector("#ai-cover-prompt-input");
+const aiCoverPromptCount = document.querySelector("#ai-cover-prompt-count");
+const aiCoverPromptReset = document.querySelector("#ai-cover-prompt-reset");
 const aiCoverRegenerate = document.querySelector("#ai-cover-regenerate");
 const aiCoverRetry = document.querySelector("#ai-cover-retry");
 const aiCoverSelect = document.querySelector("#ai-cover-select");
@@ -374,7 +369,6 @@ const CLIP_SUBTITLE_FONT_SCALE_MAX = 150;
 const CLIP_DEFAULT_FONT_SCALE = 100;
 const CLIP_SUBTITLE_BASE_SCALE = 1.6;
 const AI_COVER_POLL_MS = 1_500;
-const AI_COVER_MAX_EXTRA_TEXT = 4;
 const CLIP_DEFAULT_FONT_FAMILY = "wenkai";
 const CLIP_DEFAULT_TEXT_COLOR = "#E43D12";
 const CLIP_DEFAULT_BACKGROUND_COLOR = "#EBE9E1";
@@ -821,11 +815,6 @@ const aiCoverIsConfigured = () => (
   clipEditor?.dataset.aiCoverConfigured === "true"
 );
 
-const aiCoverLayoutStyleValue = () => (
-  aiCoverLayoutStyles.find((input) => input.checked)?.value
-  || "sticker_pop"
-);
-
 const aiCoverTitleValue = () => (
   String(aiCoverTitleInput?.value || "")
     .replace(/\s+/g, " ")
@@ -833,89 +822,22 @@ const aiCoverTitleValue = () => (
     .slice(0, 80)
 );
 
-const aiCoverHighlightValue = () => (
-  String(aiCoverHighlightInput?.value || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 60)
+const aiCoverDefaultTitle = (value) => (
+  String(value || "").replace(/\s+/g, " ").trim().slice(0, 80)
 );
 
-const aiCoverDefaultCopy = (value) => {
-  const title = String(value || "").replace(/\s+/g, " ").trim();
-  for (const separator of ["与", "：", ":", "｜", "|", "—", "，", ","]) {
-    const index = title.indexOf(separator);
-    if (index >= 2 && title.length - index >= 3) {
-      return {
-        title: title.slice(0, index),
-        highlight: title.slice(index)
-      };
-    }
-  }
-  return { title, highlight: "" };
-};
+const AI_COVER_DEFAULT_PROMPT = String(
+  aiCoverPromptInput?.defaultValue || ""
+).trim();
 
-const aiCoverLayoutStyleLabel = (value) => {
-  const key = {
-    sticker_pop: "aiCoverStyleSticker",
-    editorial_arc: "aiCoverStyleEditorial",
-    banner_energy: "aiCoverStyleBanner"
-  }[value];
-  return key ? t(key) : value;
-};
-
-const aiCoverExtraInputValues = () => (
-  Array.from(
-    aiCoverExtraText?.querySelectorAll("input[data-ai-cover-extra]") || []
-  )
-    .map((input) => String(input.value || "").replace(/\s+/g, " ").trim())
-    .slice(0, AI_COVER_MAX_EXTRA_TEXT)
-);
-
-const aiCoverExtraValues = () => (
-  aiCoverExtraInputValues().filter(Boolean)
+const aiCoverPromptValue = () => (
+  String(aiCoverPromptInput?.value || "").trim()
 );
 
 const setAICoverStatus = (message = "", { error = false } = {}) => {
   if (!aiCoverStatus) return;
   aiCoverStatus.textContent = message;
   aiCoverStatus.classList.toggle("is-error", error);
-};
-
-const renderAICoverExtraInputs = (values = []) => {
-  if (!aiCoverExtraText) return;
-  aiCoverExtraText.replaceChildren();
-  values.slice(0, AI_COVER_MAX_EXTRA_TEXT).forEach((value, index) => {
-    const row = document.createElement("label");
-    row.className = "ai-cover-extra-row";
-    const label = document.createElement("span");
-    label.textContent = t("aiCoverExtraText", { index: index + 1 });
-    const input = document.createElement("input");
-    input.type = "text";
-    input.maxLength = 60;
-    input.autocomplete = "off";
-    input.value = value;
-    input.dataset.aiCoverExtra = String(index);
-    input.disabled = !aiCoverIsAdmin();
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "secondary-button";
-    remove.textContent = t("remove");
-    remove.disabled = !aiCoverIsAdmin();
-    remove.addEventListener("click", () => {
-      const nextValues = aiCoverExtraInputValues();
-      nextValues.splice(index, 1);
-      renderAICoverExtraInputs(nextValues);
-      renderAICoverState();
-    });
-    row.append(label, input, remove);
-    aiCoverExtraText.append(row);
-  });
-  if (aiCoverAddText) {
-    aiCoverAddText.disabled = (
-      !aiCoverIsAdmin()
-      || values.length >= AI_COVER_MAX_EXTRA_TEXT
-    );
-  }
 };
 
 const aiCoverAsset = (generation, orientation) => (
@@ -1000,7 +922,7 @@ const renderAICoverHistory = () => {
     button.textContent = t("aiCoverHistoryItem", {
       number,
       time: formatFineClock(generation.source_timestamp_ms),
-      style: aiCoverLayoutStyleLabel(generation.layout_style),
+      style: generation.title_text || "",
       status: i18n?.translateStatus(generation.status) || generation.status
     });
     button.addEventListener("click", () => {
@@ -1034,9 +956,16 @@ const renderAICoverState = () => {
   if (aiCoverTitleCount) {
     aiCoverTitleCount.textContent = `${title.length}/80`;
   }
-  if (aiCoverHighlightCount) {
-    aiCoverHighlightCount.textContent = (
-      `${aiCoverHighlightValue().length}/60`
+  if (aiCoverPromptCount) {
+    aiCoverPromptCount.textContent = (
+      `${aiCoverPromptValue().length}/`
+      + `${aiCoverPromptInput?.maxLength || 4000}`
+    );
+  }
+  if (aiCoverPromptReset) {
+    aiCoverPromptReset.disabled = (
+      !aiCoverIsAdmin()
+      || aiCoverPromptValue() === AI_COVER_DEFAULT_PROMPT
     );
   }
   if (aiCoverGenerate) {
@@ -1047,15 +976,7 @@ const renderAICoverState = () => {
       || activeGeneration
       || !validMark
       || !title
-    );
-  }
-  if (aiCoverUpdateText) {
-    aiCoverUpdateText.hidden = !(
-      aiCoverIsAdmin()
-      && generation?.status === "completed"
-    );
-    aiCoverUpdateText.disabled = (
-      clipEditorState.aiCoverBusy || !title
+      || !aiCoverPromptValue()
     );
   }
   if (aiCoverRegenerate) {
@@ -1185,18 +1106,12 @@ const showAICoverGeneration = (
   if (!clipEditorState) return;
   clipEditorState.aiCoverGeneration = generation || null;
   if (syncText && generation) {
-    for (const input of aiCoverLayoutStyles) {
-      input.checked = input.value === (
-        generation.layout_style || "sticker_pop"
-      );
-    }
     if (aiCoverTitleInput) {
       aiCoverTitleInput.value = generation.title_text || "";
     }
-    if (aiCoverHighlightInput) {
-      aiCoverHighlightInput.value = generation.highlight_text || "";
+    if (aiCoverPromptInput && generation.prompt_template) {
+      aiCoverPromptInput.value = generation.prompt_template;
     }
-    renderAICoverExtraInputs(generation.extra_text || []);
   }
   renderAICoverState();
   scheduleAICoverPoll();
@@ -1308,16 +1223,14 @@ const createAICoverGeneration = () => {
         request_id: newAICoverRequestId(),
         timeline_index: clipEditorState.timelineIndex,
         source_timestamp_ms: Math.round(clipEditorState.markerMs),
-        layout_style: aiCoverLayoutStyleValue(),
         title_text: titleText,
-        highlight_text: aiCoverHighlightValue(),
-        extra_text: aiCoverExtraValues()
+        prompt_template: aiCoverPromptValue()
       })
     }
   ));
 };
 
-const updateAICoverText = () => {
+const regenerateAICover = () => {
   const generation = clipEditorState?.aiCoverGeneration;
   if (!generation) return;
   const titleText = aiCoverTitleValue();
@@ -1328,33 +1241,16 @@ const updateAICoverText = () => {
   void runAICoverAction(() => apiFetch(
     (
       `/api/jobs/${clipEditor.dataset.jobId}/ai-covers/`
-      + `${generation.id}/text`
-    ),
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        layout_style: aiCoverLayoutStyleValue(),
-        title_text: titleText,
-        highlight_text: aiCoverHighlightValue(),
-        extra_text: aiCoverExtraValues()
-      })
-    }
-  ));
-};
-
-const regenerateAICover = () => {
-  const generation = clipEditorState?.aiCoverGeneration;
-  if (!generation) return;
-  void runAICoverAction(() => apiFetch(
-    (
-      `/api/jobs/${clipEditor.dataset.jobId}/ai-covers/`
       + `${generation.id}/regenerate`
     ),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ request_id: newAICoverRequestId() })
+      body: JSON.stringify({
+        request_id: newAICoverRequestId(),
+        title_text: titleText,
+        prompt_template: aiCoverPromptValue()
+      })
     }
   ));
 };
@@ -2858,17 +2754,12 @@ const openClipEditor = async (row, button) => {
   if (clipSnapEnabled) clipSnapEnabled.checked = true;
   if (clipSubtitleMode) clipSubtitleMode.value = "zh";
   if (clipDanmakuEnabled) clipDanmakuEnabled.checked = false;
-  const defaultCoverCopy = aiCoverDefaultCopy(clipEditorState.title);
-  for (const input of aiCoverLayoutStyles) {
-    input.checked = input.value === "sticker_pop";
-  }
   if (aiCoverTitleInput) {
-    aiCoverTitleInput.value = defaultCoverCopy.title;
+    aiCoverTitleInput.value = aiCoverDefaultTitle(clipEditorState.title);
   }
-  if (aiCoverHighlightInput) {
-    aiCoverHighlightInput.value = defaultCoverCopy.highlight;
+  if (aiCoverPromptInput) {
+    aiCoverPromptInput.value = AI_COVER_DEFAULT_PROMPT;
   }
-  renderAICoverExtraInputs([]);
   setAICoverStatus("");
   for (const input of clipOutputLayoutRadios) {
     input.checked = input.value === "portrait";
@@ -3090,25 +2981,13 @@ clipThemeVibrantCalm?.addEventListener("click", () => {
   handleClipStyleChange();
 });
 
-for (const input of aiCoverLayoutStyles) {
-  input.addEventListener("change", renderAICoverState);
-}
 aiCoverTitleInput?.addEventListener("input", renderAICoverState);
-aiCoverHighlightInput?.addEventListener("input", renderAICoverState);
-aiCoverExtraText?.addEventListener("input", renderAICoverState);
-aiCoverAddText?.addEventListener("click", () => {
-  const values = aiCoverExtraInputValues();
-  if (values.length >= AI_COVER_MAX_EXTRA_TEXT) return;
-  values.push("");
-  renderAICoverExtraInputs(values);
+aiCoverPromptInput?.addEventListener("input", renderAICoverState);
+aiCoverPromptReset?.addEventListener("click", () => {
+  if (aiCoverPromptInput) aiCoverPromptInput.value = AI_COVER_DEFAULT_PROMPT;
   renderAICoverState();
-  const inputs = aiCoverExtraText?.querySelectorAll(
-    "input[data-ai-cover-extra]"
-  );
-  inputs?.[inputs.length - 1]?.focus();
 });
 aiCoverGenerate?.addEventListener("click", createAICoverGeneration);
-aiCoverUpdateText?.addEventListener("click", updateAICoverText);
 aiCoverRegenerate?.addEventListener("click", regenerateAICover);
 aiCoverRetry?.addEventListener("click", retryAICover);
 aiCoverSelect?.addEventListener("click", () => {
@@ -4040,9 +3919,6 @@ document.addEventListener("p48:languagechange", () => {
   if (lastTranslationPayload) renderTranslationState(lastTranslationPayload);
   renderPlaybackSyncSummary();
   renderClipExports();
-  if (clipEditorState) {
-    renderAICoverExtraInputs(aiCoverExtraInputValues());
-  }
   updateClipRangeUI();
   updateDanmakuAuthorFilter();
 });

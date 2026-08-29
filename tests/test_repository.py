@@ -180,6 +180,7 @@ def test_ai_cover_generations_keep_paired_assets_and_text_revisions(
         provider="seedream",
         model="seedream-test",
         prompt_version="variety-v1",
+        prompt_template="测试提示词 {title}",
         shared_seed=42,
         layout_style="editorial_arc",
         title_text="第一段封面",
@@ -198,6 +199,7 @@ def test_ai_cover_generations_keep_paired_assets_and_text_revisions(
         provider="seedream",
         model="other-model",
         prompt_version="other-prompt",
+        prompt_template="测试提示词 {title}",
         shared_seed=None,
         layout_style="banner_energy",
         title_text="不会覆盖",
@@ -255,35 +257,7 @@ def test_ai_cover_generations_keep_paired_assets_and_text_revisions(
     assert completed.status == "completed"
     assert completed.completed_at is not None
 
-    updating = repository.update_ai_cover_text(
-        job.id,
-        generation.id,
-        layout_style="banner_energy",
-        title_text="更新后的标题",
-        highlight_text="更新后的重点",
-        extra_text=["全场爆笑", "高能"],
-    )
-    assert updating.status == "running"
-    assert updating.layout_style == "banner_energy"
-    assert updating.highlight_text == "更新后的重点"
-    assert updating.extra_text == ["全场爆笑", "高能"]
-    revision_assets = repository.list_ai_cover_assets(generation.id)
-    assert {asset.text_revision for asset in revision_assets} == {1}
-    assert {asset.status for asset in revision_assets} == {"running"}
-
-    for asset in revision_assets:
-        repository.complete_ai_cover_asset(
-            asset.id,
-            background_oss_object_key=(
-                asset.background_oss_object_key
-                or f"covers/{generation.id}/{asset.orientation}-background.png"
-            ),
-            final_oss_object_key=(
-                f"covers/{generation.id}/{asset.orientation}-final-v2.png"
-            ),
-            background_sha256=asset.background_sha256 or "background",
-            final_sha256=f"final-v2-{asset.orientation}",
-        )
+    assert completed.prompt_template == "测试提示词 {title}"
 
     completed = repository.get_ai_cover_generation(job.id, generation.id)
     assert completed is not None

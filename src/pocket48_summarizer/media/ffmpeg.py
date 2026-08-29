@@ -410,29 +410,6 @@ class FFmpegRunner:
             str(output_path),
         ]
 
-    def build_render_ai_cover_text_command(
-        self,
-        background_path: Path,
-        output_path: Path,
-        ass_path: Path,
-    ) -> list[str]:
-        return [
-            self.require_executable(),
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(background_path),
-            "-vf",
-            f"ass=filename='{self._escape_filter_path(ass_path)}'",
-            "-frames:v",
-            "1",
-            "-an",
-            "-y",
-            str(output_path),
-        ]
-
     def build_cover_frame_command(
         self,
         manifest_url: str,
@@ -901,49 +878,6 @@ class FFmpegRunner:
                 raise AppError(
                     "ai_cover_image_missing",
                     "FFmpeg 未生成规范化 AI 封面",
-                    True,
-                )
-            temporary_path.replace(output_path)
-        except BaseException:
-            temporary_path.unlink(missing_ok=True)
-            raise
-        return output_path
-
-    async def render_ai_cover_text(
-        self,
-        background_path: Path,
-        output_path: Path,
-        ass_path: Path,
-    ) -> Path:
-        if not background_path.is_file() or not ass_path.is_file():
-            raise AppError(
-                "ai_cover_text_input_missing",
-                "AI 封面背景或文字布局不存在",
-                True,
-            )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = output_path.with_suffix(".part.png")
-        temporary_path.unlink(missing_ok=True)
-        try:
-            await self._run_command(
-                self.build_render_ai_cover_text_command(
-                    background_path,
-                    temporary_path,
-                    ass_path,
-                ),
-                timeout_seconds=5 * 60,
-                heartbeat=None,
-                error_code="ai_cover_text_render_failed",
-                error_message="渲染 AI 封面文字失败",
-                redact_value=None,
-            )
-            if (
-                not temporary_path.is_file()
-                or temporary_path.stat().st_size == 0
-            ):
-                raise AppError(
-                    "ai_cover_text_output_missing",
-                    "FFmpeg 未生成带文字的 AI 封面",
                     True,
                 )
             temporary_path.replace(output_path)

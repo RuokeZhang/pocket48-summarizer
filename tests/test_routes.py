@@ -3,6 +3,9 @@ from fastapi.testclient import TestClient
 
 from pocket48_summarizer.app import create_app
 from pocket48_summarizer.auth import AuthRepository, hash_password
+from pocket48_summarizer.media.ai_covers import (
+    normalize_ai_cover_prompt,
+)
 from pocket48_summarizer.media.boundaries import BoundarySuggestion
 from pocket48_summarizer.media.clips import ClipState
 from pocket48_summarizer.models import (
@@ -175,6 +178,9 @@ class DummyAICovers:
             provider="seedream",
             model="seedream-test",
             prompt_version="variety-v1",
+            prompt_template=normalize_ai_cover_prompt(
+                kwargs.get("prompt_template")
+            ),
             shared_seed=42,
             layout_style=kwargs["layout_style"],
             title_text=kwargs["title_text"],
@@ -553,6 +559,7 @@ def test_configurable_clip_export_routes_preserve_versions(
         provider="seedream",
         model="seedream-test",
         prompt_version="variety-v1",
+        prompt_template="测试提示词 {title}",
         shared_seed=42,
         title_text="灯光亮起时",
         extra_text=[],
@@ -869,36 +876,18 @@ def test_ai_cover_routes_are_admin_only_and_keep_paired_assets(
                 "request_id": "ai-cover-admin-request",
                 "timeline_index": 0,
                 "source_timestamp_ms": 45_000,
-                "layout_style": "editorial_arc",
                 "title_text": "AI 封面测试",
-                "highlight_text": "重点文字",
-                "extra_text": ["名场面"],
+                "prompt_template": "自定义提示词 {ratio}，标题是 {title}",
             },
             headers=csrf_headers(alice),
         )
         generation_id = created.json()["id"]
-        updated = alice.patch(
+        gone = alice.patch(
             (
                 f"/api/jobs/{job.id}/ai-covers/"
                 f"{generation_id}/text"
             ),
-            json={
-                "layout_style": "banner_energy",
-                "title_text": "更新后的标题",
-                "highlight_text": "更新后的重点",
-                "extra_text": ["全场爆笑", "高能"],
-            },
-            headers=csrf_headers(alice),
-        )
-        preserved = alice.patch(
-            (
-                f"/api/jobs/{job.id}/ai-covers/"
-                f"{generation_id}/text"
-            ),
-            json={
-                "title_text": "只修改主标题",
-                "extra_text": ["仍然自定义"],
-            },
+            json={"title_text": "更新后的标题"},
             headers=csrf_headers(alice),
         )
         regenerated = alice.post(
@@ -906,7 +895,11 @@ def test_ai_cover_routes_are_admin_only_and_keep_paired_assets(
                 f"/api/jobs/{job.id}/ai-covers/"
                 f"{generation_id}/regenerate"
             ),
-            json={"request_id": "ai-cover-regenerate-request"},
+            json={
+                "request_id": "ai-cover-regenerate-request",
+                "title_text": "换个说法",
+                "prompt_template": "换一版提示词 {title}",
+            },
             headers=csrf_headers(alice),
         )
 
@@ -933,17 +926,19 @@ def test_ai_cover_routes_are_admin_only_and_keep_paired_assets(
     assert 'data-i18n="aiCoverAdminOnly"' in member_page.text
     assert 'data-i18n="aiCoverReadyHint"' in admin_page.text
     assert 'data-i18n="aiCoverLoginRequired"' in guest_page.text
-    assert 'name="ai-cover-layout-style"' in admin_page.text
-    assert 'value="sticker_pop"' in admin_page.text
-    assert 'value="editorial_arc"' in admin_page.text
-    assert 'value="banner_energy"' in admin_page.text
-    assert 'id="ai-cover-highlight-input"' in admin_page.text
+    assert 'id="ai-cover-prompt-input"' in admin_page.text
+    assert 'id="ai-cover-prompt-reset"' in admin_page.text
+    assert "以提供的直播画面为主体进行再创作" in admin_page.text
+    assert 'name="ai-cover-layout-style"' not in admin_page.text
+    assert 'id="ai-cover-highlight-input"' not in admin_page.text
+    assert 'id="ai-cover-extra-text"' not in admin_page.text
     assert maintenance.status_code == 503
     assert maintenance.json()["error"]["code"] == "ai_cover_maintenance"
     assert created.status_code == 200
     assert created.json()["status"] == "completed"
-    assert created.json()["layout_style"] == "editorial_arc"
-    assert created.json()["highlight_text"] == "重点文字"
+    assert created.json()["prompt_template"] == (
+        "自定义提示词 {ratio}，标题是 {title}"
+    )
     assert [
         (asset["orientation"], asset["width"], asset["height"])
         for asset in created.json()["assets"]
@@ -951,16 +946,11 @@ def test_ai_cover_routes_are_admin_only_and_keep_paired_assets(
         ("landscape", 2560, 1440),
         ("four_three", 2048, 1536),
     ]
-    assert updated.status_code == 202
-    assert updated.json()["layout_style"] == "banner_energy"
-    assert updated.json()["title_text"] == "更新后的标题"
-    assert updated.json()["highlight_text"] == "更新后的重点"
-    assert updated.json()["extra_text"] == ["全场爆笑", "高能"]
-    assert preserved.status_code == 202
-    assert preserved.json()["layout_style"] == "banner_energy"
-    assert preserved.json()["highlight_text"] == "更新后的重点"
+    assert gone.status_code in (404, 405)
     assert regenerated.status_code == 202
     assert regenerated.json()["id"] != generation_id
+    assert regenerated.json()["title_text"] == "换个说法"
+    assert regenerated.json()["prompt_template"] == "换一版提示词 {title}"
     assert listed.status_code == 200
     assert len(listed.json()["covers"]) == 2
     assert status.json()["id"] == generation_id
@@ -1574,9 +1564,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260827-3" in page.text
-    assert "styles.css?v=20260827-3" in page.text
-    assert "app.js?v=20260827-3" in page.text
+    assert "i18n.js?v=20260829-1" in page.text
+    assert "styles.css?v=20260829-1" in page.text
+    assert "app.js?v=20260829-1" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -1629,8 +1619,11 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "CLIP_SUBTITLE_BASE_SCALE = 1.6" in javascript.text
     assert "createAICoverGeneration" in javascript.text
     assert "loadAICoverGenerations" in javascript.text
-    assert "aiCoverLayoutStyleValue" in javascript.text
-    assert "highlight_text: aiCoverHighlightValue()" in javascript.text
+    assert "aiCoverPromptValue" in javascript.text
+    assert "prompt_template: aiCoverPromptValue()" in javascript.text
+    assert "aiCoverLayoutStyleValue" not in javascript.text
+    assert "aiCoverHighlightValue" not in javascript.text
+    assert "updateAICoverText" not in javascript.text
     assert "ai_cover_generation_id" in javascript.text
     assert "captureClipCoverFrame" not in javascript.text
     assert "coverReturnMs" not in javascript.text

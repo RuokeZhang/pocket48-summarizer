@@ -1234,6 +1234,7 @@ class JobRepository:
         provider: str,
         model: str,
         prompt_version: str,
+        prompt_template: str,
         shared_seed: int | None,
         title_text: str,
         extra_text: list[str],
@@ -1250,11 +1251,11 @@ class JobRepository:
                 INSERT OR IGNORE INTO ai_cover_generations (
                     id, job_id, timeline_index, requested_by_user_id,
                     request_id, source_timestamp_ms, provider, model,
-                    prompt_version, shared_seed, layout_style, title_text,
-                    highlight_text, extra_text_json, status, created_at,
-                    updated_at
+                    prompt_version, prompt_template, shared_seed,
+                    layout_style, title_text, highlight_text,
+                    extra_text_json, status, created_at, updated_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     'queued', ?, ?
                 )
                 """,
@@ -1268,6 +1269,7 @@ class JobRepository:
                     provider,
                     model,
                     prompt_version,
+                    prompt_template,
                     shared_seed,
                     layout_style,
                     title_text,
@@ -1575,86 +1577,6 @@ class JobRepository:
                 """,
                 (error_code, error_message, now, generation_id),
             )
-
-    def update_ai_cover_text(
-        self,
-        job_id: str,
-        generation_id: str,
-        *,
-        title_text: str,
-        extra_text: list[str],
-        layout_style: str | None = None,
-        highlight_text: str | None = None,
-    ) -> AICoverGenerationRecord:
-        now = utcnow()
-        with self.database.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """
-                SELECT * FROM ai_cover_generations
-                WHERE job_id = ? AND id = ?
-                """,
-                (job_id, generation_id),
-            ).fetchone()
-            generation = self._ai_cover_generation(row)
-            if generation is None:
-                raise AppError(
-                    "ai_cover_not_found",
-                    "AI 封面不存在",
-                    False,
-                )
-            if generation.status != "completed":
-                raise AppError(
-                    "ai_cover_not_ready",
-                    "AI 封面尚未生成完成",
-                    True,
-                )
-            next_layout_style = (
-                layout_style or generation.layout_style
-            )
-            next_highlight_text = (
-                generation.highlight_text
-                if highlight_text is None
-                else highlight_text
-            )
-            connection.execute(
-                """
-                UPDATE ai_cover_generations
-                SET layout_style = ?, title_text = ?, highlight_text = ?,
-                    extra_text_json = ?,
-                    status = 'running', error_code = NULL,
-                    error_message = NULL, updated_at = ?,
-                    completed_at = NULL
-                WHERE id = ?
-                """,
-                (
-                    next_layout_style,
-                    title_text,
-                    next_highlight_text,
-                    json.dumps(extra_text, ensure_ascii=False),
-                    now,
-                    generation_id,
-                ),
-            )
-            connection.execute(
-                """
-                UPDATE ai_cover_assets
-                SET status = 'running', text_revision = text_revision + 1,
-                    error_code = NULL, error_message = NULL,
-                    updated_at = ?, completed_at = NULL
-                WHERE generation_id = ?
-                """,
-                (now, generation_id),
-            )
-            row = connection.execute(
-                """
-                SELECT * FROM ai_cover_generations WHERE id = ?
-                """,
-                (generation_id,),
-            ).fetchone()
-        updated = self._ai_cover_generation(row)
-        assert updated is not None
-        return updated
 
     def retry_ai_cover_generation(
         self, job_id: str, generation_id: str

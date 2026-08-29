@@ -343,6 +343,7 @@ class AICoverGenerationRecord(BaseModel):
     provider: str
     model: str
     prompt_version: str
+    prompt_template: str = ""
     shared_seed: int | None = None
     layout_style: AICoverLayoutStyle
     title_text: str
