@@ -91,10 +91,14 @@ class OpenAICompatibleClient:
                 },
             }
         last_error: Exception | None = None
+        request_timeout = self.settings.llm_timeout_seconds
         for attempt in range(self.settings.external_retry_attempts):
             try:
                 response = await self.client.post(
-                    endpoint, headers=headers, json=body
+                    endpoint,
+                    headers=headers,
+                    json=body,
+                    timeout=request_timeout,
                 )
                 if response.is_redirect:
                     raise AppError(
@@ -118,6 +122,9 @@ class OpenAICompatibleClient:
                         ):
                             raise
                         body["max_tokens"] = retry_limit
+                        request_timeout = self._scaled_timeout(
+                            request_timeout, current_limit, retry_limit
+                        )
                         last_error = exc
                 retryable = (
                     response.status_code == 429
@@ -141,9 +148,35 @@ class OpenAICompatibleClient:
             raise last_error
         raise ExternalServiceError(
             "llm_request_failed",
-            "连接模型 API 失败",
+            "连接模型 API 失败"
+            + self._describe_transport_error(last_error, request_timeout),
             True,
         ) from last_error
+
+    @staticmethod
+    def _scaled_timeout(
+        current_timeout: float,
+        current_limit: int,
+        retry_limit: int,
+    ) -> float:
+        if current_limit <= 0:
+            return current_timeout
+        scaled = current_timeout * (retry_limit / current_limit)
+        return min(max(scaled, current_timeout), 900.0)
+
+    @staticmethod
+    def _describe_transport_error(
+        error: Exception | None,
+        timeout_seconds: float,
+    ) -> str:
+        if error is None:
+            return ""
+        if isinstance(error, httpx.TimeoutException):
+            return f"：请求超时（{timeout_seconds:.0f} 秒内未返回）"
+        detail = str(error).strip()
+        if detail:
+            return f"：{type(error).__name__} - {detail[:200]}"
+        return f"：{type(error).__name__}"
 
     @staticmethod
     def _strict_json_schema(
