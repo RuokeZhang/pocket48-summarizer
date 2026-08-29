@@ -20,6 +20,7 @@ from .boundaries import (
     ClipBoundaryService,
 )
 from .ffmpeg import FFmpegRunner, VideoDimensions
+from .fonts import contains_emoji, emoji_font_status
 from .layouts import (
     DEFAULT_LANDSCAPE_SUBTITLE_FONT,
     LANDSCAPE_CANVAS_HEIGHT,
@@ -31,17 +32,32 @@ from .overlays import (
     COVER_DURATION_MS,
     DEFAULT_COVER_STYLE,
     DEFAULT_SUBTITLE_FONT_SCALE,
+    ClipOverlayDocument,
     CoverStyle,
     build_cover_overlay,
     build_clip_overlay,
 )
+
+def _overlays_need_missing_emoji_font(
+    documents: list[ClipOverlayDocument],
+) -> bool:
+    """Report whether a clip asks for emoji the renderer cannot draw.
+
+    libass drops uncovered codepoints without failing, so without this check
+    the export succeeds and the emoji are simply absent from the video.
+    """
+
+    if not any(contains_emoji(document.content) for document in documents):
+        return False
+    return emoji_font_status() == "missing"
+
 
 ClipStatus = Literal["running", "completed", "failed"]
 LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v11"
+RENDER_VERSION = "ass-v12"
 
 
 def file_sha256(path: Path) -> str:
@@ -580,12 +596,20 @@ class VideoClipService:
                                         "所选范围没有可渲染的字幕",
                                         False,
                                     )
-                                warning = (
-                                    "所选范围没有可渲染的弹幕"
-                                    if record.include_danmaku
+                                warnings: list[str] = []
+                                if (
+                                    record.include_danmaku
                                     and danmaku_count == 0
-                                    else None
-                                )
+                                ):
+                                    warnings.append("所选范围没有可渲染的弹幕")
+                                if _overlays_need_missing_emoji_font(
+                                    overlay_documents
+                                ):
+                                    warnings.append(
+                                        "服务器缺少 emoji 字体，"
+                                        "画面中的 emoji 无法渲染"
+                                    )
+                                warning = "；".join(warnings) or None
                             if record.cover_enabled:
                                 if (
                                     dimensions is None

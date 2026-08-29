@@ -95,22 +95,44 @@ verify_clip_overlay_dependencies() {
       return 1
     fi
   done
+  # fc-match always answers with something, so it cannot prove emoji coverage.
+  # Danmaku are full of emoji and libass draws nothing for an uncovered
+  # codepoint, so assert that some font actually carries the glyph.
+  if ! fc-list ':charset=1f389' family | grep -q .; then
+    echo "No installed font covers emoji; clip danmaku would lose them." >&2
+    return 1
+  fi
 }
+
+# libass silently omits any glyph no installed font covers, so every family
+# the overlays can ask for has to be present. Keep the expected count derived
+# from the list: hard-coding it once let a new package go uninstalled.
+#
+# Symbola rather than fonts-noto-color-emoji: libass rasterises glyph
+# outlines and has no support for colour bitmap or COLR fonts, so a colour
+# emoji font still renders as tofu. Installing one alongside Symbola would
+# actively hurt, because fontconfig prefers it for emoji.
+CLIP_OVERLAY_FONT_PACKAGES=(
+  fontconfig
+  fonts-lxgw-wenkai
+  fonts-noto-cjk
+  fonts-symbola
+)
 
 ensure_clip_overlay_font_packages() {
   local installed_packages
   installed_packages="$(
     dpkg-query -W -f='${Status}\n' \
-      fontconfig fonts-lxgw-wenkai fonts-noto-cjk 2>/dev/null \
+      "${CLIP_OVERLAY_FONT_PACKAGES[@]}" 2>/dev/null \
       | grep -c '^install ok installed$' \
       || true
   )"
-  if [[ "$installed_packages" == "3" ]]; then
+  if [[ "$installed_packages" == "${#CLIP_OVERLAY_FONT_PACKAGES[@]}" ]]; then
     return 0
   fi
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y fontconfig fonts-lxgw-wenkai fonts-noto-cjk
+  apt-get install -y "${CLIP_OVERLAY_FONT_PACKAGES[@]}"
 }
 
 activate_clip_maintenance() {

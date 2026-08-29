@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .auth import AuthContext
 from .errors import AppError
 from .media.clips import ClipState
+from .media.fonts import emoji_font_family
 from .media.ai_covers import (
     AI_COVER_PROMPT_MAX_LENGTH,
     DEFAULT_AI_COVER_PROMPT,
@@ -1811,4 +1812,7 @@ async def health(request: Request) -> dict:
         "release": settings.app_release,
         "worker_enabled": request.app.state.services.worker is not None,
         "missing_configuration": settings.missing_processing_configuration(),
+        # Clip exports drop uncovered glyphs silently, so the renderer's font
+        # coverage has to be observable from outside the box.
+        "emoji_font": emoji_font_family(),
     }

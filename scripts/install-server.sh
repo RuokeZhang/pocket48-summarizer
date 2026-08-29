@@ -26,6 +26,7 @@ apt-get install -y \
   fontconfig \
   fonts-lxgw-wenkai \
   fonts-noto-cjk \
+  fonts-symbola \
   git \
   gnupg \
   python3 \

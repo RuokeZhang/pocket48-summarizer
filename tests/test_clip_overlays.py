@@ -3,6 +3,7 @@ import re
 import pytest
 
 from pocket48_summarizer.errors import AppError
+from pocket48_summarizer.media import clips
 from pocket48_summarizer.media.layouts import (
     LANDSCAPE_CANVAS_HEIGHT,
     LANDSCAPE_CANVAS_WIDTH,
@@ -16,6 +17,9 @@ from pocket48_summarizer.media.layouts import (
 )
 from pocket48_summarizer.media.overlays import (
     COVER_DURATION_MS,
+    DEFAULT_SUBTITLE_FONT_SCALE,
+    LIBASS_CJK_ADVANCE_RATIO,
+    _portrait_subtitle_metrics,
     build_cover_overlay,
     build_clip_overlay,
 )
@@ -119,7 +123,7 @@ def test_overlay_warns_when_danmaku_range_is_empty():
     assert document.warning_message == "所选范围没有可渲染的弹幕"
 
 
-def test_danmaku_stack_rises_and_evicts_only_at_visible_limit():
+def test_portrait_danmaku_stack_rises_as_newer_cards_arrive():
     document = build_clip_overlay(
         width=1280,
         height=720,
@@ -152,12 +156,14 @@ def test_danmaku_stack_rises_and_evicts_only_at_visible_limit():
         for line in document.content.splitlines()
         if "用户5" in line
     ]
-    assert len(first) == 5
+    # Every card stays on screen because six of them fit the column; the
+    # stack is bounded by height now, not by a hard-coded count.
+    assert len(first) == 6
     assert first[0].startswith(
         "Dialogue: 10,0:00:01.00,0:00:01.50,"
     )
     assert first[-1].startswith(
-        "Dialogue: 10,0:00:03.00,0:00:03.50,"
+        "Dialogue: 10,0:00:03.50,0:00:10.00,"
     )
     assert newest[0].startswith(
         "Dialogue: 10,0:00:03.50,0:00:10.00,"
@@ -537,7 +543,13 @@ def test_landscape_danmaku_stack_fills_the_column_beyond_five_cards():
     assert min(tops) >= LANDSCAPE_DANMAKU_TOP
 
 
-def test_portrait_danmaku_stack_stays_capped_at_five():
+def test_portrait_danmaku_stack_is_bounded_by_the_column_height():
+    """Portrait used to evict at five cards while the preview filled the column.
+
+    The export now measures the same bottom-anchored stack the browser draws,
+    so it keeps cards until they would overflow the frame.
+    """
+
     document = build_clip_overlay(
         width=1280,
         height=720,
@@ -564,4 +576,146 @@ def test_portrait_danmaku_stack_stays_capped_at_five():
         for line in document.content.splitlines()
         if "用户0" in line
     ]
-    assert len(oldest) == 5
+    assert len(oldest) == 12
+    positions = [
+        int(match.group(1))
+        for line in oldest
+        if (match := re.search(r"\\(?:pos|move)\(\d+,\d+,\d+,(\d+)", line))
+        or (match := re.search(r"\\pos\(\d+,(\d+)\)", line))
+    ]
+    assert positions == sorted(positions, reverse=True)
+    assert min(positions) >= 0
+
+
+def _dialogue_text(line: str) -> str:
+    # Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+    return line.split(",", 9)[9]
+
+
+def _portrait_metrics():
+    return _portrait_subtitle_metrics(
+        width=1080,
+        height=1920,
+        subtitle_font_scale=DEFAULT_SUBTITLE_FONT_SCALE,
+        reserve_danmaku=True,
+    )
+
+
+def _portrait_document(text: str, *, width: int = 1080, height: int = 1920):
+    return build_clip_overlay(
+        width=width,
+        height=height,
+        clip_start_ms=0,
+        clip_end_ms=6000,
+        subtitle_mode="zh",
+        include_danmaku=True,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1, start_ms=0, end_ms=6000, text=text
+            )
+        ],
+        translations={},
+        danmaku=[
+            DanmakuEntry(
+                sequence=1,
+                timestamp_ms=500,
+                author="粉丝",
+                text="好耶",
+            )
+        ],
+        output_layout="portrait",
+    )
+
+
+def test_portrait_subtitles_are_wrapped_before_libass_sees_them():
+    """libass only breaks lines at spaces, so it never wraps Chinese.
+
+    A long Chinese caption used to reach libass as one Dialogue, render as a
+    single over-wide line, and spill off both edges once ``\\an2`` centred it.
+    """
+
+    document = _portrait_document("今天我们来聊一聊最近发生的一些很有意思的事情")
+
+    lines = [
+        line
+        for line in document.content.splitlines()
+        if line.startswith("Dialogue:") and "SubtitleZh" in line
+    ]
+    assert len(lines) == 1
+    text = _dialogue_text(lines[0])
+    assert "\\N" in text, "the caption must carry explicit breaks"
+    metrics = _portrait_metrics()
+    for segment in text.split("\\N"):
+        assert len(segment) <= metrics.zh_line_width
+
+
+def test_portrait_subtitles_stay_inside_the_frame():
+    document = _portrait_document("今天我们来聊一聊最近发生的一些很有意思的事情")
+
+    metrics = _portrait_metrics()
+    widest = max(
+        len(segment)
+        for line in document.content.splitlines()
+        if line.startswith("Dialogue:") and "SubtitleZh" in line
+        for segment in _dialogue_text(line).split("\\N")
+    )
+    drawn = widest * metrics.zh_size * LIBASS_CJK_ADVANCE_RATIO
+    assert metrics.margin_l + drawn <= 1080
+
+
+def test_portrait_danmaku_uses_the_same_card_renderer_as_landscape():
+    """Portrait was left on the old fixed-slot grey rows when landscape moved
+    to rounded cards, so the export stopped matching its own preview."""
+
+    document = _portrait_document("你好")
+
+    assert "Style: PortraitDanmakuBox" in document.content
+    boxes = [
+        line
+        for line in document.content.splitlines()
+        if line.startswith("Dialogue:") and "PortraitDanmakuBox" in line
+    ]
+    assert boxes, "portrait danmaku must draw a card background"
+    assert "\\p1" in boxes[0], "the card is a vector rounded rectangle"
+    position = re.search(r"\\pos\(\d+,(\d+)\)", boxes[0])
+    assert position is not None
+    # Bottom-anchored like the preview column, not floating in the upper half.
+    assert int(position.group(1)) > 1920 * 0.5
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [("missing", True), ("available", False), ("unknown", False)],
+)
+def test_emoji_overlays_warn_only_when_no_font_covers_them(
+    monkeypatch, status, expected
+):
+    """libass draws nothing for an uncovered codepoint and still exits 0.
+
+    Without this probe an export with emoji danmaku succeeds while the video
+    silently has holes where the emoji should be.
+    """
+
+    monkeypatch.setattr(clips, "emoji_font_status", lambda: status)
+    document = _portrait_document("你好")
+    with_emoji = build_clip_overlay(
+        width=1080,
+        height=1920,
+        clip_start_ms=0,
+        clip_end_ms=6000,
+        subtitle_mode="off",
+        include_danmaku=True,
+        font_name="Noto Sans CJK SC",
+        transcript=[],
+        translations={},
+        danmaku=[
+            DanmakuEntry(
+                sequence=1, timestamp_ms=500, author="粉丝", text="好耶🎉"
+            )
+        ],
+        output_layout="portrait",
+    )
+
+    assert clips._overlays_need_missing_emoji_font([document]) is False
+    assert clips._overlays_need_missing_emoji_font([with_emoji]) is expected

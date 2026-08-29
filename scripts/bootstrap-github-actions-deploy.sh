@@ -79,15 +79,21 @@ printf 'restrict,command="%s" %s\n' "$remote_command" "$public_key" \
   >> "$temporary_keys"
 install -m 0600 -o root -g root "$temporary_keys" "$authorized_keys"
 
+font_packages=(
+  fontconfig
+  fonts-lxgw-wenkai
+  fonts-noto-cjk
+  fonts-symbola
+)
 installed_packages="$(
   dpkg-query -W -f='${Status}\n' \
-    fontconfig fonts-lxgw-wenkai fonts-noto-cjk 2>/dev/null \
+    "${font_packages[@]}" 2>/dev/null \
     | grep -c '^install ok installed$' \
     || true
 )"
-if [[ "$installed_packages" != "3" ]]; then
+if [[ "$installed_packages" != "${#font_packages[@]}" ]]; then
   apt-get update
-  apt-get install -y fontconfig fonts-lxgw-wenkai fonts-noto-cjk
+  apt-get install -y "${font_packages[@]}"
 fi
 command -v ffprobe >/dev/null
 ffmpeg -nostdin -hide_banner -filters 2>/dev/null \
@@ -101,6 +107,9 @@ fc-match --format='%{family}\n' "Noto Serif CJK SC" \
 fc-match --format='%{family}\n' "LXGW WenKai" \
   | head -n 1 \
   | grep -F "LXGW WenKai"
+# Danmaku carry emoji, and libass draws nothing for a codepoint no font
+# covers, so assert coverage rather than the package name.
+fc-list ':charset=1f389' family | grep -q .
 REMOTE
 
 known_hosts="$(

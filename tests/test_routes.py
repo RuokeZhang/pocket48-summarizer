@@ -1558,9 +1558,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-4" in page.text
-    assert "styles.css?v=20260829-4" in page.text
-    assert "app.js?v=20260829-4" in page.text
+    assert "i18n.js?v=20260829-5" in page.text
+    assert "styles.css?v=20260829-5" in page.text
+    assert "app.js?v=20260829-5" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -1601,7 +1601,7 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "mobileDensityProfiles" in javascript.text
     assert "setPointerCapture" in javascript.text
     assert "CLIP_SNAP_RELEASE_PX" in javascript.text
-    assert "CLIP_DANMAKU_MAX_VISIBLE" in javascript.text
+    assert "CLIP_DANMAKU_MAX_STACK" in javascript.text
     assert "renderClipDanmakuPreview" in javascript.text
     assert "milliseconds - 5000" not in javascript.text
     assert "2.13 * scale" in javascript.text

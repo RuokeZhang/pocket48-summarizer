@@ -351,7 +351,6 @@ const CLIP_MIN_ZOOM = 1;
 const CLIP_MAX_ZOOM = 64;
 const CLIP_SNAP_ENTER_PX = 12;
 const CLIP_SNAP_RELEASE_PX = 22;
-const CLIP_DANMAKU_MAX_VISIBLE = 5;
 const CLIP_DANMAKU_MAX_STACK = 16;
 const CLIP_DANMAKU_MIN_GAP_MS = 450;
 const CLIP_DANMAKU_RISE_MS = 220;
@@ -2364,14 +2363,10 @@ const renderClipDanmakuPreview = (milliseconds) => {
     milliseconds + 1,
     "timestamp_ms"
   );
-  const landscape = Boolean(
-    clipPreviewStage?.classList.contains("is-landscape-layout")
-  );
-  const stackLimit = landscape
-    ? CLIP_DANMAKU_MAX_STACK
-    : CLIP_DANMAKU_MAX_VISIBLE;
+  // Both layouts are bounded by the measured column height below, so the
+  // slice only has to cap how many cards are worth measuring.
   const visible = stream.slice(
-    Math.max(0, endIndex - stackLimit),
+    Math.max(0, endIndex - CLIP_DANMAKU_MAX_STACK),
     endIndex
   );
   const stackKey = visible.map(clipDanmakuEntryKey).join("|");

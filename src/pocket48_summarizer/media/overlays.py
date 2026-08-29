@@ -40,6 +40,22 @@ from .layouts import (
     LANDSCAPE_SUBTITLE_WIDTH,
     LANDSCAPE_SUBTITLE_ZH_SIZE,
     LANDSCAPE_VIDEO_WIDTH,
+    PORTRAIT_DANMAKU_AUTHOR_COLOR,
+    PORTRAIT_DANMAKU_AUTHOR_LINE_HEIGHT,
+    PORTRAIT_DANMAKU_AUTHOR_SIZE_RATIO,
+    PORTRAIT_DANMAKU_BACKGROUND_COLOR,
+    PORTRAIT_DANMAKU_BODY_SIZE_RATIO,
+    PORTRAIT_DANMAKU_BOTTOM_RATIO,
+    PORTRAIT_DANMAKU_GAP_RATIO,
+    PORTRAIT_DANMAKU_LINE_HEIGHT,
+    PORTRAIT_DANMAKU_PADDING_X_RATIO,
+    PORTRAIT_DANMAKU_PADDING_Y_RATIO,
+    PORTRAIT_DANMAKU_RADIUS_RATIO,
+    PORTRAIT_DANMAKU_RIGHT_RATIO,
+    PORTRAIT_DANMAKU_TEXT_COLOR,
+    PORTRAIT_DANMAKU_TEXT_GAP_RATIO,
+    PORTRAIT_DANMAKU_TOP_RATIO,
+    PORTRAIT_DANMAKU_WIDTH_RATIO,
     DEFAULT_LANDSCAPE_SUBTITLE_FONT,
     ClipOutputLayout,
     LandscapeSubtitleFont,
@@ -49,7 +65,6 @@ from .layouts import (
 SubtitleMode = Literal["off", "zh", "en", "bilingual"]
 CoverStyle = Literal["scrim", "display", "badge"]
 DANMAKU_MIN_GAP_MS = 450
-DANMAKU_MAX_VISIBLE = 5
 # Landscape cards vary in height, so the stack is bounded by the column
 # instead of a fixed count; this only guards pathological input.
 DANMAKU_MAX_STACK = 16
@@ -63,6 +78,11 @@ SUBTITLE_FONT_BASE_SCALE = 1.6
 PORTRAIT_SUBTITLE_COLOR = "&H00FFFFFF"
 PORTRAIT_SUBTITLE_OUTLINE_COLOR = "&H00000000"
 PORTRAIT_SUBTITLE_OUTLINE_RATIO = 0.055
+# An ASS font size is not an em: libass derives the pixel size from the
+# face's ascender plus descender, so glyphs advance by noticeably less than
+# the nominal size. Measured against Noto Sans CJK SC under libass 0.17.
+LIBASS_CJK_ADVANCE_RATIO = 0.69
+LIBASS_LATIN_ADVANCE_RATIO = 0.34
 COVER_DURATION_MS = 1500
 COVER_TITLE_MAX_LENGTH = 40
 DEFAULT_COVER_STYLE: CoverStyle = "scrim"
@@ -146,6 +166,9 @@ def build_clip_overlay(
             False,
         )
     subtitle_events = _subtitle_events(
+        width=width,
+        height=height,
+        reserve_danmaku=include_danmaku,
         clip_start_ms=clip_start_ms,
         clip_end_ms=clip_end_ms,
         subtitle_mode=subtitle_mode,
@@ -353,8 +376,73 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     )
 
 
+@dataclass(frozen=True)
+class _PortraitSubtitleMetrics:
+    zh_size: int
+    en_size: int
+    zh_outline: int
+    en_outline: int
+    margin_l: int
+    margin_r: int
+    margin_v: int
+    band_width: int
+
+    @property
+    def zh_line_width(self) -> int:
+        return max(
+            4,
+            int(self.band_width / (self.zh_size * LIBASS_CJK_ADVANCE_RATIO)),
+        )
+
+    @property
+    def en_line_width(self) -> int:
+        return max(
+            8,
+            int(
+                self.band_width
+                / (self.en_size * LIBASS_LATIN_ADVANCE_RATIO)
+            ),
+        )
+
+
+def _portrait_subtitle_metrics(
+    *,
+    width: int,
+    height: int,
+    subtitle_font_scale: int,
+    reserve_danmaku: bool,
+) -> _PortraitSubtitleMetrics:
+    """Derive every portrait caption dimension from one place.
+
+    The header and the dialogue lines both need these numbers, and computing
+    them twice is what let the rendered text outgrow its margins unnoticed.
+    """
+
+    scale = _subtitle_scale(subtitle_font_scale)
+    zh_size = max(14, round(max(20, height * 0.034) * scale))
+    en_size = max(12, round(max(16, height * 0.025) * scale))
+    margin_l = max(12, round(width * 0.04))
+    margin_r = (
+        max(12, round(width * 0.44))
+        if reserve_danmaku
+        else margin_l
+    )
+    return _PortraitSubtitleMetrics(
+        zh_size=zh_size,
+        en_size=en_size,
+        zh_outline=max(2, round(zh_size * PORTRAIT_SUBTITLE_OUTLINE_RATIO)),
+        en_outline=max(2, round(en_size * PORTRAIT_SUBTITLE_OUTLINE_RATIO)),
+        margin_l=margin_l,
+        margin_r=margin_r,
+        margin_v=max(12, round(height * 0.025)),
+        band_width=max(1, width - margin_l - margin_r),
+    )
+
+
 def _subtitle_events(
     *,
+    width: int,
+    height: int,
     clip_start_ms: int,
     clip_end_ms: int,
     subtitle_mode: SubtitleMode,
@@ -362,6 +450,7 @@ def _subtitle_events(
     translations: dict[int, str],
     output_layout: ClipOutputLayout,
     subtitle_font_scale: int,
+    reserve_danmaku: bool,
     allow_empty: bool,
 ) -> list[str]:
     if subtitle_mode == "off":
@@ -394,6 +483,12 @@ def _subtitle_events(
             )
     events: list[str] = []
     scale = _subtitle_scale(subtitle_font_scale)
+    portrait = _portrait_subtitle_metrics(
+        width=width,
+        height=height,
+        subtitle_font_scale=subtitle_font_scale,
+        reserve_danmaku=reserve_danmaku,
+    )
     landscape_zh_width = max(
         8,
         LANDSCAPE_SUBTITLE_WIDTH
@@ -441,8 +536,14 @@ def _subtitle_events(
             )
             continue
         else:
-            zh = _ass_text(segment.text)
-            en = _ass_text(translations.get(segment.sequence, ""))
+            zh = _ass_wrapped_text(
+                segment.text,
+                width=portrait.zh_line_width,
+            )
+            en = _ass_wrapped_text(
+                translations.get(segment.sequence, ""),
+                width=portrait.en_line_width,
+            )
         if subtitle_mode == "zh":
             style = "SubtitleZh"
             text = zh
@@ -533,6 +634,90 @@ def _landscape_subtitle_events(
     return events
 
 
+@dataclass(frozen=True)
+class _DanmakuCardGeometry:
+    """Card metrics shared by both layouts.
+
+    Portrait and landscape drew their stacks from separate code paths, which
+    is how the landscape redesign left portrait on the old fixed-slot boxes.
+    One geometry object keeps a single renderer honest for both.
+    """
+
+    style_prefix: str
+    card_width: int
+    right: int
+    bottom: int
+    top: int
+    gap: int
+    padding_x: int
+    padding_y: int
+    radius: int
+    author_line_height: int
+    body_line_height: int
+    body_line_width: int
+    text_gap: int
+    max_stack: int
+
+    def card_height(self, body_lines: int) -> int:
+        return (
+            self.padding_y * 2
+            + self.author_line_height
+            + self.text_gap
+            + body_lines * self.body_line_height
+        )
+
+
+def _landscape_card_geometry() -> _DanmakuCardGeometry:
+    return _DanmakuCardGeometry(
+        style_prefix="Landscape",
+        card_width=LANDSCAPE_DANMAKU_WIDTH,
+        right=LANDSCAPE_DANMAKU_RIGHT,
+        bottom=LANDSCAPE_DANMAKU_BOTTOM,
+        top=LANDSCAPE_DANMAKU_TOP,
+        gap=LANDSCAPE_DANMAKU_GAP,
+        padding_x=LANDSCAPE_DANMAKU_PADDING_X,
+        padding_y=LANDSCAPE_DANMAKU_PADDING_Y,
+        radius=LANDSCAPE_DANMAKU_RADIUS,
+        author_line_height=LANDSCAPE_DANMAKU_AUTHOR_LINE_HEIGHT,
+        body_line_height=LANDSCAPE_DANMAKU_BODY_LINE_HEIGHT,
+        body_line_width=max(
+            8,
+            (LANDSCAPE_DANMAKU_WIDTH - 2 * LANDSCAPE_DANMAKU_PADDING_X)
+            // LANDSCAPE_DANMAKU_BODY_SIZE,
+        ),
+        text_gap=LANDSCAPE_DANMAKU_TEXT_GAP,
+        max_stack=DANMAKU_MAX_STACK,
+    )
+
+
+def _portrait_card_geometry(width: int, height: int) -> _DanmakuCardGeometry:
+    card_width = max(80, round(width * PORTRAIT_DANMAKU_WIDTH_RATIO))
+    padding_x = max(6, round(width * PORTRAIT_DANMAKU_PADDING_X_RATIO))
+    author_size = max(10, round(height * PORTRAIT_DANMAKU_AUTHOR_SIZE_RATIO))
+    body_size = max(12, round(height * PORTRAIT_DANMAKU_BODY_SIZE_RATIO))
+    return _DanmakuCardGeometry(
+        style_prefix="Portrait",
+        card_width=card_width,
+        right=max(6, round(width * PORTRAIT_DANMAKU_RIGHT_RATIO)),
+        bottom=max(6, round(height * PORTRAIT_DANMAKU_BOTTOM_RATIO)),
+        top=max(6, round(height * PORTRAIT_DANMAKU_TOP_RATIO)),
+        gap=max(3, round(height * PORTRAIT_DANMAKU_GAP_RATIO)),
+        padding_x=padding_x,
+        padding_y=max(4, round(height * PORTRAIT_DANMAKU_PADDING_Y_RATIO)),
+        radius=max(4, round(height * PORTRAIT_DANMAKU_RADIUS_RATIO)),
+        author_line_height=round(
+            author_size * PORTRAIT_DANMAKU_AUTHOR_LINE_HEIGHT
+        ),
+        body_line_height=round(body_size * PORTRAIT_DANMAKU_LINE_HEIGHT),
+        body_line_width=max(
+            6,
+            (card_width - 2 * padding_x) // body_size,
+        ),
+        text_gap=max(1, round(height * PORTRAIT_DANMAKU_TEXT_GAP_RATIO)),
+        max_stack=DANMAKU_MAX_STACK,
+    )
+
+
 def _danmaku_events(
     *,
     width: int,
@@ -542,6 +727,11 @@ def _danmaku_events(
     danmaku: list[DanmakuEntry],
     output_layout: ClipOutputLayout,
 ) -> tuple[list[str], int]:
+    geometry = (
+        _landscape_card_geometry()
+        if output_layout == "landscape"
+        else _portrait_card_geometry(width, height)
+    )
     selected = sorted(
         (
             entry
@@ -552,20 +742,6 @@ def _danmaku_events(
     )
     prepared: list[_PreparedDanmaku] = []
     last_accepted_ms = -DANMAKU_MIN_GAP_MS
-    landscape = output_layout == "landscape"
-    right_margin = max(14, round(width * 0.025))
-    top_margin = max(14, round(height * 0.035))
-    slot_step = max(48, round(height * 0.115))
-    x = width - right_margin
-    author_size = max(13, round(height * 0.016))
-    landscape_body_width = max(
-        8,
-        (
-            LANDSCAPE_DANMAKU_WIDTH
-            - 2 * LANDSCAPE_DANMAKU_PADDING_X
-        )
-        // LANDSCAPE_DANMAKU_BODY_SIZE,
-    )
     for entry in selected:
         relative_ms = entry.timestamp_ms - clip_start_ms
         if relative_ms - last_accepted_ms < DANMAKU_MIN_GAP_MS:
@@ -573,7 +749,7 @@ def _danmaku_events(
         author = _ass_text(_truncate(_plain_text(entry.author), 18))
         body = _wrapped_ass_text(
             _plain_text(entry.text),
-            width=landscape_body_width if landscape else 18,
+            width=geometry.body_line_width,
             lines=3,
         )
         if not body:
@@ -590,41 +766,26 @@ def _danmaku_events(
 
     events: list[str] = []
     clip_duration_ms = clip_end_ms - clip_start_ms
-    bottom_y = top_margin + (DANMAKU_MAX_VISIBLE - 1) * slot_step
     # Mirror the browser's variable-height, bottom-anchored card stack.
-    landscape_heights = (
-        [
-            (
-                LANDSCAPE_DANMAKU_PADDING_Y * 2
-                + LANDSCAPE_DANMAKU_AUTHOR_LINE_HEIGHT
-                + LANDSCAPE_DANMAKU_TEXT_GAP
-                + item.body_lines * LANDSCAPE_DANMAKU_BODY_LINE_HEIGHT
-            )
-            for item in prepared
-        ]
-        if landscape
-        else []
-    )
-    landscape_budget = max(
-        0,
-        height - LANDSCAPE_DANMAKU_BOTTOM - LANDSCAPE_DANMAKU_TOP,
-    )
+    heights = [geometry.card_height(item.body_lines) for item in prepared]
+    budget = max(0, height - geometry.bottom - geometry.top)
+    card_x = width - geometry.right - geometry.card_width
+    box_style = f"{geometry.style_prefix}DanmakuBox"
+    author_style = f"{geometry.style_prefix}DanmakuAuthor"
+    body_style = f"{geometry.style_prefix}Danmaku"
     for index, item in enumerate(prepared):
-        style = "LandscapeDanmakuAuthor" if landscape else "Danmaku"
-        body_style = "LandscapeDanmaku" if landscape else "Danmaku"
         maximum_age = min(
-            (DANMAKU_MAX_STACK if landscape else DANMAKU_MAX_VISIBLE) - 1,
+            geometry.max_stack - 1,
             len(prepared) - index - 1,
         )
         for age in range(maximum_age + 1):
             latest_index = index + age
-            if landscape:
-                stack_height = (
-                    sum(landscape_heights[index : latest_index + 1])
-                    + age * LANDSCAPE_DANMAKU_GAP
-                )
-                if stack_height > landscape_budget:
-                    break
+            stack_height = (
+                sum(heights[index : latest_index + 1])
+                + age * geometry.gap
+            )
+            if stack_height > budget:
+                break
             segment_start_ms = prepared[latest_index].relative_ms
             segment_end_ms = (
                 prepared[latest_index + 1].relative_ms
@@ -637,99 +798,63 @@ def _danmaku_events(
                 DANMAKU_RISE_MS,
                 segment_end_ms - segment_start_ms,
             )
-            if landscape:
-                bubble_x = (
-                    width
-                    - LANDSCAPE_DANMAKU_RIGHT
-                    - LANDSCAPE_DANMAKU_WIDTH
-                )
-                bubble_y = (
-                    height
-                    - LANDSCAPE_DANMAKU_BOTTOM
-                    - sum(landscape_heights[index : latest_index + 1])
-                    - age * LANDSCAPE_DANMAKU_GAP
-                )
-                if age == 0:
-                    bubble_position = (
-                        f"\\pos({bubble_x},{bubble_y})\\fad(120,0)"
-                    )
-                    text_position = (
-                        "\\pos("
-                        f"{bubble_x + LANDSCAPE_DANMAKU_PADDING_X},"
-                        f"{bubble_y + LANDSCAPE_DANMAKU_PADDING_Y}"
-                        ")\\fad(120,0)"
-                    )
-                else:
-                    previous_bubble_y = (
-                        height
-                        - LANDSCAPE_DANMAKU_BOTTOM
-                        - sum(
-                            landscape_heights[index:latest_index]
-                        )
-                        - (age - 1) * LANDSCAPE_DANMAKU_GAP
-                    )
-                    bubble_position = (
-                        f"\\move({bubble_x},{previous_bubble_y},"
-                        f"{bubble_x},{bubble_y},0,{rise_ms})"
-                    )
-                    text_x = (
-                        bubble_x + LANDSCAPE_DANMAKU_PADDING_X
-                    )
-                    text_position = (
-                        f"\\move({text_x},"
-                        f"{previous_bubble_y + LANDSCAPE_DANMAKU_PADDING_Y},"
-                        f"{text_x},"
-                        f"{bubble_y + LANDSCAPE_DANMAKU_PADDING_Y},"
-                        f"0,{rise_ms})"
-                    )
-                box = _ass_rounded_rect(
-                    LANDSCAPE_DANMAKU_WIDTH,
-                    landscape_heights[index],
-                    LANDSCAPE_DANMAKU_RADIUS,
-                )
-                # Fixed-width ASS cards need a vector box behind the text.
-                events.append(
-                    _dialogue(
-                        layer=9,
-                        start_ms=segment_start_ms,
-                        end_ms=segment_end_ms,
-                        style="LandscapeDanmakuBox",
-                        text=(
-                            f"{{\\an7{bubble_position}\\p1}}"
-                            f"{box}{{\\p0}}"
-                        ),
-                    )
-                )
-                events.append(
-                    _dialogue(
-                        layer=10,
-                        start_ms=segment_start_ms,
-                        end_ms=segment_end_ms,
-                        style=style,
-                        text=(
-                            f"{{\\an7{text_position}}}"
-                            f"{item.author}\\N"
-                            f"{{\\r{body_style}}}{item.body}"
-                        ),
-                    )
-                )
-                continue
-            y = bottom_y - age * slot_step
+            card_y = (
+                height
+                - geometry.bottom
+                - sum(heights[index : latest_index + 1])
+                - age * geometry.gap
+            )
+            text_x = card_x + geometry.padding_x
             if age == 0:
-                position = f"\\pos({x},{y})\\fad(120,0)"
-            else:
-                previous_y = y + slot_step
-                position = (
-                    f"\\move({x},{previous_y},{x},{y},0,{rise_ms})"
+                card_position = f"\\pos({card_x},{card_y})\\fad(120,0)"
+                text_position = (
+                    f"\\pos({text_x},"
+                    f"{card_y + geometry.padding_y})\\fad(120,0)"
                 )
+            else:
+                previous_y = (
+                    height
+                    - geometry.bottom
+                    - sum(heights[index:latest_index])
+                    - (age - 1) * geometry.gap
+                )
+                card_position = (
+                    f"\\move({card_x},{previous_y},"
+                    f"{card_x},{card_y},0,{rise_ms})"
+                )
+                text_position = (
+                    f"\\move({text_x},"
+                    f"{previous_y + geometry.padding_y},"
+                    f"{text_x},"
+                    f"{card_y + geometry.padding_y},"
+                    f"0,{rise_ms})"
+                )
+            box = _ass_rounded_rect(
+                geometry.card_width,
+                heights[index],
+                geometry.radius,
+            )
+            # Fixed-width ASS cards need a vector box behind the text.
+            events.append(
+                _dialogue(
+                    layer=9,
+                    start_ms=segment_start_ms,
+                    end_ms=segment_end_ms,
+                    style=box_style,
+                    text=(
+                        f"{{\\an7{card_position}\\p1}}"
+                        f"{box}{{\\p0}}"
+                    ),
+                )
+            )
             events.append(
                 _dialogue(
                     layer=10,
                     start_ms=segment_start_ms,
                     end_ms=segment_end_ms,
-                    style=style,
+                    style=author_style,
                     text=(
-                        f"{{\\an9{position}\\fs{author_size}}}"
+                        f"{{\\an7{text_position}}}"
                         f"{item.author}\\N"
                         f"{{\\r{body_style}}}{item.body}"
                     ),
@@ -799,11 +924,33 @@ def _ass_header(
             False,
         ) from exc
     scale = _subtitle_scale(subtitle_font_scale)
-    zh_size = max(14, round(max(20, height * 0.034) * scale))
-    en_size = max(12, round(max(16, height * 0.025) * scale))
-    zh_outline = max(2, round(zh_size * PORTRAIT_SUBTITLE_OUTLINE_RATIO))
-    en_outline = max(2, round(en_size * PORTRAIT_SUBTITLE_OUTLINE_RATIO))
-    danmaku_size = max(15, round(height * 0.020))
+    portrait = _portrait_subtitle_metrics(
+        width=width,
+        height=height,
+        subtitle_font_scale=subtitle_font_scale,
+        reserve_danmaku=reserve_danmaku,
+    )
+    zh_size = portrait.zh_size
+    en_size = portrait.en_size
+    zh_outline = portrait.zh_outline
+    en_outline = portrait.en_outline
+    portrait_author_size = round(
+        max(10, round(height * PORTRAIT_DANMAKU_AUTHOR_SIZE_RATIO))
+        * LANDSCAPE_LIBASS_DANMAKU_AUTHOR_SCALE
+    )
+    portrait_body_size = round(
+        max(12, round(height * PORTRAIT_DANMAKU_BODY_SIZE_RATIO))
+        * LANDSCAPE_LIBASS_FONT_SCALE
+    )
+    portrait_danmaku_author = _ass_color(
+        PORTRAIT_DANMAKU_AUTHOR_COLOR,
+        alpha=56,
+    )
+    portrait_danmaku_text = _ass_color(PORTRAIT_DANMAKU_TEXT_COLOR, alpha=31)
+    portrait_danmaku_background = _ass_color(
+        PORTRAIT_DANMAKU_BACKGROUND_COLOR,
+        alpha=194,
+    )
     landscape_zh_size = max(
         16,
         round(
@@ -827,13 +974,9 @@ def _ass_header(
         LANDSCAPE_DANMAKU_AUTHOR_SIZE
         * LANDSCAPE_LIBASS_DANMAKU_AUTHOR_SCALE
     )
-    margin_v = max(12, round(height * 0.025))
-    margin_l = max(12, round(width * 0.04))
-    margin_r = (
-        max(12, round(width * 0.44))
-        if reserve_danmaku
-        else margin_l
-    )
+    margin_v = portrait.margin_v
+    margin_l = portrait.margin_l
+    margin_r = portrait.margin_r
     landscape_danmaku_border = _ass_color(
         LANDSCAPE_DANMAKU_AUTHOR_COLOR,
         alpha=168,
@@ -854,7 +997,9 @@ YCbCr Matrix: TV.709
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: SubtitleZh,{font_name},{zh_size},{PORTRAIT_SUBTITLE_COLOR},{PORTRAIT_SUBTITLE_COLOR},{PORTRAIT_SUBTITLE_OUTLINE_COLOR},{PORTRAIT_SUBTITLE_OUTLINE_COLOR},-1,0,0,0,100,100,0,0,1,{zh_outline},0,2,{margin_l},{margin_r},{margin_v},1
 Style: SubtitleEn,{font_name},{en_size},{PORTRAIT_SUBTITLE_COLOR},{PORTRAIT_SUBTITLE_COLOR},{PORTRAIT_SUBTITLE_OUTLINE_COLOR},{PORTRAIT_SUBTITLE_OUTLINE_COLOR},0,0,0,0,100,100,0,0,1,{en_outline},0,2,{margin_l},{margin_r},{margin_v},1
-Style: Danmaku,{font_name},{danmaku_size},&H00FFFFFF,&H00FFFFFF,&H40000000,&HA8000000,0,0,0,0,100,100,0,0,3,1,1,9,0,0,0,1
+Style: PortraitDanmaku,{font_name},{portrait_body_size},{portrait_danmaku_text},{portrait_danmaku_text},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: PortraitDanmakuAuthor,{font_name},{portrait_author_size},{portrait_danmaku_author},{portrait_danmaku_author},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: PortraitDanmakuBox,{font_name},1,{portrait_danmaku_background},{portrait_danmaku_background},{portrait_danmaku_background},{portrait_danmaku_background},0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: LandscapeSubtitleZh,{landscape_font_name},{landscape_zh_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,-1,0,0,0,{LANDSCAPE_SUBTITLE_ZH_SCALE_X},{LANDSCAPE_SUBTITLE_ZH_SCALE_Y},0,0,1,0,0,7,0,0,0,1
 Style: LandscapeSubtitleEn,{landscape_font_name},{landscape_en_size},{landscape_subtitle_en_color},{landscape_subtitle_en_color},&H00000000,&H00000000,-1,0,0,0,{LANDSCAPE_SUBTITLE_EN_SCALE_X},{LANDSCAPE_SUBTITLE_EN_SCALE_Y},0,0,1,0,0,7,0,0,0,1
 Style: LandscapeDanmaku,{font_name},{landscape_danmaku_size},{landscape_danmaku_text},{landscape_danmaku_text},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
