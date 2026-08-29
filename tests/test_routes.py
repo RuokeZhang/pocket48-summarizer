@@ -1558,9 +1558,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-5" in page.text
-    assert "styles.css?v=20260829-5" in page.text
-    assert "app.js?v=20260829-5" in page.text
+    assert "i18n.js?v=20260829-6" in page.text
+    assert "styles.css?v=20260829-6" in page.text
+    assert "app.js?v=20260829-6" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -1694,3 +1694,34 @@ def test_portrait_clip_preview_styles_stay_scoped_to_portrait(settings, reposito
         1,
     )[1].split("}", 1)[0]
     assert "-webkit-text-stroke" in portrait_caption
+
+
+def test_portrait_clip_preview_stage_matches_the_exported_frame(
+    settings, repository
+):
+    """The stage has to be the frame, because the overlays are placed as
+    percentages of it.
+
+    A portrait export re-encodes the source untouched, but the stage carried
+    no ratio and stretched to the whole column, so the danmaku column and the
+    caption band were drawn on the letterbox instead of on the video.
+    """
+
+    app = create_app(
+        settings,
+        ApplicationServices(repository=repository, worker=DummyWorker()),
+    )
+
+    with TestClient(app) as client:
+        styles = client.get("/static/styles.css")
+        javascript = client.get("/static/app.js")
+
+    portrait_stage = styles.text.split(
+        ".clip-preview-stage:not(.is-landscape-layout) {", 1
+    )[1].split("}", 1)[0]
+    assert "aspect-ratio: var(--clip-preview-aspect);" in portrait_stage
+    assert "min-height: 0;" in portrait_stage
+
+    # The ratio is only correct if it tracks the real source dimensions.
+    assert "--clip-preview-aspect" in javascript.text
+    assert "videoWidth" in javascript.text

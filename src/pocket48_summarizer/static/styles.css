@@ -833,6 +833,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   min-width: 0;
 }
 .clip-preview-stage {
+  --clip-preview-max-height: min(58vh, 640px);
+  /* The source frame's own ratio, since a portrait export re-encodes the
+     video untouched. JS overwrites both from the loaded metadata; the
+     defaults only cover the moment before that. */
+  --clip-preview-aspect: 9 / 16;
+  --clip-preview-ratio: .5625;
   position: relative;
   overflow: hidden;
   display: grid;
@@ -845,8 +851,23 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .clip-preview-stage video {
   display: block;
   width: 100%;
-  max-height: min(58vh, 640px);
+  max-height: var(--clip-preview-max-height);
   background: #050608;
+}
+/* The overlays are positioned as percentages of the stage, so the stage has
+   to *be* the exported frame. Left stretched it was the full column wide,
+   which pushed the danmaku column and caption band off the video. */
+.clip-preview-stage:not(.is-landscape-layout) {
+  min-height: 0;
+  width: 100%;
+  max-width: calc(var(--clip-preview-max-height) * var(--clip-preview-ratio));
+  margin-inline: auto;
+  aspect-ratio: var(--clip-preview-aspect);
+}
+.clip-preview-stage:not(.is-landscape-layout) video {
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
 }
 .clip-preview-stage.is-landscape-layout {
   min-height: 0;

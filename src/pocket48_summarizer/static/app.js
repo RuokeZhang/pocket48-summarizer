@@ -2902,7 +2902,25 @@ aiCoverSelect?.addEventListener("click", () => {
   renderAICoverState();
 });
 
+const applyClipPreviewAspect = () => {
+  if (!clipPreviewStage || !clipPreviewPlayer) return;
+  const { videoWidth, videoHeight } = clipPreviewPlayer;
+  if (!videoWidth || !videoHeight) return;
+  // A portrait export re-encodes the source untouched, so the stage must
+  // adopt the source ratio for the percentage-positioned overlays to land
+  // where the burned-in ones will.
+  clipPreviewStage.style.setProperty(
+    "--clip-preview-aspect",
+    `${videoWidth} / ${videoHeight}`
+  );
+  clipPreviewStage.style.setProperty(
+    "--clip-preview-ratio",
+    `${videoWidth / videoHeight}`
+  );
+};
+
 clipPreviewPlayer?.addEventListener("loadedmetadata", () => {
+  applyClipPreviewAspect();
   if (clipPendingSeekMs !== null) {
     clipPreviewPlayer.currentTime = clipPendingSeekMs / 1000;
     clipPendingSeekMs = null;
