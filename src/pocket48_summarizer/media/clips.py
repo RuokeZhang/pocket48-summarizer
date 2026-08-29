@@ -30,9 +30,7 @@ from .layouts import (
 from .overlays import (
     COVER_DURATION_MS,
     DEFAULT_COVER_STYLE,
-    DEFAULT_SUBTITLE_BACKGROUND_COLOR,
     DEFAULT_SUBTITLE_FONT_SCALE,
-    DEFAULT_SUBTITLE_TEXT_COLOR,
     CoverStyle,
     build_cover_overlay,
     build_clip_overlay,
@@ -163,10 +161,6 @@ class VideoClipService:
         subtitle_mode: str,
         include_danmaku: bool,
         subtitle_font_scale: int = DEFAULT_SUBTITLE_FONT_SCALE,
-        subtitle_text_color: str = DEFAULT_SUBTITLE_TEXT_COLOR,
-        subtitle_background_color: str = (
-            DEFAULT_SUBTITLE_BACKGROUND_COLOR
-        ),
         output_layout: ClipOutputLayout = "portrait",
         subtitle_font_family: LandscapeSubtitleFont = (
             DEFAULT_LANDSCAPE_SUBTITLE_FONT
@@ -247,8 +241,6 @@ class VideoClipService:
             subtitle_mode=subtitle_mode,
             include_danmaku=include_danmaku,
             subtitle_font_scale=subtitle_font_scale,
-            subtitle_text_color=subtitle_text_color,
-            subtitle_background_color=subtitle_background_color,
             output_layout=output_layout,
             subtitle_font_family=subtitle_font_family,
             cover_enabled=cover_enabled,
@@ -561,13 +553,6 @@ class VideoClipService:
                                             danmaku=danmaku,
                                             subtitle_font_scale=(
                                                 record.subtitle_font_scale
-                                            ),
-                                            subtitle_text_color=(
-                                                record.subtitle_text_color
-                                            ),
-                                            subtitle_background_color=(
-                                                record
-                                                .subtitle_background_color
                                             ),
                                             output_layout=(
                                                 record.output_layout

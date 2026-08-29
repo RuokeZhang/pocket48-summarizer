@@ -50,8 +50,6 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
     )
 
     assert payload.subtitle_font_scale == 100
-    assert payload.subtitle_text_color == "#E43D12"
-    assert payload.subtitle_background_color == "#EBE9E1"
     assert payload.output_layout == "portrait"
     assert payload.subtitle_font_family == "wenkai"
     assert payload.ai_cover_generation_id is None
@@ -65,8 +63,6 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
         start_ms=1000,
         end_ms=5000,
         subtitle_mode="zh",
-        subtitle_text_color="#FFFFFF",
-        subtitle_background_color="#FFFFFF",
         output_layout="landscape",
     )
     assert landscape.output_layout == "landscape"
@@ -102,10 +98,6 @@ class DummyClipper:
             subtitle_mode=kwargs["subtitle_mode"],
             include_danmaku=kwargs["include_danmaku"],
             subtitle_font_scale=kwargs["subtitle_font_scale"],
-            subtitle_text_color=kwargs["subtitle_text_color"],
-            subtitle_background_color=(
-                kwargs["subtitle_background_color"]
-            ),
             output_layout=kwargs["output_layout"],
             subtitle_font_family=kwargs["subtitle_font_family"],
             ai_cover_generation_id=kwargs["ai_cover_generation_id"],
@@ -487,9 +479,11 @@ def test_timeline_clip_can_be_created_and_downloaded(
     assert 'id="clip-cover-panel"' not in page.text
     assert 'name="clip-cover-style"' not in page.text
     assert 'id="clip-subtitle-font-family"' in page.text
-    assert 'id="clip-subtitle-text-color"' in page.text
-    assert 'id="clip-subtitle-background-color"' in page.text
-    assert 'id="clip-theme-vibrant-calm"' in page.text
+    assert 'id="clip-subtitle-text-color"' not in page.text
+    assert 'id="clip-subtitle-background-color"' not in page.text
+    assert 'id="clip-theme-vibrant-calm"' not in page.text
+    assert 'id="clip-subtitle-contrast"' not in page.text
+    assert 'id="clip-portrait-style-note"' in page.text
     assert 'id="clip-output-layout"' in page.text
     assert 'value="landscape"' in page.text
     assert 'id="clip-landscape-style-note"' in page.text
@@ -643,10 +637,10 @@ def test_configurable_clip_export_routes_preserve_versions(
             },
             headers=csrf_headers(alice),
         )
-        low_contrast = alice.post(
+        legacy_colors = alice.post(
             f"/api/jobs/{job.id}/clip-exports",
             json={
-                "request_id": "request-low-contrast",
+                "request_id": "request-legacy-colors",
                 "timeline_index": 0,
                 "start_ms": 30_000,
                 "end_ms": 60_000,
@@ -742,8 +736,6 @@ def test_configurable_clip_export_routes_preserve_versions(
     )
     assert created.json()["subtitle_mode"] == "zh"
     assert created.json()["subtitle_font_scale"] == 125
-    assert created.json()["subtitle_text_color"] == "#E43D12"
-    assert created.json()["subtitle_background_color"] == "#EBE9E1"
     assert created.json()["output_layout"] == "landscape"
     assert created.json()["subtitle_font_family"] == "serif"
     assert created.json()["cover_enabled"] is False
@@ -765,7 +757,9 @@ def test_configurable_clip_export_routes_preserve_versions(
         ClipRange(start_ms=30_000, end_ms=40_000),
         ClipRange(start_ms=50_000, end_ms=60_000),
     ]
-    assert low_contrast.status_code == 422
+    # Colors are no longer configurable; stale clients must not break.
+    assert legacy_colors.status_code == 200
+    assert "subtitle_text_color" not in legacy_colors.json()
     assert english_blocked.status_code == 409
     assert cut_created.status_code == 200
     assert cut_created.json()["kept_ranges"] == [
@@ -780,7 +774,7 @@ def test_configurable_clip_export_routes_preserve_versions(
         == "clip_english_subtitles_not_ready"
     )
     assert listed.status_code == 200
-    assert len(listed.json()["clips"]) == 4
+    assert len(listed.json()["clips"]) == 5
     assert status.json()["id"] == "clip-export-1"
     assert download.status_code == 303
     assert download.headers["location"].startswith("https://oss.example/")
@@ -1564,9 +1558,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-2" in page.text
-    assert "styles.css?v=20260829-2" in page.text
-    assert "app.js?v=20260829-2" in page.text
+    assert "i18n.js?v=20260829-3" in page.text
+    assert "styles.css?v=20260829-3" in page.text
+    assert "app.js?v=20260829-3" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

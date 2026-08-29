@@ -18,7 +18,6 @@ from pocket48_summarizer.media.overlays import (
     COVER_DURATION_MS,
     build_cover_overlay,
     build_clip_overlay,
-    subtitle_contrast_ratio,
 )
 from pocket48_summarizer.models import DanmakuEntry, TranscriptSegment
 
@@ -54,8 +53,6 @@ def test_overlay_renders_bilingual_subtitles_and_bounded_danmaku():
         translations={1: "English subtitle"},
         danmaku=danmaku,
         subtitle_font_scale=125,
-        subtitle_text_color="#E43D12",
-        subtitle_background_color="#EBE9E1",
     )
 
     assert document.subtitle_event_count == 1
@@ -66,15 +63,18 @@ def test_overlay_renders_bilingual_subtitles_and_bounded_danmaku():
     assert r"\move(" in document.content
     assert r"\fad(120,0)" in document.content
     assert "Style: SubtitleZh,Noto Sans CJK SC" in document.content
+    # Portrait captions are unstyled: white glyphs, black outline, no box.
     assert (
         "Style: SubtitleZh,Noto Sans CJK SC,87,"
-        "&H00123DE4,&H00123DE4,&H18E1E9EB,&H38E1E9EB"
+        "&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
+        "-1,0,0,0,100,100,0,0,1,5,0,2,"
         in document.content
     )
-    assert subtitle_contrast_ratio("#E43D12", "#EBE9E1") == pytest.approx(
-        3.4724,
-        rel=1e-4,
+    assert (
+        "Style: SubtitleEn,Noto Sans CJK SC,"
+        in document.content
     )
+    assert "&H18E1E9EB" not in document.content
 
 
 def test_overlay_requires_complete_english_translation():

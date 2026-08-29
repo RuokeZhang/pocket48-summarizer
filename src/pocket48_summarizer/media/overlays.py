@@ -58,9 +58,11 @@ SUBTITLE_FONT_SCALE_MIN = 50
 SUBTITLE_FONT_SCALE_MAX = 150
 DEFAULT_SUBTITLE_FONT_SCALE = 100
 SUBTITLE_FONT_BASE_SCALE = 1.6
-DEFAULT_SUBTITLE_TEXT_COLOR = "#E43D12"
-DEFAULT_SUBTITLE_BACKGROUND_COLOR = "#EBE9E1"
-MIN_SUBTITLE_CONTRAST_RATIO = 3.0
+# Portrait subtitles are deliberately unstyled: white glyphs with a black
+# outline stay legible over any frame without tinting the footage.
+PORTRAIT_SUBTITLE_COLOR = "&H00FFFFFF"
+PORTRAIT_SUBTITLE_OUTLINE_COLOR = "&H00000000"
+PORTRAIT_SUBTITLE_OUTLINE_RATIO = 0.055
 COVER_DURATION_MS = 1500
 COVER_TITLE_MAX_LENGTH = 40
 DEFAULT_COVER_STYLE: CoverStyle = "scrim"
@@ -119,8 +121,6 @@ def build_clip_overlay(
     translations: dict[int, str],
     danmaku: list[DanmakuEntry],
     subtitle_font_scale: int = DEFAULT_SUBTITLE_FONT_SCALE,
-    subtitle_text_color: str = DEFAULT_SUBTITLE_TEXT_COLOR,
-    subtitle_background_color: str = DEFAULT_SUBTITLE_BACKGROUND_COLOR,
     output_layout: ClipOutputLayout = "portrait",
     subtitle_font_family: LandscapeSubtitleFont = (
         DEFAULT_LANDSCAPE_SUBTITLE_FONT
@@ -178,8 +178,6 @@ def build_clip_overlay(
         font_name=_plain_text(font_name).replace(",", " ") or "sans-serif",
         reserve_danmaku=include_danmaku,
         subtitle_font_scale=subtitle_font_scale,
-        subtitle_text_color=subtitle_text_color,
-        subtitle_background_color=subtitle_background_color,
         output_layout=output_layout,
         subtitle_font_family=subtitle_font_family,
     )
@@ -747,8 +745,6 @@ def _ass_header(
     font_name: str,
     reserve_danmaku: bool,
     subtitle_font_scale: int,
-    subtitle_text_color: str,
-    subtitle_background_color: str,
     output_layout: ClipOutputLayout,
     subtitle_font_family: LandscapeSubtitleFont,
 ) -> str:
@@ -769,13 +765,6 @@ def _ass_header(
             False,
         )
     try:
-        text_color = _ass_color(subtitle_text_color)
-        background_color = _ass_color(
-            subtitle_background_color, alpha=24
-        )
-        background_shadow = _ass_color(
-            subtitle_background_color, alpha=56
-        )
         landscape_subtitle_color = _ass_color(
             LANDSCAPE_SUBTITLE_COLOR
         )
@@ -812,6 +801,8 @@ def _ass_header(
     scale = _subtitle_scale(subtitle_font_scale)
     zh_size = max(14, round(max(20, height * 0.034) * scale))
     en_size = max(12, round(max(16, height * 0.025) * scale))
+    zh_outline = max(2, round(zh_size * PORTRAIT_SUBTITLE_OUTLINE_RATIO))
+    en_outline = max(2, round(en_size * PORTRAIT_SUBTITLE_OUTLINE_RATIO))
     danmaku_size = max(15, round(height * 0.020))
     landscape_zh_size = max(
         16,
@@ -861,8 +852,8 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: SubtitleZh,{font_name},{zh_size},{text_color},{text_color},{background_color},{background_shadow},-1,0,0,0,100,100,0,0,3,1,1,2,{margin_l},{margin_r},{margin_v},1
-Style: SubtitleEn,{font_name},{en_size},{text_color},{text_color},{background_color},{background_shadow},0,0,0,0,100,100,0,0,3,1,1,2,{margin_l},{margin_r},{margin_v},1
+Style: SubtitleZh,{font_name},{zh_size},{PORTRAIT_SUBTITLE_COLOR},{PORTRAIT_SUBTITLE_COLOR},{PORTRAIT_SUBTITLE_OUTLINE_COLOR},{PORTRAIT_SUBTITLE_OUTLINE_COLOR},-1,0,0,0,100,100,0,0,1,{zh_outline},0,2,{margin_l},{margin_r},{margin_v},1
+Style: SubtitleEn,{font_name},{en_size},{PORTRAIT_SUBTITLE_COLOR},{PORTRAIT_SUBTITLE_COLOR},{PORTRAIT_SUBTITLE_OUTLINE_COLOR},{PORTRAIT_SUBTITLE_OUTLINE_COLOR},0,0,0,0,100,100,0,0,1,{en_outline},0,2,{margin_l},{margin_r},{margin_v},1
 Style: Danmaku,{font_name},{danmaku_size},&H00FFFFFF,&H00FFFFFF,&H40000000,&HA8000000,0,0,0,0,100,100,0,0,3,1,1,9,0,0,0,1
 Style: LandscapeSubtitleZh,{landscape_font_name},{landscape_zh_size},{landscape_subtitle_color},{landscape_subtitle_color},&H00000000,&H00000000,-1,0,0,0,{LANDSCAPE_SUBTITLE_ZH_SCALE_X},{LANDSCAPE_SUBTITLE_ZH_SCALE_Y},0,0,1,0,0,7,0,0,0,1
 Style: LandscapeSubtitleEn,{landscape_font_name},{landscape_en_size},{landscape_subtitle_en_color},{landscape_subtitle_en_color},&H00000000,&H00000000,-1,0,0,0,{LANDSCAPE_SUBTITLE_EN_SCALE_X},{LANDSCAPE_SUBTITLE_EN_SCALE_Y},0,0,1,0,0,7,0,0,0,1
@@ -937,21 +928,6 @@ def normalize_ai_cover_extra_text(
     return normalized
 
 
-def subtitle_contrast_ratio(
-    text_color: str,
-    background_color: str,
-) -> float:
-    text_luminance = _relative_luminance(
-        normalize_subtitle_color(text_color)
-    )
-    background_luminance = _relative_luminance(
-        normalize_subtitle_color(background_color)
-    )
-    lighter = max(text_luminance, background_luminance)
-    darker = min(text_luminance, background_luminance)
-    return (lighter + 0.05) / (darker + 0.05)
-
-
 def _ass_color(value: str, *, alpha: int = 0) -> str:
     normalized = normalize_subtitle_color(value)
     if not 0 <= alpha <= 255:
@@ -960,20 +936,6 @@ def _ass_color(value: str, *, alpha: int = 0) -> str:
     green = normalized[3:5]
     blue = normalized[5:7]
     return f"&H{alpha:02X}{blue}{green}{red}"
-
-
-def _relative_luminance(value: str) -> float:
-    channels = [
-        int(value[index : index + 2], 16) / 255
-        for index in (1, 3, 5)
-    ]
-    linear = [
-        channel / 12.92
-        if channel <= 0.04045
-        else ((channel + 0.055) / 1.055) ** 2.4
-        for channel in channels
-    ]
-    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
 
 
 def _subtitle_scale(value: int) -> float:

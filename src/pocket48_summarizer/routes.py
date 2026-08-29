@@ -27,18 +27,13 @@ from .media.overlays import (
     AI_COVER_HIGHLIGHT_MAX_LENGTH,
     AI_COVER_TITLE_MAX_LENGTH,
     COVER_DURATION_MS,
-    DEFAULT_SUBTITLE_BACKGROUND_COLOR,
     DEFAULT_SUBTITLE_FONT_SCALE,
-    DEFAULT_SUBTITLE_TEXT_COLOR,
-    MIN_SUBTITLE_CONTRAST_RATIO,
     SUBTITLE_FONT_SCALE_MAX,
     SUBTITLE_FONT_SCALE_MIN,
-    normalize_subtitle_color,
     normalize_ai_cover_extra_text,
     normalize_ai_cover_highlight,
     normalize_ai_cover_layout_style,
     normalize_ai_cover_title,
-    subtitle_contrast_ratio,
 )
 from .models import (
     AICoverLayoutStyle,
@@ -92,14 +87,6 @@ class CreateClipExportRequest(BaseModel):
         ge=SUBTITLE_FONT_SCALE_MIN,
         le=SUBTITLE_FONT_SCALE_MAX,
     )
-    subtitle_text_color: str = Field(
-        default=DEFAULT_SUBTITLE_TEXT_COLOR,
-        pattern=r"^#[0-9A-Fa-f]{6}$",
-    )
-    subtitle_background_color: str = Field(
-        default=DEFAULT_SUBTITLE_BACKGROUND_COLOR,
-        pattern=r"^#[0-9A-Fa-f]{6}$",
-    )
     output_layout: Literal["portrait", "landscape"] = "portrait"
     subtitle_font_family: Literal["wenkai", "serif", "sans"] = "wenkai"
     ai_cover_generation_id: str | None = Field(
@@ -108,14 +95,6 @@ class CreateClipExportRequest(BaseModel):
         max_length=128,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
-
-    @field_validator(
-        "subtitle_text_color",
-        "subtitle_background_color",
-    )
-    @classmethod
-    def normalize_color(cls, value: str) -> str:
-        return normalize_subtitle_color(value)
 
     @model_validator(mode="after")
     def validate_clip_style(self) -> CreateClipExportRequest:
@@ -133,16 +112,6 @@ class CreateClipExportRequest(BaseModel):
         ):
             raise ValueError("clip range bounds must match start and end")
         self.kept_ranges = ranges
-        if (
-            self.subtitle_mode != "off"
-            and self.output_layout == "portrait"
-            and subtitle_contrast_ratio(
-                self.subtitle_text_color,
-                self.subtitle_background_color,
-            )
-            < MIN_SUBTITLE_CONTRAST_RATIO
-        ):
-            raise ValueError("subtitle colors need at least 3:1 contrast")
         return self
 
 
@@ -627,8 +596,6 @@ def clip_export_payload(
         "subtitle_mode": record.subtitle_mode,
         "include_danmaku": record.include_danmaku,
         "subtitle_font_scale": record.subtitle_font_scale,
-        "subtitle_text_color": record.subtitle_text_color,
-        "subtitle_background_color": record.subtitle_background_color,
         "output_layout": record.output_layout,
         "subtitle_font_family": record.subtitle_font_family,
         "cover_enabled": record.cover_enabled,
@@ -1538,10 +1505,6 @@ async def create_clip_export(
             subtitle_mode=payload.subtitle_mode,
             include_danmaku=payload.include_danmaku,
             subtitle_font_scale=payload.subtitle_font_scale,
-            subtitle_text_color=payload.subtitle_text_color,
-            subtitle_background_color=(
-                payload.subtitle_background_color
-            ),
             output_layout=payload.output_layout,
             subtitle_font_family=payload.subtitle_font_family,
             ai_cover_generation_id=payload.ai_cover_generation_id,

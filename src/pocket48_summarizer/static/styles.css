@@ -620,9 +620,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 
 .clip-editor {
-  --clip-subtitle-text-color: #e43d12;
-  --clip-subtitle-background-color: #ebe9e1eb;
-  --clip-subtitle-border-color: #e43d1233;
   --clip-subtitle-zh-size: clamp(11px, 1.5vw, 17px);
   --clip-subtitle-en-size: clamp(9px, 1.2vw, 14px);
   --clip-lyric-current-size: 13px;
@@ -905,22 +902,23 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   width: fit-content;
   max-width: 94%;
   margin: 3px auto 0;
-  padding: 4px 9px;
-  border: 1px solid var(--clip-subtitle-border-color);
-  border-radius: 8px;
-  background: var(--clip-subtitle-background-color);
-  color: var(--clip-subtitle-text-color);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #fff;
   font-size: var(--clip-subtitle-zh-size);
   font-weight: 800;
   line-height: 1.35;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .22);
-  text-shadow: none;
+  box-shadow: none;
+  /* Stands in for the ASS black outline the export renders. */
+  paint-order: stroke fill;
+  -webkit-text-stroke: .14em #000;
 }
 .clip-preview-subtitles p + p {
-  color: var(--clip-subtitle-text-color);
+  color: #fff;
   font-size: var(--clip-subtitle-en-size);
   font-weight: 650;
-  opacity: .88;
+  -webkit-text-stroke-width: .1em;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-subtitles {
   top: 50%;
@@ -1190,19 +1188,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   opacity: .72;
 }
 .clip-lyric-stack p:nth-child(3) {
-  width: fit-content;
   max-width: 96%;
   margin: 0 auto;
-  padding: 4px 10px;
-  border: 1px solid var(--clip-subtitle-border-color);
-  border-radius: 8px;
-  background: var(--clip-subtitle-background-color);
-  color: var(--clip-subtitle-text-color);
+  color: #e8ebf2;
   font-size: var(--clip-lyric-current-size);
-  font-weight: 850;
   line-height: 1.35;
   white-space: pre-line;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
 }
 .clip-lyric-preview.is-hovering {
   border-color: rgba(228, 61, 18, .4);
@@ -1682,40 +1673,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   color: #81899b;
   font-size: 10px;
 }
-.clip-theme-preset {
-  display: grid;
-  min-width: 126px;
-  min-height: 48px;
-  grid-template-columns: 54px 1fr;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
-  border: 1px solid #3b4050;
-  border-radius: 11px;
-  background: #1b1f29;
-  color: #d8dce5;
-  font-size: 11px;
-  text-align: left;
-}
-.clip-theme-preset.is-selected {
-  border-color: rgba(228, 61, 18, .62);
-  background: rgba(228, 61, 18, .1);
-  box-shadow: 0 0 0 2px rgba(228, 61, 18, .08);
-}
-.clip-theme-swatches {
-  display: grid;
-  height: 27px;
-  grid-template-columns: repeat(5, 1fr);
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, .12);
-  border-radius: 7px;
-}
-.clip-theme-swatches i {
-  background: var(--swatch);
-}
 .clip-style-controls {
   display: grid;
-  grid-template-columns: 1.35fr 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 9px;
 }
 .clip-style-controls > label {
@@ -1749,9 +1709,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
-.clip-color-control output {
-  min-width: 52px;
-}
 .clip-font-family-control {
   grid-column: 1 / -1;
   grid-template-columns: auto minmax(0, 1fr) !important;
@@ -1777,21 +1734,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   color: #c8bdc1;
   font-size: 10px;
   line-height: 1.45;
-}
-.clip-style-panel.is-landscape-layout .clip-theme-preset,
-.clip-style-panel.is-landscape-layout .clip-color-control {
-  opacity: .46;
-}
-.clip-style-panel.is-landscape-layout .clip-theme-preset {
-  pointer-events: none;
-}
-.clip-subtitle-contrast {
-  min-height: 16px;
-  color: #72e4b0;
-  font-size: 10px;
-}
-.clip-subtitle-contrast.is-low {
-  color: #ff8aaa;
 }
 .ai-cover-panel {
   display: grid;
@@ -2126,20 +2068,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     font-weight: 700;
     box-shadow: none;
   }
-  .clip-color-control {
-    grid-template-columns: 30px minmax(42px, 1fr) !important;
-    row-gap: 5px !important;
-    padding: 7px 8px !important;
-  }
-  .clip-color-control > span {
-    grid-column: 1 / -1;
-    white-space: nowrap;
-  }
-  .clip-color-control output {
-    min-width: 0;
-    font-size: 9px;
-    text-align: right;
-  }
 }
 .secondary-button {
   border: 1px solid #3a4050;
@@ -2314,10 +2242,6 @@ code { color: #d4c8ff; }
   .clip-style-heading {
     align-items: stretch;
     flex-direction: column;
-  }
-  .clip-theme-preset {
-    width: 100%;
-    grid-template-columns: 72px 1fr;
   }
   .clip-lyric-preview {
     min-height: 138px;

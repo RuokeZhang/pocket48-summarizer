@@ -446,8 +446,6 @@ async def test_overlay_export_keeps_warning_across_upload_retry(
         subtitle_mode="zh",
         include_danmaku=True,
         subtitle_font_scale=125,
-        subtitle_text_color="#123456",
-        subtitle_background_color="#F0EEDD",
     )
     await service._tasks[record.id]
 
@@ -460,7 +458,8 @@ async def test_overlay_export_keeps_warning_across_upload_retry(
     assert "测试字幕" in ffmpeg.ass_content
     assert (
         "Style: SubtitleZh,Noto Sans CJK SC,131,"
-        "&H00563412,&H00563412,&H18DDEEF0,&H38DDEEF0"
+        "&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
+        "-1,0,0,0,100,100,0,0,1,7,0,2,"
         in ffmpeg.ass_content
     )
 

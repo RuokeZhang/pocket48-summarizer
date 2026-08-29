@@ -298,9 +298,9 @@ const clipLyricPrevious = document.querySelector("#clip-lyric-previous");
 const clipLyricCurrent = document.querySelector("#clip-lyric-current");
 const clipLyricNext = document.querySelector("#clip-lyric-next");
 const clipLyricNextTwo = document.querySelector("#clip-lyric-next-2");
-const clipThemeVibrantCalm = document.querySelector("#clip-theme-vibrant-calm");
 const clipStylePanel = document.querySelector("#clip-style-panel");
 const clipLandscapeStyleNote = document.querySelector("#clip-landscape-style-note");
+const clipPortraitStyleNote = document.querySelector("#clip-portrait-style-note");
 const clipOutputLayoutRadios = Array.from(
   document.querySelectorAll('input[name="clip-output-layout"]')
 );
@@ -308,11 +308,6 @@ const clipSubtitleFontScale = document.querySelector("#clip-subtitle-font-scale"
 const clipSubtitleFontScaleValue = document.querySelector("#clip-subtitle-font-scale-value");
 const clipSubtitleFontFamilyControl = document.querySelector("#clip-subtitle-font-family-control");
 const clipSubtitleFontFamily = document.querySelector("#clip-subtitle-font-family");
-const clipSubtitleTextColor = document.querySelector("#clip-subtitle-text-color");
-const clipSubtitleTextColorValue = document.querySelector("#clip-subtitle-text-color-value");
-const clipSubtitleBackgroundColor = document.querySelector("#clip-subtitle-background-color");
-const clipSubtitleBackgroundColorValue = document.querySelector("#clip-subtitle-background-color-value");
-const clipSubtitleContrast = document.querySelector("#clip-subtitle-contrast");
 const aiCoverPanel = document.querySelector("#ai-cover-panel");
 const aiCoverMarkTime = document.querySelector("#ai-cover-mark-time");
 const aiCoverTitleInput = document.querySelector("#ai-cover-title-input");
@@ -371,9 +366,8 @@ const CLIP_DEFAULT_FONT_SCALE = 100;
 const CLIP_SUBTITLE_BASE_SCALE = 1.6;
 const AI_COVER_POLL_MS = 1_500;
 const CLIP_DEFAULT_FONT_FAMILY = "wenkai";
-const CLIP_DEFAULT_TEXT_COLOR = "#E43D12";
-const CLIP_DEFAULT_BACKGROUND_COLOR = "#EBE9E1";
-const CLIP_MIN_CONTRAST_RATIO = 3;
+const CLIP_PORTRAIT_TEXT_COLOR = "#FFFFFF";
+const CLIP_PORTRAIT_OUTLINE_COLOR = "#000000";
 const CLIP_LANDSCAPE_TEXT_COLOR = "#E43D12";
 const CLIP_LANDSCAPE_BACKGROUND_COLOR = "#EBE9E1";
 const CLIP_LANDSCAPE_FONT_STACKS = {
@@ -647,11 +641,6 @@ const renderClipSegments = () => {
   }
 };
 
-const normalizeClipColor = (value, fallback) => {
-  const normalized = String(value || "").trim().toUpperCase();
-  return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : fallback;
-};
-
 const clipStyleValues = () => ({
   fontScale: Math.max(
     CLIP_SUBTITLE_FONT_SCALE_MIN,
@@ -659,14 +648,6 @@ const clipStyleValues = () => ({
       CLIP_SUBTITLE_FONT_SCALE_MAX,
       Number(clipSubtitleFontScale?.value) || CLIP_DEFAULT_FONT_SCALE
     )
-  ),
-  textColor: normalizeClipColor(
-    clipSubtitleTextColor?.value,
-    CLIP_DEFAULT_TEXT_COLOR
-  ),
-  backgroundColor: normalizeClipColor(
-    clipSubtitleBackgroundColor?.value,
-    CLIP_DEFAULT_BACKGROUND_COLOR
   ),
   fontFamily: Object.prototype.hasOwnProperty.call(
     CLIP_LANDSCAPE_FONT_STACKS,
@@ -676,50 +657,10 @@ const clipStyleValues = () => ({
     : CLIP_DEFAULT_FONT_FAMILY
 });
 
-const clipRelativeLuminance = (color) => {
-  const channels = [1, 3, 5].map((index) => (
-    Number.parseInt(color.slice(index, index + 2), 16) / 255
-  ));
-  const linear = channels.map((channel) => (
-    channel <= .04045
-      ? channel / 12.92
-      : ((channel + .055) / 1.055) ** 2.4
-  ));
-  return .2126 * linear[0] + .7152 * linear[1] + .0722 * linear[2];
-};
-
-const clipContrastRatio = (textColor, backgroundColor) => {
-  const textLuminance = clipRelativeLuminance(textColor);
-  const backgroundLuminance = clipRelativeLuminance(backgroundColor);
-  return (
-    (Math.max(textLuminance, backgroundLuminance) + .05)
-    / (Math.min(textLuminance, backgroundLuminance) + .05)
-  );
-};
-
-const clipUsesDefaultTheme = (textColor, backgroundColor) => (
-  textColor === CLIP_DEFAULT_TEXT_COLOR
-  && backgroundColor === CLIP_DEFAULT_BACKGROUND_COLOR
-);
-
 const applyClipSubtitleStyle = () => {
   if (!clipEditor) return;
-  const {
-    fontScale,
-    textColor,
-    backgroundColor,
-    fontFamily
-  } = clipStyleValues();
+  const { fontScale, fontFamily } = clipStyleValues();
   const scale = fontScale / 100 * CLIP_SUBTITLE_BASE_SCALE;
-  clipEditor.style.setProperty("--clip-subtitle-text-color", textColor);
-  clipEditor.style.setProperty(
-    "--clip-subtitle-background-color",
-    `${backgroundColor}E7`
-  );
-  clipEditor.style.setProperty(
-    "--clip-subtitle-border-color",
-    `${textColor}38`
-  );
   clipEditor.style.setProperty(
     "--clip-landscape-subtitle-font-family",
     CLIP_LANDSCAPE_FONT_STACKS[fontFamily]
@@ -747,28 +688,6 @@ const applyClipSubtitleStyle = () => {
   if (clipSubtitleFontScaleValue) {
     clipSubtitleFontScaleValue.textContent = `${fontScale}%`;
   }
-  if (clipSubtitleTextColorValue) {
-    clipSubtitleTextColorValue.textContent = textColor;
-  }
-  if (clipSubtitleBackgroundColorValue) {
-    clipSubtitleBackgroundColorValue.textContent = backgroundColor;
-  }
-  const ratio = clipContrastRatio(textColor, backgroundColor);
-  if (clipSubtitleContrast) {
-    clipSubtitleContrast.textContent = ratio >= CLIP_MIN_CONTRAST_RATIO
-      ? t("subtitleContrastGood", { ratio: ratio.toFixed(2) })
-      : t("subtitleContrastLow", { ratio: ratio.toFixed(2) });
-    clipSubtitleContrast.classList.toggle(
-      "is-low",
-      ratio < CLIP_MIN_CONTRAST_RATIO
-    );
-  }
-  const isDefaultTheme = clipUsesDefaultTheme(textColor, backgroundColor);
-  clipThemeVibrantCalm?.classList.toggle("is-selected", isDefaultTheme);
-  clipThemeVibrantCalm?.setAttribute(
-    "aria-pressed",
-    String(isDefaultTheme)
-  );
 };
 
 const applyClipOutputLayout = ({ resetRequest = true } = {}) => {
@@ -782,23 +701,14 @@ const applyClipOutputLayout = ({ resetRequest = true } = {}) => {
   if (clipLandscapeStyleNote) {
     clipLandscapeStyleNote.hidden = !landscape;
   }
+  if (clipPortraitStyleNote) {
+    clipPortraitStyleNote.hidden = landscape;
+  }
   if (clipSubtitleFontFamilyControl) {
     clipSubtitleFontFamilyControl.hidden = !landscape;
   }
   if (clipSubtitleFontFamily) {
     clipSubtitleFontFamily.disabled = !landscape;
-  }
-  if (clipSubtitleContrast) {
-    clipSubtitleContrast.hidden = landscape;
-  }
-  if (clipThemeVibrantCalm) {
-    clipThemeVibrantCalm.disabled = landscape;
-  }
-  if (clipSubtitleTextColor) {
-    clipSubtitleTextColor.disabled = landscape;
-  }
-  if (clipSubtitleBackgroundColor) {
-    clipSubtitleBackgroundColor.disabled = landscape;
   }
   if (resetRequest && clipEditorState) {
     clipEditorState.requestId = null;
@@ -1295,18 +1205,7 @@ const clipStyleLabel = (clip) => {
     }[clip.subtitle_font_family] || t("subtitleFontSans");
     return `${font} · ${t("landscapeFixedPalette")} · ${Number(clip.subtitle_font_scale) || CLIP_DEFAULT_FONT_SCALE}%`;
   }
-  const textColor = normalizeClipColor(
-    clip.subtitle_text_color,
-    "#FFFFFF"
-  );
-  const backgroundColor = normalizeClipColor(
-    clip.subtitle_background_color,
-    "#000000"
-  );
-  const theme = clipUsesDefaultTheme(textColor, backgroundColor)
-    ? t("vibrantCalmTheme")
-    : t("customSubtitleTheme");
-  return `${theme} · ${Number(clip.subtitle_font_scale) || CLIP_DEFAULT_FONT_SCALE}%`;
+  return `${t("portraitPlainSubtitle")} · ${Number(clip.subtitle_font_scale) || CLIP_DEFAULT_FONT_SCALE}%`;
 };
 
 const clipServerMessage = (message) => (
@@ -1372,10 +1271,10 @@ const renderClipExports = () => {
         const landscape = clip.output_layout === "landscape";
         const textColor = landscape
           ? CLIP_LANDSCAPE_TEXT_COLOR
-          : normalizeClipColor(clip.subtitle_text_color, "#FFFFFF");
+          : CLIP_PORTRAIT_TEXT_COLOR;
         const backgroundColor = landscape
           ? CLIP_LANDSCAPE_BACKGROUND_COLOR
-          : normalizeClipColor(clip.subtitle_background_color, "#000000");
+          : CLIP_PORTRAIT_OUTLINE_COLOR;
         const swatch = document.createElement("span");
         swatch.className = "clip-export-style-swatch";
         swatch.style.setProperty(
@@ -1480,17 +1379,6 @@ const clipValidationMessage = () => {
     && playbackTrack?.translation?.status !== "completed"
   ) {
     return t("clipEnglishUnavailable");
-  }
-  if (clipSubtitleMode?.value !== "off") {
-    const { textColor, backgroundColor } = clipStyleValues();
-    if (
-      clipOutputLayoutValue() === "portrait"
-      &&
-      clipContrastRatio(textColor, backgroundColor)
-      < CLIP_MIN_CONTRAST_RATIO
-    ) {
-      return t("subtitleContrastRequired");
-    }
   }
   return "";
 };
@@ -2801,12 +2689,6 @@ const openClipEditor = async (row, button) => {
   if (clipSubtitleFontFamily) {
     clipSubtitleFontFamily.value = CLIP_DEFAULT_FONT_FAMILY;
   }
-  if (clipSubtitleTextColor) {
-    clipSubtitleTextColor.value = CLIP_DEFAULT_TEXT_COLOR;
-  }
-  if (clipSubtitleBackgroundColor) {
-    clipSubtitleBackgroundColor.value = CLIP_DEFAULT_BACKGROUND_COLOR;
-  }
   applyClipSubtitleStyle();
   applyClipOutputLayout({ resetRequest: false });
   renderAICoverState();
@@ -2994,23 +2876,6 @@ const handleClipStyleChange = () => {
 
 clipSubtitleFontScale?.addEventListener("input", handleClipStyleChange);
 clipSubtitleFontFamily?.addEventListener("change", handleClipStyleChange);
-clipSubtitleTextColor?.addEventListener("input", handleClipStyleChange);
-clipSubtitleBackgroundColor?.addEventListener(
-  "input",
-  handleClipStyleChange
-);
-clipThemeVibrantCalm?.addEventListener("click", () => {
-  if (clipSubtitleFontScale) {
-    clipSubtitleFontScale.value = String(CLIP_DEFAULT_FONT_SCALE);
-  }
-  if (clipSubtitleTextColor) {
-    clipSubtitleTextColor.value = CLIP_DEFAULT_TEXT_COLOR;
-  }
-  if (clipSubtitleBackgroundColor) {
-    clipSubtitleBackgroundColor.value = CLIP_DEFAULT_BACKGROUND_COLOR;
-  }
-  handleClipStyleChange();
-});
 
 aiCoverTitleInput?.addEventListener("input", renderAICoverState);
 aiCoverPromptInput?.addEventListener("input", renderAICoverState);
@@ -3186,12 +3051,7 @@ clipEditorSubmit?.addEventListener("click", async () => {
     window.crypto?.randomUUID?.()
     || `clip-${Date.now()}-${Math.random().toString(16).slice(2)}`
   );
-  const {
-    fontScale,
-    textColor,
-    backgroundColor,
-    fontFamily
-  } = clipStyleValues();
+  const { fontScale, fontFamily } = clipStyleValues();
   const keptRanges = clipKeptRanges();
   try {
     const response = await apiFetch(
@@ -3208,8 +3068,6 @@ clipEditorSubmit?.addEventListener("click", async () => {
           subtitle_mode: clipSubtitleMode?.value || "zh",
           include_danmaku: Boolean(clipDanmakuEnabled?.checked),
           subtitle_font_scale: fontScale,
-          subtitle_text_color: textColor,
-          subtitle_background_color: backgroundColor,
           output_layout: clipOutputLayoutValue(),
           subtitle_font_family: fontFamily,
           ai_cover_generation_id: (

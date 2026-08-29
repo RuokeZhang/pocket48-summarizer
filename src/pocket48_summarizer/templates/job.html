@@ -544,21 +544,6 @@
                   <strong id="clip-style-title" data-i18n="subtitleStyle">字幕样式</strong>
                   <small data-i18n="subtitleStyleHint">实时预览会与最终导出保持一致</small>
                 </div>
-                <button
-                  id="clip-theme-vibrant-calm"
-                  class="clip-theme-preset is-selected"
-                  type="button"
-                  aria-pressed="true"
-                >
-                  <span class="clip-theme-swatches" aria-hidden="true">
-                    <i style="--swatch: #E43D12"></i>
-                    <i style="--swatch: #D6536D"></i>
-                    <i style="--swatch: #FFA2B6"></i>
-                    <i style="--swatch: #EFB11D"></i>
-                    <i style="--swatch: #EBE9E1"></i>
-                  </span>
-                  <span data-i18n="vibrantCalmTheme">活力柔和</span>
-                </button>
               </header>
               <p
                 id="clip-landscape-style-note"
@@ -591,29 +576,12 @@
                     <option value="sans" data-i18n="subtitleFontSans">思源黑体</option>
                   </select>
                 </label>
-                <label class="clip-color-control">
-                  <span data-i18n="subtitleTextColor">文字颜色</span>
-                  <input
-                    id="clip-subtitle-text-color"
-                    type="color"
-                    value="#e43d12"
-                  >
-                  <output id="clip-subtitle-text-color-value">#E43D12</output>
-                </label>
-                <label class="clip-color-control">
-                  <span data-i18n="subtitleBackgroundColor">字幕底色</span>
-                  <input
-                    id="clip-subtitle-background-color"
-                    type="color"
-                    value="#ebe9e1"
-                  >
-                  <output id="clip-subtitle-background-color-value">#EBE9E1</output>
-                </label>
               </div>
-              <output
-                id="clip-subtitle-contrast"
-                class="clip-subtitle-contrast"
-              ></output>
+              <p
+                id="clip-portrait-style-note"
+                class="clip-landscape-style-note"
+                data-i18n="clipPortraitStyleNote"
+              >竖屏字幕固定为纯白文字加黑色描边；字号可调整。</p>
             </section>
 
             <section
