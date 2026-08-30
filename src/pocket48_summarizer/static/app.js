@@ -311,6 +311,10 @@ const clipSubtitleFontScale = document.querySelector("#clip-subtitle-font-scale"
 const clipSubtitleFontScaleValue = document.querySelector("#clip-subtitle-font-scale-value");
 const clipSubtitleFontFamilyControl = document.querySelector("#clip-subtitle-font-family-control");
 const clipSubtitleFontFamily = document.querySelector("#clip-subtitle-font-family");
+const clipLandscapeThemeControl = document.querySelector("#clip-landscape-theme-control");
+const clipLandscapeThemeRadios = Array.from(
+  document.querySelectorAll('input[name="clip-landscape-theme"]')
+);
 const aiCoverPanel = document.querySelector("#ai-cover-panel");
 const aiCoverMarkTime = document.querySelector("#ai-cover-mark-time");
 const aiCoverTitleInput = document.querySelector("#ai-cover-title-input");
@@ -369,10 +373,9 @@ const CLIP_SUBTITLE_BASE_SCALE = 1.6;
 const CLIP_ASS_ADVANCE = .69;
 const AI_COVER_POLL_MS = 1_500;
 const CLIP_DEFAULT_FONT_FAMILY = "wenkai";
+const CLIP_DEFAULT_LANDSCAPE_THEME = "cream";
 const CLIP_PORTRAIT_TEXT_COLOR = "#FFFFFF";
 const CLIP_PORTRAIT_OUTLINE_COLOR = "#000000";
-const CLIP_LANDSCAPE_TEXT_COLOR = "#E43D12";
-const CLIP_LANDSCAPE_BACKGROUND_COLOR = "#EBE9E1";
 const CLIP_LANDSCAPE_FONT_STACKS = {
   wenkai: '"LXGW WenKai", "Kaiti SC", STKaiti, serif',
   serif: '"Noto Serif CJK SC", "Songti SC", STSong, serif',
@@ -657,12 +660,19 @@ const clipStyleValues = () => ({
     clipSubtitleFontFamily?.value
   )
     ? clipSubtitleFontFamily.value
-    : CLIP_DEFAULT_FONT_FAMILY
+    : CLIP_DEFAULT_FONT_FAMILY,
+  landscapeTheme: (
+    clipLandscapeThemeRadios.find((input) => input.checked)?.value
+    || CLIP_DEFAULT_LANDSCAPE_THEME
+  )
 });
 
 const applyClipSubtitleStyle = () => {
   if (!clipEditor) return;
-  const { fontScale, fontFamily } = clipStyleValues();
+  const { fontScale, fontFamily, landscapeTheme } = clipStyleValues();
+  if (clipPreviewStage) {
+    clipPreviewStage.dataset.theme = landscapeTheme;
+  }
   const scale = fontScale / 100 * CLIP_SUBTITLE_BASE_SCALE;
   clipEditor.style.setProperty(
     "--clip-landscape-subtitle-font-family",
@@ -721,6 +731,12 @@ const applyClipOutputLayout = ({ resetRequest = true } = {}) => {
   }
   if (clipSubtitleFontFamily) {
     clipSubtitleFontFamily.disabled = !landscape;
+  }
+  if (clipLandscapeThemeControl) {
+    clipLandscapeThemeControl.hidden = !landscape;
+  }
+  for (const input of clipLandscapeThemeRadios) {
+    input.disabled = !landscape;
   }
   if (resetRequest && clipEditorState) {
     clipEditorState.requestId = null;
@@ -1225,7 +1241,15 @@ const clipStyleLabel = (clip) => {
       serif: t("subtitleFontSerif"),
       sans: t("subtitleFontSans")
     }[clip.subtitle_font_family] || t("subtitleFontSans");
-    return `${font} · ${t("landscapeFixedPalette")} · ${Number(clip.subtitle_font_scale) || CLIP_DEFAULT_FONT_SCALE}%`;
+    const theme = {
+      cream: t("landscapeThemeCream"),
+      denim: t("landscapeThemeDenim"),
+      mint: t("landscapeThemeMint"),
+      sakura: t("landscapeThemeSakura"),
+      matcha: t("landscapeThemeMatcha"),
+      ink: t("landscapeThemeInk")
+    }[clip.landscape_theme] || t("landscapeThemeCream");
+    return `${font} · ${theme} · ${Number(clip.subtitle_font_scale) || CLIP_DEFAULT_FONT_SCALE}%`;
   }
   return `${t("portraitPlainSubtitle")} · ${Number(clip.subtitle_font_scale) || CLIP_DEFAULT_FONT_SCALE}%`;
 };
@@ -1291,12 +1315,21 @@ const renderClipExports = () => {
       );
       if (clip.subtitle_mode !== "off") {
         const landscape = clip.output_layout === "landscape";
-        const textColor = landscape
-          ? CLIP_LANDSCAPE_TEXT_COLOR
-          : CLIP_PORTRAIT_TEXT_COLOR;
-        const backgroundColor = landscape
-          ? CLIP_LANDSCAPE_BACKGROUND_COLOR
-          : CLIP_PORTRAIT_OUTLINE_COLOR;
+        const themeInput = clipLandscapeThemeRadios.find(
+          (input) => input.value === (
+            clip.landscape_theme || CLIP_DEFAULT_LANDSCAPE_THEME
+          )
+        );
+        const textColor = (
+          landscape
+            ? themeInput?.dataset.themeSubtitle
+            : CLIP_PORTRAIT_TEXT_COLOR
+        ) || CLIP_PORTRAIT_TEXT_COLOR;
+        const backgroundColor = (
+          landscape
+            ? themeInput?.dataset.themeBackground
+            : CLIP_PORTRAIT_OUTLINE_COLOR
+        ) || CLIP_PORTRAIT_OUTLINE_COLOR;
         const swatch = document.createElement("span");
         swatch.className = "clip-export-style-swatch";
         swatch.style.setProperty(
@@ -2707,6 +2740,9 @@ const openClipEditor = async (row, button) => {
   if (clipSubtitleFontFamily) {
     clipSubtitleFontFamily.value = CLIP_DEFAULT_FONT_FAMILY;
   }
+  for (const input of clipLandscapeThemeRadios) {
+    input.checked = input.value === CLIP_DEFAULT_LANDSCAPE_THEME;
+  }
   applyClipSubtitleStyle();
   applyClipOutputLayout({ resetRequest: false });
   renderAICoverState();
@@ -2894,6 +2930,11 @@ const handleClipStyleChange = () => {
 
 clipSubtitleFontScale?.addEventListener("input", handleClipStyleChange);
 clipSubtitleFontFamily?.addEventListener("change", handleClipStyleChange);
+for (const input of clipLandscapeThemeRadios) {
+  input.addEventListener("change", () => {
+    if (input.checked) handleClipStyleChange();
+  });
+}
 
 aiCoverTitleInput?.addEventListener("input", renderAICoverState);
 aiCoverPromptInput?.addEventListener("input", renderAICoverState);
@@ -3087,7 +3128,7 @@ clipEditorSubmit?.addEventListener("click", async () => {
     window.crypto?.randomUUID?.()
     || `clip-${Date.now()}-${Math.random().toString(16).slice(2)}`
   );
-  const { fontScale, fontFamily } = clipStyleValues();
+  const { fontScale, fontFamily, landscapeTheme } = clipStyleValues();
   const keptRanges = clipKeptRanges();
   try {
     const response = await apiFetch(
@@ -3106,6 +3147,7 @@ clipEditorSubmit?.addEventListener("click", async () => {
           subtitle_font_scale: fontScale,
           output_layout: clipOutputLayoutValue(),
           subtitle_font_family: fontFamily,
+          landscape_theme: landscapeTheme,
           ai_cover_generation_id: (
             clipOutputLayoutValue() === "landscape"
               ? clipEditorState.aiCoverGenerationId

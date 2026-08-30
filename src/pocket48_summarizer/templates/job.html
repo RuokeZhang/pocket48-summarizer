@@ -1,6 +1,19 @@
 {% extends "base.html" %}
 {% block title %}{{ job.title or "处理回放" }}{% endblock %}
 {% block head_scripts %}
+  <style>
+    {% for theme in landscape_themes %}
+      .clip-preview-stage.is-landscape-layout[data-theme="{{ theme.key }}"] {
+        --landscape-background: {{ theme.background }};
+        --landscape-subtitle-zh: {{ theme.subtitle_zh }};
+        --landscape-subtitle-en: {{ theme.subtitle_en }};
+        --landscape-danmaku-author: {{ theme.danmaku_author }};
+        --landscape-danmaku-text: {{ theme.danmaku_text }};
+        --landscape-danmaku-background: {{ theme.danmaku_background }};
+        --landscape-watermark: {{ theme.watermark }};
+      }
+    {% endfor %}
+  </style>
   <script defer src="{{ url_for('static', path='/hls-1.7.1.min.js') }}"></script>
 {% endblock %}
 {% block content %}
@@ -270,7 +283,11 @@
 
         <div class="clip-editor-content">
           <section class="clip-preview-card">
-            <div id="clip-preview-stage" class="clip-preview-stage">
+            <div
+              id="clip-preview-stage"
+              class="clip-preview-stage"
+              data-theme="cream"
+            >
               <video
                 id="clip-preview-player"
                 controls
@@ -333,7 +350,7 @@
                 <span class="clip-layout-icon is-landscape" aria-hidden="true"></span>
                 <span>
                   <strong data-i18n="clipLandscapeLayout">横屏 16:9</strong>
-                  <small data-i18n="clipLandscapeLayoutHint">米白画布 · 中间视频 · 两侧信息</small>
+                  <small data-i18n="clipLandscapeLayoutHint">可选画布 · 中间视频 · 两侧信息</small>
                 </span>
               </label>
             </fieldset>
@@ -558,7 +575,7 @@
                 class="clip-landscape-style-note"
                 hidden
                 data-i18n="clipLandscapeStyleNote"
-              >横屏固定使用米白画布、红色字幕和玫瑰粉弹幕；字号和字体可调整。</p>
+              >选择整套横屏配色；画布、字幕、弹幕和水印会保持一致。</p>
               <div class="clip-style-controls">
                 <label class="clip-font-scale-control">
                   <span data-i18n="subtitleFontSize">字幕字号</span>
@@ -584,6 +601,36 @@
                     <option value="sans" data-i18n="subtitleFontSans">思源黑体</option>
                   </select>
                 </label>
+                <fieldset
+                  id="clip-landscape-theme-control"
+                  class="clip-theme-control"
+                  hidden
+                >
+                  <legend data-i18n="landscapeTheme">横屏配色</legend>
+                  <div class="clip-theme-options">
+                    {% for theme in landscape_themes %}
+                      <label class="clip-theme-option">
+                        <input
+                          type="radio"
+                          name="clip-landscape-theme"
+                          value="{{ theme.key }}"
+                          data-theme-background="{{ theme.background }}"
+                          data-theme-subtitle="{{ theme.subtitle_zh }}"
+                          {% if theme.key == "cream" %}checked{% endif %}
+                        >
+                        <span
+                          class="clip-theme-swatch"
+                          style="--theme-bg: {{ theme.background }}; --theme-primary: {{ theme.subtitle_zh }}; --theme-secondary: {{ theme.subtitle_en }};"
+                          aria-hidden="true"
+                        >
+                          <i></i><i></i><i></i>
+                        </span>
+                        <span data-i18n="landscapeTheme{{ theme.key|capitalize }}">{{ landscape_theme_labels[theme.key] }}</span>
+                      </label>
+                    {% endfor %}
+                  </div>
+                  <small data-i18n="landscapeThemeHint">画布、字幕、弹幕和水印会一起切换</small>
+                </fieldset>
               </div>
               <p
                 id="clip-portrait-style-note"

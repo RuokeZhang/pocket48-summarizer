@@ -115,6 +115,7 @@ class OverlayFFmpeg(FakeFFmpeg):
         self.cover_timestamp_ms = None
         self.cover_duration_ms = None
         self.output_layout = ""
+        self.landscape_theme = ""
         self.ai_cover_bytes = None
         self.ai_cover_dimensions = None
 
@@ -141,6 +142,7 @@ class OverlayFFmpeg(FakeFFmpeg):
         if ass_path is not None:
             self.ass_content = ass_path.read_text(encoding="utf-8")
         self.output_layout = output_layout
+        self.landscape_theme = landscape_theme
         self.ai_cover_bytes = (
             cover_path.read_bytes() if cover_path is not None else None
         )
@@ -168,6 +170,7 @@ class OverlayFFmpeg(FakeFFmpeg):
         self.cover_ass_content = ass_path.read_text(encoding="utf-8")
         self.cover_timestamp_ms = timestamp_ms
         self.output_layout = output_layout
+        self.landscape_theme = landscape_theme
         return await super().render_cover_frame(
             manifest_url,
             output_path,
@@ -514,6 +517,7 @@ async def test_landscape_export_uses_fixed_canvas_overlay(
         include_danmaku=False,
         output_layout="landscape",
         subtitle_font_family="serif",
+        landscape_theme="ink",
     )
     await service._tasks[record.id]
 
@@ -522,8 +526,11 @@ async def test_landscape_export_uses_fixed_canvas_overlay(
     assert completed.status == "completed"
     assert completed.output_layout == "landscape"
     assert completed.subtitle_font_family == "serif"
+    assert completed.landscape_theme == "ink"
     assert ffmpeg.output_layout == "landscape"
+    assert ffmpeg.landscape_theme == "ink"
     assert "PlayResX: 1920" in ffmpeg.ass_content
+    assert "&H00C8E6F5" in ffmpeg.ass_content
     assert "Style: LandscapeSubtitleZh,Noto Serif CJK SC,52," in (
         ffmpeg.ass_content
     )

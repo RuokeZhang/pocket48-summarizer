@@ -904,9 +904,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   object-fit: contain;
 }
 .clip-preview-stage.is-landscape-layout {
+  --landscape-background: #ebe9e1;
+  --landscape-subtitle-zh: #e43d12;
+  --landscape-subtitle-en: #d6536d;
+  --landscape-danmaku-author: #d6536d;
+  --landscape-danmaku-text: #5b3a42;
+  --landscape-danmaku-background: #fff8f6;
+  --landscape-watermark: #5b3a42;
   min-height: 0;
   aspect-ratio: 16 / 9;
-  background: #ebe9e1;
+  background: var(--landscape-background);
   isolation: isolate;
   /* Only the landscape stage has a definite height for cq* units, and only
      it may be size-contained: containment would flatten the portrait
@@ -949,7 +956,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   position: absolute;
   z-index: 2;
   inset: 0;
-  color: rgba(91, 58, 66, .75);
+  color: var(--landscape-watermark);
+  opacity: .75;
   font-size: 2.78cqh;
   line-height: 1;
   pointer-events: none;
@@ -1024,7 +1032,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: #e43d12;
+  color: var(--landscape-subtitle-zh);
   font-family: var(
     --clip-landscape-subtitle-font-family,
     "Noto Sans CJK SC",
@@ -1038,7 +1046,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   box-shadow: none;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-subtitles p + p {
-  color: #d6536d;
+  color: var(--landscape-subtitle-en);
   font-size: var(--clip-landscape-subtitle-en-size);
   opacity: .88;
 }
@@ -1119,20 +1127,32 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku article {
   padding: 1.11cqh .73cqw;
-  border-color: rgba(214, 83, 109, .34);
+  border-color: color-mix(
+    in srgb,
+    var(--landscape-danmaku-author) 34%,
+    transparent
+  );
   border-radius: 1.85cqh 1.85cqh 1.85cqh .65cqh;
-  background: rgba(255, 248, 246, .96);
-  box-shadow: 0 4px 12px rgba(91, 58, 66, .1);
+  background: color-mix(
+    in srgb,
+    var(--landscape-danmaku-background) 96%,
+    transparent
+  );
+  box-shadow: 0 4px 12px color-mix(
+    in srgb,
+    var(--landscape-danmaku-text) 10%,
+    transparent
+  );
   backdrop-filter: none;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku strong {
-  color: #d6536d;
+  color: var(--landscape-danmaku-author);
   font-size: 1.67cqh;
   line-height: 1.2;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku p {
   margin-top: .28cqh;
-  color: #5b3a42;
+  color: var(--landscape-danmaku-text);
   font-size: 2.04cqh;
   line-height: 1.3;
   text-shadow: none;
@@ -1835,6 +1855,80 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   color: #e5e8ef;
   font: inherit;
 }
+.clip-theme-control {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 10px 10px;
+  border: 1px solid #303543;
+  border-radius: 10px;
+  background: rgba(8, 10, 15, .34);
+}
+.clip-theme-control[hidden] {
+  display: none;
+}
+.clip-theme-control legend {
+  padding: 0 4px;
+  color: #cbd0db;
+  font-size: 11px;
+}
+.clip-theme-control > small {
+  display: block;
+  margin-top: 7px;
+  color: #81899b;
+  font-size: 9px;
+}
+.clip-theme-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+.clip-theme-option {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 6px;
+  border: 1px solid #343a49;
+  border-radius: 9px;
+  background: #0d1017;
+  color: #cbd0db;
+  cursor: pointer;
+  font-size: 10px;
+}
+.clip-theme-option:has(input:checked) {
+  border-color: #ff91ad;
+  background: rgba(214, 83, 109, .09);
+  box-shadow: 0 0 0 1px rgba(214, 83, 109, .18);
+}
+.clip-theme-option:has(input:focus-visible) {
+  outline: 2px solid #ffb0c4;
+  outline-offset: 2px;
+}
+.clip-theme-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.clip-theme-swatch {
+  display: grid;
+  width: 34px;
+  height: 23px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 6px;
+  grid-template-columns: 2fr 1fr 1fr;
+}
+.clip-theme-swatch i:nth-child(1) {
+  background: var(--theme-bg);
+}
+.clip-theme-swatch i:nth-child(2) {
+  background: var(--theme-primary);
+}
+.clip-theme-swatch i:nth-child(3) {
+  background: var(--theme-secondary);
+}
 .clip-landscape-style-note {
   margin: -3px 0 0;
   padding: 8px 10px;
@@ -2372,6 +2466,9 @@ code { color: #d4c8ff; }
     display: none;
   }
   .clip-font-family-control {
+    display: none !important;
+  }
+  .clip-theme-control {
     display: none !important;
   }
   .ai-cover-panel {

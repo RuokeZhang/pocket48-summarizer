@@ -140,6 +140,25 @@ def test_clip_command_builds_landscape_canvas_before_ass(settings):
     )
 
 
+def test_clip_command_uses_selected_landscape_theme(settings):
+    runner = FFmpegRunner(settings)
+
+    command = runner.build_clip_command(
+        MANIFEST_URL,
+        Path("/tmp/clip.mp4"),
+        start_ms=1000,
+        end_ms=5000,
+        ass_path=Path("/tmp/overlay.ass"),
+        output_layout="landscape",
+        landscape_theme="ink",
+    )
+
+    assert (
+        "pad=1920:1080:(ow-iw)/2:0:color=0x1C1D22"
+        in command[command.index("-vf") + 1]
+    )
+
+
 def test_cover_frame_command_seeks_and_matches_landscape_canvas(settings):
     runner = FFmpegRunner(settings)
 
@@ -157,6 +176,24 @@ def test_cover_frame_command_seeks_and_matches_landscape_canvas(settings):
     assert "pad=1920:1080:(ow-iw)/2:0:color=0xEBE9E1" in vf
     assert "ass=filename='/tmp/cover title.ass'" in vf
     assert command[-1] == "/tmp/cover.png"
+
+
+def test_cover_frame_command_uses_selected_landscape_theme(settings):
+    runner = FFmpegRunner(settings)
+
+    command = runner.build_cover_frame_command(
+        MANIFEST_URL,
+        Path("/tmp/cover.png"),
+        timestamp_ms=45_250,
+        ass_path=Path("/tmp/cover title.ass"),
+        output_layout="landscape",
+        landscape_theme="matcha",
+    )
+
+    assert (
+        "pad=1920:1080:(ow-iw)/2:0:color=0xE6EDD6"
+        in command[command.index("-vf") + 1]
+    )
 
 
 def test_prepend_cover_command_delays_audio_until_cover_finishes(settings):

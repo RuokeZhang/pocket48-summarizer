@@ -18,11 +18,16 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .auth import AuthContext
 from .datetimes import format_china_datetime as format_china_time
 from .errors import AppError
-from .media.clips import ClipState
-from .media.fonts import emoji_font_family
 from .media.ai_covers import (
     AI_COVER_PROMPT_MAX_LENGTH,
     DEFAULT_AI_COVER_PROMPT,
+)
+from .media.clips import ClipState
+from .media.fonts import emoji_font_family
+from .media.layouts import (
+    DEFAULT_LANDSCAPE_THEME,
+    LANDSCAPE_THEMES,
+    LandscapeThemeKey,
 )
 from .media.overlays import (
     AI_COVER_EXTRA_TEXT_MAX_ITEMS,
@@ -91,6 +96,7 @@ class CreateClipExportRequest(BaseModel):
     )
     output_layout: Literal["portrait", "landscape"] = "portrait"
     subtitle_font_family: Literal["wenkai", "serif", "sans"] = "wenkai"
+    landscape_theme: LandscapeThemeKey = DEFAULT_LANDSCAPE_THEME
     ai_cover_generation_id: str | None = Field(
         default=None,
         min_length=1,
@@ -593,6 +599,7 @@ def clip_export_payload(
         "subtitle_font_scale": record.subtitle_font_scale,
         "output_layout": record.output_layout,
         "subtitle_font_family": record.subtitle_font_family,
+        "landscape_theme": record.landscape_theme,
         "cover_enabled": record.cover_enabled,
         "cover_timestamp_ms": record.cover_timestamp_ms,
         "cover_title": record.cover_title,
@@ -1044,6 +1051,15 @@ async def job_page(request: Request, job_id: str) -> Response:
             ),
             "ai_cover_default_prompt": DEFAULT_AI_COVER_PROMPT,
             "ai_cover_prompt_max_length": AI_COVER_PROMPT_MAX_LENGTH,
+            "landscape_themes": list(LANDSCAPE_THEMES.values()),
+            "landscape_theme_labels": {
+                "cream": "暖米白",
+                "denim": "丹宁蓝",
+                "mint": "薄荷珊瑚",
+                "sakura": "樱花粉",
+                "matcha": "抹茶",
+                "ink": "墨夜",
+            },
             "ai_cover_configured": not (
                 request.app.state.settings
                 .missing_ai_cover_configuration()
@@ -1612,6 +1628,7 @@ async def create_clip_export(
             subtitle_font_scale=payload.subtitle_font_scale,
             output_layout=payload.output_layout,
             subtitle_font_family=payload.subtitle_font_family,
+            landscape_theme=payload.landscape_theme,
             ai_cover_generation_id=payload.ai_cover_generation_id,
         )
     return JSONResponse(

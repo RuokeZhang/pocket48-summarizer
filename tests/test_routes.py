@@ -66,6 +66,7 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
     assert payload.subtitle_font_scale == 100
     assert payload.output_layout == "portrait"
     assert payload.subtitle_font_family == "wenkai"
+    assert payload.landscape_theme == "cream"
     assert payload.ai_cover_generation_id is None
     assert payload.kept_ranges == [
         ClipRange(start_ms=1000, end_ms=5000)
@@ -78,8 +79,20 @@ def test_clip_export_request_uses_vibrant_calm_defaults():
         end_ms=5000,
         subtitle_mode="zh",
         output_layout="landscape",
+        landscape_theme="ink",
     )
     assert landscape.output_layout == "landscape"
+    assert landscape.landscape_theme == "ink"
+    with pytest.raises(ValueError):
+        CreateClipExportRequest(
+            request_id="request-invalid-theme",
+            timeline_index=0,
+            start_ms=1000,
+            end_ms=5000,
+            subtitle_mode="zh",
+            output_layout="landscape",
+            landscape_theme="neon",
+        )
 
 class DummyClipper:
     def __init__(self, output_path, repository=None):
@@ -114,6 +127,7 @@ class DummyClipper:
             subtitle_font_scale=kwargs["subtitle_font_scale"],
             output_layout=kwargs["output_layout"],
             subtitle_font_family=kwargs["subtitle_font_family"],
+            landscape_theme=kwargs["landscape_theme"],
             ai_cover_generation_id=kwargs["ai_cover_generation_id"],
             render_version="ass-v2",
             filename=self.state.output_path.name,
@@ -334,7 +348,7 @@ def test_rejects_ssrf_input(settings, repository):
 
 
 def test_job_page_shows_peak_summary_and_clickable_author(
-    settings, repository
+    settings, repository, tmp_path
 ):
     job, _ = repository.create_or_get_job(
         "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=223344",
@@ -377,9 +391,19 @@ def test_job_page_shows_peak_summary_and_clickable_author(
         ],
     )
     repository.save_summary(job.id, summary.model_dump_json(), "# 测试")
+    repository.set_media_details(
+        job.id,
+        "https://idol-vod.48.cn/path/replay.m3u8",
+        60_000,
+    )
+    clipper = DummyClipper(tmp_path / "clip.mp4", repository)
     app = create_app(
         settings,
-        ApplicationServices(repository=repository, worker=DummyWorker()),
+        ApplicationServices(
+            repository=repository,
+            worker=DummyWorker(),
+            clipper=clipper,
+        ),
     )
 
     with TestClient(app) as client:
@@ -389,6 +413,13 @@ def test_job_page_shows_peak_summary_and_clickable_author(
     assert "主播讲述近况，弹幕样本显示观众很开心。" in page.text
     assert 'class="danmaku-author"' in page.text
     assert 'data-danmaku-author="fan-42"' in page.text
+    assert page.text.count('name="clip-landscape-theme"') == 6
+    assert (
+        'class="clip-preview-stage"\n              data-theme="cream"'
+        in page.text
+    )
+    assert 'value="ink"' in page.text
+    assert "--landscape-background: #1C1D22" in page.text
 
 
 def test_rejects_untrusted_host_header(settings, repository):
@@ -616,6 +647,7 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "subtitle_background_color": "#EBE9E1",
                 "output_layout": "landscape",
                 "subtitle_font_family": "serif",
+                "landscape_theme": "mint",
                 "ai_cover_generation_id": generation.id,
             },
             headers=csrf_headers(alice),
@@ -634,6 +666,7 @@ def test_configurable_clip_export_routes_preserve_versions(
                 "subtitle_background_color": "#EBE9E1",
                 "output_layout": "landscape",
                 "subtitle_font_family": "serif",
+                "landscape_theme": "mint",
                 "ai_cover_generation_id": generation.id,
             },
             headers=csrf_headers(alice),
@@ -752,6 +785,7 @@ def test_configurable_clip_export_routes_preserve_versions(
     assert created.json()["subtitle_font_scale"] == 125
     assert created.json()["output_layout"] == "landscape"
     assert created.json()["subtitle_font_family"] == "serif"
+    assert created.json()["landscape_theme"] == "mint"
     assert created.json()["cover_enabled"] is False
     assert created.json()["ai_cover_generation_id"] == generation.id
     assert created.json()["cover_duration_ms"] == 0
@@ -761,6 +795,7 @@ def test_configurable_clip_export_routes_preserve_versions(
     assert first_started["subtitle_font_scale"] == 125
     assert first_started["output_layout"] == "landscape"
     assert first_started["subtitle_font_family"] == "serif"
+    assert first_started["landscape_theme"] == "mint"
     assert first_started["ai_cover_generation_id"] == generation.id
     cut_started = next(
         item
@@ -1802,9 +1837,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-12" in page.text
-    assert "styles.css?v=20260829-12" in page.text
-    assert "app.js?v=20260829-12" in page.text
+    assert "i18n.js?v=20260829-13" in page.text
+    assert "styles.css?v=20260829-13" in page.text
+    assert "app.js?v=20260829-13" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

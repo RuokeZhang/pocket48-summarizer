@@ -320,6 +320,71 @@ def test_landscape_overlay_maps_selectable_fonts(font_family, font_name):
     assert f"Style: LandscapeSubtitleZh,{font_name},52," in document.content
 
 
+@pytest.mark.parametrize("theme_key", LANDSCAPE_THEMES)
+def test_landscape_overlay_uses_every_registered_theme(theme_key):
+    theme = LANDSCAPE_THEMES[theme_key]
+    document = build_clip_overlay(
+        width=1920,
+        height=1080,
+        clip_start_ms=0,
+        clip_end_ms=3000,
+        subtitle_mode="zh",
+        include_danmaku=True,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=3000,
+                text="配色测试",
+            )
+        ],
+        translations={},
+        danmaku=[
+            DanmakuEntry(
+                sequence=1,
+                timestamp_ms=1000,
+                author="测试成员",
+                text="测试弹幕",
+            )
+        ],
+        output_layout="landscape",
+        landscape_theme=theme_key,
+    )
+
+    def ass_color(value: str) -> str:
+        red, green, blue = (
+            value[1:3],
+            value[3:5],
+            value[5:7],
+        )
+        return f"&H00{blue}{green}{red}"
+
+    assert ass_color(theme.subtitle_zh) in document.content
+    assert ass_color(theme.danmaku_author) in document.content
+    assert ass_color(theme.danmaku_text) in document.content
+
+
+def test_landscape_overlay_rejects_an_unknown_theme():
+    with pytest.raises(AppError) as raised:
+        build_clip_overlay(
+            width=1920,
+            height=1080,
+            clip_start_ms=0,
+            clip_end_ms=3000,
+            subtitle_mode="off",
+            include_danmaku=False,
+            font_name="Noto Sans CJK SC",
+            transcript=[],
+            translations={},
+            danmaku=[],
+            output_layout="landscape",
+            landscape_theme="unknown",
+        )
+
+    assert raised.value.code == "clip_theme_invalid"
+
+
 def test_landscape_overlay_wraps_long_subtitle_inside_left_panel():
     document = build_clip_overlay(
         width=1920,

@@ -471,4 +471,5 @@ def test_configurable_clip_migration_backfills_legacy_rows_idempotently(
     assert exports[0].subtitle_background_color == "#000000"
     assert exports[0].output_layout == "portrait"
     assert exports[0].subtitle_font_family == "sans"
+    assert exports[0].landscape_theme == "cream"
     assert exports[0].status == "completed"

@@ -75,6 +75,7 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
         subtitle_background_color="#EBE9E1",
         output_layout="landscape",
         subtitle_font_family="serif",
+        landscape_theme="matcha",
         cover_enabled=True,
         cover_timestamp_ms=2500,
         cover_title="第一段封面",
@@ -121,6 +122,7 @@ def test_clip_exports_keep_versions_and_deduplicate_request(repository):
     assert duplicate.subtitle_background_color == "#EBE9E1"
     assert duplicate.output_layout == "landscape"
     assert duplicate.subtitle_font_family == "serif"
+    assert duplicate.landscape_theme == "matcha"
     assert duplicate.cover_enabled
     assert duplicate.cover_timestamp_ms == 2500
     assert duplicate.cover_title == "第一段封面"
