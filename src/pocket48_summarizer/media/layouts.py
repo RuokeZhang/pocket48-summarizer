@@ -5,7 +5,9 @@ from typing import Literal
 
 ClipOutputLayout = Literal["portrait", "landscape"]
 LandscapeSubtitleFont = Literal["wenkai", "serif", "sans"]
-LandscapeThemeKey = Literal["cream", "denim", "mint"]
+LandscapeThemeKey = Literal[
+    "cream", "denim", "mint", "sakura", "matcha", "ink"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,11 +61,44 @@ LANDSCAPE_THEMES: dict[str, LandscapeTheme] = {
         key="mint",
         background="#D4EAE8",
         subtitle_zh="#D9512F",
-        subtitle_en="#C77F14",
+        subtitle_en="#2F5551",
         danmaku_author="#D9512F",
         danmaku_text="#2F5551",
         danmaku_background="#FBFEFD",
         watermark="#2F5551",
+    ),
+    "sakura": LandscapeTheme(
+        key="sakura",
+        background="#FBE4EC",
+        subtitle_zh="#C2185B",
+        subtitle_en="#7A4A5C",
+        danmaku_author="#C2185B",
+        danmaku_text="#5A3644",
+        danmaku_background="#FFFFFF",
+        watermark="#5A3644",
+    ),
+    "matcha": LandscapeTheme(
+        key="matcha",
+        background="#E6EDD6",
+        subtitle_zh="#4F6B25",
+        subtitle_en="#A9541B",
+        danmaku_author="#A9541B",
+        danmaku_text="#3E4A2E",
+        danmaku_background="#FCFEF7",
+        watermark="#3E4A2E",
+    ),
+    # The only dark canvas in the set, so it is the one that proves every
+    # colour is really driven by the theme: anything still hard-coded for a
+    # light background shows up here immediately.
+    "ink": LandscapeTheme(
+        key="ink",
+        background="#1C1D22",
+        subtitle_zh="#F5E6C8",
+        subtitle_en="#E0A96D",
+        danmaku_author="#E0A96D",
+        danmaku_text="#ECE7DE",
+        danmaku_background="#2A2C34",
+        watermark="#ECE7DE",
     ),
 }
 DEFAULT_LANDSCAPE_THEME: LandscapeThemeKey = "cream"
@@ -128,8 +163,14 @@ PORTRAIT_DANMAKU_BACKGROUND_COLOR = "#0A0C12"
 # LANDSCAPE_DANMAKU_TOP and stacks upward from the bottom, and subtitles are
 # centred vertically, so neither can ever reach above it however full the clip
 # gets.
-LANDSCAPE_WATERMARK_SIZE = 22
-LANDSCAPE_WATERMARK_TOP = 26
+LANDSCAPE_WATERMARK_SIZE = 30
+# The right mark has to stay clear of LANDSCAPE_DANMAKU_TOP, which is the
+# ceiling a full danmaku column grows up to. The left column has no such
+# ceiling -- subtitles are centred vertically and would need most of the
+# canvas before they reached the top -- so that mark can sit lower and look
+# placed rather than jammed into the corner.
+LANDSCAPE_WATERMARK_TOP = 40
+LANDSCAPE_WATERMARK_LEFT_TOP = 88
 LANDSCAPE_WATERMARK_LEFT = 72
 LANDSCAPE_WATERMARK_RIGHT = 65
 # ASS alpha out of 255, where 0 is opaque.

@@ -334,6 +334,9 @@ class VideoClipExportRecord(BaseModel):
     subtitle_background_color: str
     output_layout: Literal["portrait", "landscape"]
     subtitle_font_family: Literal["wenkai", "serif", "sans"]
+    landscape_theme: Literal[
+        "cream", "denim", "mint", "sakura", "matcha", "ink"
+    ] = "cream"
     cover_enabled: bool
     cover_timestamp_ms: int | None = None
     cover_title: str

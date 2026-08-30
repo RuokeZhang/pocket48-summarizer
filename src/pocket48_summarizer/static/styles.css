@@ -941,18 +941,29 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 /* Mirrors the exported LandscapeWatermark style: 22px on a 1080 canvas, 26px
    down from the top and 72px/65px in from the left and right edges. */
+/* Mirrors the exported marks: LANDSCAPE_WATERMARK_SIZE 30, _TOP 40,
+   _LEFT_TOP 88 over a 1080-tall canvas, and _LEFT 72 / _RIGHT 65 over a
+   1920-wide one. The two marks sit at different heights because only the
+   right one has to clear the danmaku column. */
 .clip-preview-watermark {
   position: absolute;
   z-index: 2;
-  top: 2.41cqh;
-  right: 3.39%;
-  left: 3.75%;
-  display: flex;
-  justify-content: space-between;
+  inset: 0;
   color: rgba(91, 58, 66, .75);
-  font-size: 2.04cqh;
+  font-size: 2.78cqh;
   line-height: 1;
   pointer-events: none;
+}
+.clip-preview-watermark span {
+  position: absolute;
+}
+.clip-preview-watermark-tool {
+  top: 8.15cqh;
+  left: 3.75%;
+}
+#clip-preview-watermark-time {
+  top: 3.7cqh;
+  right: 3.39%;
 }
 .clip-preview-cut-notice {
   position: absolute;

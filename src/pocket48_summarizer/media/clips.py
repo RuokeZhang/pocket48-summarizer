@@ -23,10 +23,12 @@ from .ffmpeg import FFmpegRunner, VideoDimensions
 from .fonts import contains_emoji, emoji_font_status
 from .layouts import (
     DEFAULT_LANDSCAPE_SUBTITLE_FONT,
+    DEFAULT_LANDSCAPE_THEME,
     LANDSCAPE_CANVAS_HEIGHT,
     LANDSCAPE_CANVAS_WIDTH,
     ClipOutputLayout,
     LandscapeSubtitleFont,
+    LandscapeThemeKey,
 )
 from .overlays import (
     COVER_DURATION_MS,
@@ -57,7 +59,7 @@ LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v14"
+RENDER_VERSION = "ass-v15"
 
 
 def file_sha256(path: Path) -> str:
@@ -181,6 +183,7 @@ class VideoClipService:
         subtitle_font_family: LandscapeSubtitleFont = (
             DEFAULT_LANDSCAPE_SUBTITLE_FONT
         ),
+        landscape_theme: LandscapeThemeKey = DEFAULT_LANDSCAPE_THEME,
         cover_enabled: bool = False,
         cover_timestamp_ms: int | None = None,
         cover_title: str = "",
@@ -259,6 +262,7 @@ class VideoClipService:
             subtitle_font_scale=subtitle_font_scale,
             output_layout=output_layout,
             subtitle_font_family=subtitle_font_family,
+            landscape_theme=landscape_theme,
             cover_enabled=cover_enabled,
             cover_timestamp_ms=cover_timestamp_ms,
             cover_title=cover_title,
@@ -574,6 +578,9 @@ class VideoClipService:
                                             output_layout=(
                                                 record.output_layout
                                             ),
+                                            landscape_theme=(
+                                                record.landscape_theme
+                                            ),
                                             subtitle_font_family=(
                                                 record.subtitle_font_family
                                             ),
@@ -647,6 +654,7 @@ class VideoClipService:
                                     record.cover_timestamp_ms,
                                     cover_ass_path,
                                     output_layout=record.output_layout,
+                                    landscape_theme=record.landscape_theme,
                                 )
                             rendered_output_path = (
                                 main_output_path
@@ -673,7 +681,10 @@ class VideoClipService:
                                     else part_paths[index]
                                 )
                                 clip_kwargs = {
-                                    "output_layout": record.output_layout
+                                    "output_layout": record.output_layout,
+                                    "landscape_theme": (
+                                        record.landscape_theme
+                                    ),
                                 }
                                 if needs_ai_cover and index == 0:
                                     clip_kwargs.update(

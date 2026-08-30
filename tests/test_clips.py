@@ -19,10 +19,12 @@ class FakeFFmpeg:
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: str = "portrait",
+        landscape_theme: str = "cream",
         cover_path: Path | None = None,
         cover_dimensions: VideoDimensions | None = None,
     ) -> Path:
         del ass_path, output_layout, cover_path, cover_dimensions
+        del landscape_theme
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"video")
         return output_path
@@ -34,8 +36,10 @@ class FakeFFmpeg:
         timestamp_ms: int,
         ass_path: Path,
         output_layout: str = "portrait",
+        landscape_theme: str = "cream",
     ) -> Path:
         del manifest_url, timestamp_ms, ass_path, output_layout
+        del landscape_theme
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"cover")
         return output_path
@@ -130,6 +134,7 @@ class OverlayFFmpeg(FakeFFmpeg):
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: str = "portrait",
+        landscape_theme: str = "cream",
         cover_path: Path | None = None,
         cover_dimensions: VideoDimensions | None = None,
     ) -> Path:
@@ -146,6 +151,7 @@ class OverlayFFmpeg(FakeFFmpeg):
             start_ms,
             end_ms,
             output_layout=output_layout,
+            landscape_theme=landscape_theme,
             cover_path=cover_path,
             cover_dimensions=cover_dimensions,
         )
@@ -157,6 +163,7 @@ class OverlayFFmpeg(FakeFFmpeg):
         timestamp_ms: int,
         ass_path: Path,
         output_layout: str = "portrait",
+        landscape_theme: str = "cream",
     ) -> Path:
         self.cover_ass_content = ass_path.read_text(encoding="utf-8")
         self.cover_timestamp_ms = timestamp_ms
@@ -167,6 +174,7 @@ class OverlayFFmpeg(FakeFFmpeg):
             timestamp_ms,
             ass_path,
             output_layout,
+            landscape_theme,
         )
 
     async def prepend_cover(
@@ -201,6 +209,7 @@ class MultiRangeFFmpeg(OverlayFFmpeg):
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: str = "portrait",
+        landscape_theme: str = "cream",
         cover_path: Path | None = None,
         cover_dimensions: VideoDimensions | None = None,
     ) -> Path:
@@ -216,9 +225,10 @@ class MultiRangeFFmpeg(OverlayFFmpeg):
             start_ms,
             end_ms,
             ass_path,
-            output_layout,
-            cover_path,
-            cover_dimensions,
+            output_layout=output_layout,
+            landscape_theme=landscape_theme,
+            cover_path=cover_path,
+            cover_dimensions=cover_dimensions,
         )
 
     async def concat_clips(

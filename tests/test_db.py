@@ -44,6 +44,7 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "018_retry_repaired_timeline_windows.sql",
         "019_ai_cover_prompt_template.sql",
         "020_member_admin_disable.sql",
+        "021_clip_landscape_theme.sql",
     ]
 
 

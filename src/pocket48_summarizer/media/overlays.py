@@ -39,6 +39,7 @@ from .layouts import (
     LANDSCAPE_WATERMARK_ALPHA,
     LandscapeTheme,
     resolve_landscape_theme,
+    LANDSCAPE_WATERMARK_LEFT_TOP,
     LANDSCAPE_WATERMARK_TOP,
     LANDSCAPE_WATERMARK_LEFT,
     LANDSCAPE_WATERMARK_RIGHT,
@@ -735,7 +736,7 @@ def _landscape_watermark_events(
     corners = [
         (
             rf"{{\an7\pos("
-            rf"{LANDSCAPE_WATERMARK_LEFT},{LANDSCAPE_WATERMARK_TOP})}}",
+            rf"{LANDSCAPE_WATERMARK_LEFT},{LANDSCAPE_WATERMARK_LEFT_TOP})}}",
             CLIP_WATERMARK_TEXT,
         )
     ]

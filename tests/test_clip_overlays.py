@@ -12,8 +12,11 @@ from pocket48_summarizer.media.layouts import (
     LANDSCAPE_DANMAKU_TOP,
     LANDSCAPE_DANMAKU_WIDTH,
     LANDSCAPE_SUBTITLE_LEFT,
-    LANDSCAPE_THEMES,
     LANDSCAPE_SUBTITLE_WIDTH,
+    LANDSCAPE_THEMES,
+    LANDSCAPE_WATERMARK_LEFT_TOP,
+    LANDSCAPE_WATERMARK_SIZE,
+    LANDSCAPE_WATERMARK_TOP,
 )
 from pocket48_summarizer.media.overlays import (
     COVER_DURATION_MS,
@@ -906,11 +909,19 @@ def test_landscape_watermark_credits_the_tool_and_dates_the_replay():
     assert len(lines) == 2
     assert "AI剪切片工具 p48.ruokezhang.com" in lines[0]
     assert "2026-08-29 20:15" in lines[1]
+    assert (
+        rf"\an7\pos({LANDSCAPE_SUBTITLE_LEFT},{LANDSCAPE_WATERMARK_LEFT_TOP})"
+        in lines[0]
+    )
+    assert rf"\an9\pos(1855,{LANDSCAPE_WATERMARK_TOP})" in lines[1]
     # The danmaku column is bounded at LANDSCAPE_DANMAKU_TOP and fills upward,
-    # so anchoring above it is what keeps a busy clip from covering the mark.
-    assert rf"\an7\pos({LANDSCAPE_SUBTITLE_LEFT},26)" in lines[0]
-    assert r"\an9\pos(1855,26)" in lines[1]
-    assert 26 + 22 < LANDSCAPE_DANMAKU_TOP
+    # so the right mark is only safe while it clears that ceiling. The left
+    # column has no such ceiling, which is why it may hang lower.
+    assert (
+        LANDSCAPE_WATERMARK_TOP + LANDSCAPE_WATERMARK_SIZE
+        < LANDSCAPE_DANMAKU_TOP
+    )
+    assert LANDSCAPE_WATERMARK_LEFT_TOP > LANDSCAPE_WATERMARK_TOP
 
 
 def test_landscape_watermark_omits_a_time_the_replay_never_recorded():

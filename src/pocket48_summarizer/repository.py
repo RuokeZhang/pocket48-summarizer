@@ -1271,6 +1271,7 @@ class JobRepository:
         subtitle_background_color: str = "#000000",
         output_layout: str = "portrait",
         subtitle_font_family: str = "sans",
+        landscape_theme: str = "cream",
         cover_enabled: bool = False,
         cover_timestamp_ms: int | None = None,
         cover_title: str = "",
@@ -1300,7 +1301,7 @@ class JobRepository:
                     subtitle_mode, include_danmaku,
                     subtitle_font_scale, subtitle_font_percent,
                     subtitle_text_color, subtitle_background_color,
-                    output_layout, subtitle_font_family,
+                    output_layout, subtitle_font_family, landscape_theme,
                     cover_enabled, cover_timestamp_ms, cover_title,
                     cover_style, ai_cover_generation_id,
                     ai_cover_asset_id, ai_cover_final_oss_object_key,
@@ -1309,7 +1310,7 @@ class JobRepository:
                     status, created_at, updated_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     'running', ?, ?
                 )
                 """,
@@ -1337,6 +1338,7 @@ class JobRepository:
                     subtitle_background_color,
                     output_layout,
                     subtitle_font_family,
+                    landscape_theme,
                     int(cover_enabled),
                     cover_timestamp_ms,
                     cover_title,
