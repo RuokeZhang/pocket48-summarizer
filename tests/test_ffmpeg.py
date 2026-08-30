@@ -13,6 +13,18 @@ from pocket48_summarizer.media.ffmpeg import (
 MANIFEST_URL = "https://idol-vod.48.cn/path/replay.m3u8"
 
 
+class CapturingFFmpegRunner(FFmpegRunner):
+    def __init__(self, settings):
+        super().__init__(settings)
+        self.command: list[str] = []
+
+    async def _run_command(self, command, **kwargs):
+        del kwargs
+        self.command = command
+        Path(command[-1]).write_bytes(b"rendered")
+        return "", ""
+
+
 def test_parallel_download_command_uses_configured_concurrency(settings):
     settings.hls_concurrent_fragments = 12
     runner = FFmpegRunner(settings)
@@ -193,6 +205,46 @@ def test_cover_frame_command_uses_selected_landscape_theme(settings):
     assert (
         "pad=1920:1080:(ow-iw)/2:0:color=0xE6EDD6"
         in command[command.index("-vf") + 1]
+    )
+
+
+@pytest.mark.asyncio
+async def test_clip_video_forwards_theme_to_render_command(settings, tmp_path):
+    runner = CapturingFFmpegRunner(settings)
+
+    await runner.clip_video(
+        MANIFEST_URL,
+        tmp_path / "clip.mp4",
+        start_ms=1000,
+        end_ms=5000,
+        output_layout="landscape",
+        landscape_theme="ink",
+    )
+
+    assert (
+        "pad=1920:1080:(ow-iw)/2:0:color=0x1C1D22"
+        in runner.command[runner.command.index("-vf") + 1]
+    )
+
+
+@pytest.mark.asyncio
+async def test_cover_frame_forwards_theme_to_render_command(
+    settings, tmp_path
+):
+    runner = CapturingFFmpegRunner(settings)
+
+    await runner.render_cover_frame(
+        MANIFEST_URL,
+        tmp_path / "cover.png",
+        timestamp_ms=45_250,
+        ass_path=tmp_path / "cover.ass",
+        output_layout="landscape",
+        landscape_theme="matcha",
+    )
+
+    assert (
+        "pad=1920:1080:(ow-iw)/2:0:color=0xE6EDD6"
+        in runner.command[runner.command.index("-vf") + 1]
     )
 
 

@@ -788,9 +788,10 @@ class FFmpegRunner:
                     start_ms,
                     end_ms,
                     ass_path,
-                    output_layout,
-                    cover_path,
-                    cover_dimensions,
+                    output_layout=output_layout,
+                    landscape_theme=landscape_theme,
+                    cover_path=cover_path,
+                    cover_dimensions=cover_dimensions,
                 ),
                 timeout_seconds=max(
                     15 * 60, int((end_ms - start_ms) / 1000 * 2 + 300)
@@ -917,7 +918,8 @@ class FFmpegRunner:
                     temporary_path,
                     timestamp_ms,
                     ass_path,
-                    output_layout,
+                    output_layout=output_layout,
+                    landscape_theme=landscape_theme,
                 ),
                 timeout_seconds=10 * 60,
                 heartbeat=None,

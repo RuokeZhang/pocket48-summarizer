@@ -1837,9 +1837,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-13" in page.text
-    assert "styles.css?v=20260829-13" in page.text
-    assert "app.js?v=20260829-13" in page.text
+    assert "i18n.js?v=20260829-14" in page.text
+    assert "styles.css?v=20260829-14" in page.text
+    assert "app.js?v=20260829-14" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

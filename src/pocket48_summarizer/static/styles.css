@@ -1884,6 +1884,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   gap: 7px;
 }
 .clip-theme-option {
+  position: relative;
   display: grid;
   min-width: 0;
   grid-template-columns: 36px minmax(0, 1fr);
@@ -1908,8 +1909,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .clip-theme-option input {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
 }
 .clip-theme-swatch {
   display: grid;
