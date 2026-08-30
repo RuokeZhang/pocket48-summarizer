@@ -6,6 +6,7 @@ import pytest
 from PIL import Image
 
 from pocket48_summarizer.errors import AppError
+from pocket48_summarizer.media import ffmpeg
 from pocket48_summarizer.media.ffmpeg import (
     FFmpegRunner,
     SilenceInterval,
@@ -407,10 +408,12 @@ def test_raster_clip_command_keeps_ai_cover_last(settings):
 
 
 def test_ffmpeg_composites_a_timed_rgba_atlas(settings, tmp_path):
-    runner = FFmpegRunner(settings)
     executable = shutil.which("ffmpeg")
     if executable is None:
         pytest.skip("FFmpeg is not installed")
+    runner = FFmpegRunner(
+        settings.model_copy(update={"ffmpeg_path": executable})
+    )
     atlas_path = tmp_path / "atlas.png"
     output_path = tmp_path / "frame.png"
     filter_path = tmp_path / "filter.txt"
@@ -477,6 +480,32 @@ def test_ffmpeg_composites_a_timed_rgba_atlas(settings, tmp_path):
         assert red > 240
         assert green < 10
         assert blue < 10
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("ffmpeg version 6.1.1-3ubuntu5", "-filter_complex_script"),
+        ("ffmpeg version 9.0.1", "-/filter_complex"),
+    ],
+)
+def test_filter_complex_file_option_tracks_ffmpeg_major_version(
+    monkeypatch, version, expected
+):
+    ffmpeg._filter_complex_file_option.cache_clear()
+    monkeypatch.setattr(
+        ffmpeg.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            0,
+            stdout=f"{version}\n",
+            stderr="",
+        ),
+    )
+
+    assert ffmpeg._filter_complex_file_option("/tmp/ffmpeg") == expected
+    ffmpeg._filter_complex_file_option.cache_clear()
 
 
 def test_ai_cover_source_command_extracts_clean_marked_frame(settings):

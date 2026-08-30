@@ -28,6 +28,7 @@ SILENCE_END_RE = re.compile(
     r"silence_end:\s*(-?\d+(?:\.\d+)?)"
     r"(?:\s*\|\s*silence_duration:\s*(\d+(?:\.\d+)?))?"
 )
+FFMPEG_VERSION_RE = re.compile(r"^ffmpeg version n?(\d+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +47,7 @@ class VideoDimensions:
 def _filter_complex_file_option(executable: str) -> str:
     try:
         result = subprocess.run(
-            [executable, "-hide_banner", "-h", "full"],
+            [executable, "-version"],
             capture_output=True,
             text=True,
             timeout=15,
@@ -54,10 +55,10 @@ def _filter_complex_file_option(executable: str) -> str:
         )
     except (OSError, subprocess.SubprocessError):
         return "-filter_complex_script"
-    help_text = result.stdout + result.stderr
-    if "-filter_complex_script" in help_text:
-        return "-filter_complex_script"
-    return "-/filter_complex"
+    version_match = FFMPEG_VERSION_RE.search(result.stdout)
+    if version_match is not None and int(version_match.group(1)) >= 7:
+        return "-/filter_complex"
+    return "-filter_complex_script"
 
 
 class FFmpegRunner:
