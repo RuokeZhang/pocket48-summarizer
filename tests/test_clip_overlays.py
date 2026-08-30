@@ -3,7 +3,7 @@ import re
 import pytest
 
 from pocket48_summarizer.errors import AppError
-from pocket48_summarizer.media import clips
+from pocket48_summarizer.media.fonts import split_emoji_runs
 from pocket48_summarizer.media.layouts import (
     LANDSCAPE_CANVAS_HEIGHT,
     LANDSCAPE_CANVAS_WIDTH,
@@ -124,6 +124,25 @@ def test_overlay_warns_when_danmaku_range_is_empty():
     assert document.subtitle_event_count == 0
     assert document.danmaku_event_count == 0
     assert document.warning_message == "所选范围没有可渲染的弹幕"
+
+
+def test_overlay_allows_an_empty_subtitle_range_for_service_validation():
+    document = build_clip_overlay(
+        width=1280,
+        height=720,
+        clip_start_ms=0,
+        clip_end_ms=5000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[],
+        translations={},
+        danmaku=[],
+        allow_empty_subtitles=True,
+    )
+
+    assert document.subtitle_event_count == 0
+    assert document.raster_cues == ()
 
 
 def test_portrait_danmaku_stack_rises_as_newer_cards_arrive():
@@ -560,6 +579,25 @@ def test_cover_overlay_rejects_empty_title():
         )
 
 
+def test_cover_title_emoji_is_rendered_as_one_rgba_asset():
+    document = build_cover_overlay(
+        width=1920,
+        height=1080,
+        title="开心🎉时刻",
+        style="scrim",
+        output_layout="landscape",
+    )
+
+    assert "开心🎉时刻" not in document.content
+    assert r"\p1" in document.content
+    assert len(document.raster_cues) == 1
+    assert [line.text for line in document.raster_cues[0].asset.lines] == [
+        "开心🎉时刻"
+    ]
+    title_asset = document.raster_cues[0].asset
+    assert title_asset.height > title_asset.lines[0].font_size
+
+
 def test_landscape_danmaku_stack_fills_the_column_beyond_five_cards():
     danmaku = [
         DanmakuEntry(
@@ -752,43 +790,6 @@ def test_portrait_danmaku_uses_the_same_card_renderer_as_landscape():
     assert int(position.group(1)) > 1920 * 0.5
 
 
-@pytest.mark.parametrize(
-    ("status", "expected"),
-    [("missing", True), ("available", False), ("unknown", False)],
-)
-def test_emoji_overlays_warn_only_when_no_font_covers_them(
-    monkeypatch, status, expected
-):
-    """libass draws nothing for an uncovered codepoint and still exits 0.
-
-    Without this probe an export with emoji danmaku succeeds while the video
-    silently has holes where the emoji should be.
-    """
-
-    monkeypatch.setattr(clips, "emoji_font_status", lambda: status)
-    document = _portrait_document("你好")
-    with_emoji = build_clip_overlay(
-        width=1080,
-        height=1920,
-        clip_start_ms=0,
-        clip_end_ms=6000,
-        subtitle_mode="off",
-        include_danmaku=True,
-        font_name="Noto Sans CJK SC",
-        transcript=[],
-        translations={},
-        danmaku=[
-            DanmakuEntry(
-                sequence=1, timestamp_ms=500, author="粉丝", text="好耶🎉"
-            )
-        ],
-        output_layout="portrait",
-    )
-
-    assert clips._overlays_need_missing_emoji_font([document]) is False
-    assert clips._overlays_need_missing_emoji_font([with_emoji]) is expected
-
-
 def _dialogue_lines(content: str, style: str) -> list[str]:
     return [
         line
@@ -798,14 +799,7 @@ def _dialogue_lines(content: str, style: str) -> list[str]:
     ]
 
 
-def test_emoji_runs_name_the_monochrome_font_and_restore_the_style_font():
-    """Installing an emoji font is not enough to make libass draw emoji.
-
-    libass asks fontconfig for a fallback, fontconfig prefers a colour emoji
-    font when one is installed, and libass cannot rasterise colour glyphs, so
-    it silently draws nothing. The family has to be named in the text.
-    """
-
+def test_emoji_subtitle_becomes_one_mixed_rgba_asset():
     document = build_clip_overlay(
         width=1080,
         height=1920,
@@ -824,20 +818,16 @@ def test_emoji_runs_name_the_monochrome_font_and_restore_the_style_font():
         output_layout="portrait",
     )
 
-    text = _dialogue_text(_dialogue_lines(document.content, "SubtitleZh")[0])
-    assert (
-        r"{\fnSymbola}🎉{\fnNoto Sans CJK SC}" in text
-    ), text
-    assert "真的" in text.split(r"{\fnNoto Sans CJK SC}")[1]
+    assert _dialogue_lines(document.content, "SubtitleZh") == []
+    assert "🎉" not in document.content
+    assert len(document.raster_cues) == 1
+    assert document.raster_cues[0].layer == 20
+    assert [line.text for line in document.raster_cues[0].asset.lines] == [
+        "开心🎉真的"
+    ]
 
 
-def test_emoji_font_restores_the_style_a_reset_tag_switched_to():
-    """A bilingual line switches style mid-text with ``{\\r<style>}``.
-
-    Restoring the outer style's font after an emoji would silently drag the
-    rest of the translated line back to the wrong font.
-    """
-
+def test_bilingual_emoji_asset_keeps_both_surrounding_text_styles():
     document = build_clip_overlay(
         width=1080,
         height=1920,
@@ -854,44 +844,22 @@ def test_emoji_font_restores_the_style_a_reset_tag_switched_to():
         output_layout="portrait",
     )
 
-    text = _dialogue_text(_dialogue_lines(document.content, "SubtitleZh")[0])
-    english = text.split(r"{\rSubtitleEn}", 1)[1]
-    assert r"{\fnSymbola}🎉{\fn" in english
-    assert english.endswith(" today")
+    assert len(document.raster_cues) == 1
+    lines = document.raster_cues[0].asset.lines
+    assert [line.text for line in lines] == ["开心", "so happy 🎉 today"]
+    assert lines[0].font_size > lines[1].font_size
+    assert "🎉" not in document.content
 
 
-def test_only_emoji_presentation_characters_are_rerouted():
-    """Text-presentation symbols already render from the CJK font.
-
-    Rerouting them would restyle glyphs that are not broken, so the split has
-    to follow Unicode's default presentation rather than a block range.
-    """
-
-    document = build_clip_overlay(
-        width=1080,
-        height=1920,
-        clip_start_ms=0,
-        clip_end_ms=6000,
-        subtitle_mode="zh",
-        include_danmaku=False,
-        font_name="Noto Sans CJK SC",
-        transcript=[
-            TranscriptSegment(
-                sequence=1, start_ms=0, end_ms=6000, text="星★亮⭐心♥"
-            )
-        ],
-        translations={},
-        danmaku=[],
-        output_layout="portrait",
-    )
-
-    text = _dialogue_text(_dialogue_lines(document.content, "SubtitleZh")[0])
-    assert r"{\fnSymbola}⭐{\fn" in text
-    assert r"{\fnSymbola}★" not in text
-    assert r"{\fnSymbola}♥" not in text
+def test_only_emoji_presentation_characters_form_emoji_runs():
+    assert list(split_emoji_runs("星★亮⭐心♥")) == [
+        (False, "星★亮"),
+        (True, "⭐"),
+        (False, "心♥"),
+    ]
 
 
-def test_grapheme_clusters_are_not_split_across_font_changes():
+def test_danmaku_emoji_asset_keeps_clusters_and_card_motion():
     document = build_clip_overlay(
         width=1080,
         height=1920,
@@ -908,18 +876,82 @@ def test_grapheme_clusters_are_not_split_across_font_changes():
                 timestamp_ms=500,
                 author="粉丝",
                 text="家人👨\u200d👩\u200d👧和❤\ufe0f",
-            )
+            ),
+            DanmakuEntry(
+                sequence=2,
+                timestamp_ms=1000,
+                author="另一位",
+                text="新弹幕",
+            ),
         ],
         output_layout="portrait",
     )
 
-    text = "".join(
-        _dialogue_text(line)
+    cue = document.raster_cues[0]
+    assert [line.text for line in cue.asset.lines] == [
+        "粉丝",
+        "家人👨\u200d👩\u200d👧和❤\ufe0f",
+    ]
+    assert len(cue.placements) == 2
+    assert cue.placements[1].move_ms == 220
+    assert cue.placements[1].y_to < cue.placements[1].y_from
+    assert "👨\u200d👩\u200d👧" not in document.content
+    assert len(document.raster_cues) == 2
+    assert "PortraitDanmakuBox" not in "\n".join(
+        line
         for line in document.content.splitlines()
         if line.startswith("Dialogue:")
     )
-    assert "{\\fnSymbola}👨\u200d👩\u200d👧{\\fn" in text
-    assert "{\\fnSymbola}❤\ufe0f{\\fn" in text
+
+
+def test_grapheme_clusters_are_not_split_across_rgba_runs():
+    assert list(
+        split_emoji_runs("家人👨\u200d👩\u200d👧和❤\ufe0f")
+    ) == [
+        (False, "家人"),
+        (True, "👨\u200d👩\u200d👧"),
+        (False, "和"),
+        (True, "❤\ufe0f"),
+    ]
+
+
+def test_adjacent_emoji_are_separate_graphemes():
+    assert list(split_emoji_runs("前🎉😂后")) == [
+        (False, "前"),
+        (True, "🎉"),
+        (True, "😂"),
+        (False, "后"),
+    ]
+
+
+def test_wrapping_never_splits_a_zwj_emoji_cluster():
+    document = build_clip_overlay(
+        width=1920,
+        height=1080,
+        clip_start_ms=0,
+        clip_end_ms=3000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=3000,
+                text="一二三四五六七八九十👨\u200d👩\u200d👧",
+            )
+        ],
+        translations={},
+        danmaku=[],
+        output_layout="landscape",
+    )
+
+    cue_text = "".join(
+        line.text
+        for cue in document.raster_cues
+        for line in cue.asset.lines
+    )
+    assert "👨\u200d👩\u200d👧" in cue_text
 
 
 def test_documents_without_emoji_are_left_byte_identical():
@@ -939,7 +971,9 @@ def test_documents_without_emoji_are_left_byte_identical():
         output_layout="portrait",
     )
 
-    assert "\\fn" not in build_clip_overlay(**kwargs).content
+    document = build_clip_overlay(**kwargs)
+    assert "\\fn" not in document.content
+    assert document.raster_cues == ()
 
 
 def _watermark_overlay(

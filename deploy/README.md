@@ -26,8 +26,12 @@ sudo /opt/pocket48-summarizer/scripts/install-server.sh
 sudoedit /etc/pocket48-summarizer/app.env
 ```
 
-安装脚本会安装 FFmpeg/ffprobe、`fonts-noto-cjk` 和
-`fonts-lxgw-wenkai`。填写 OSS、DashScope 和 LLM 凭证。要启用管理员
+安装脚本会安装 FFmpeg/ffprobe、`fonts-noto-cjk`、
+`fonts-lxgw-wenkai` 和 Ubuntu 24.04 官方
+`fonts-noto-color-emoji=2.042-1`。包含 emoji 的字幕、弹幕卡片和手动
+封面标题会由 Pillow 渲染为透明 RGBA 图集，再按事件时间交给 FFmpeg
+合成；部署会实际检查普通 emoji、ZWJ 家庭、国旗、键帽和肤色序列。
+填写 OSS、DashScope 和 LLM 凭证。要启用管理员
 AI 封面，再填写 Ark 的 `ARK_API_KEY` 和控制台显示的实际
 `ARK_SEEDREAM_MODEL`；不要猜测或把它们提交到仓库。未配置时普通总结和
 剪辑继续可用，封面面板会明确显示 Seedream 尚未启用。
@@ -46,12 +50,14 @@ HTTPS URL；生成结束后应用删除临时帧，长期保留两种比例的�
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y fontconfig fonts-lxgw-wenkai fonts-noto-cjk
+sudo apt-get install -y fontconfig fonts-lxgw-wenkai fonts-noto-cjk \
+  fonts-noto-color-emoji=2.042-1
 ffprobe -version
 ffmpeg -hide_banner -filters | grep -E '(^|[[:space:]])ass([[:space:]]|$)'
 fc-match 'Noto Sans CJK SC'
 fc-match 'Noto Serif CJK SC'
 fc-match 'LXGW WenKai'
+fc-match 'Noto Color Emoji'
 ```
 
 `MAX_REPLAY_HOURS=0` 表示不设置回放小时上限。若已有服务器配置仍为 `3`，部署新版本前需要在 `/etc/pocket48-summarizer/app.env` 中改为 `0`。

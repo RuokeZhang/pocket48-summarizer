@@ -83,7 +83,7 @@ font_packages=(
   fontconfig
   fonts-lxgw-wenkai
   fonts-noto-cjk
-  fonts-symbola
+  fonts-noto-color-emoji
 )
 installed_packages="$(
   dpkg-query -W -f='${Status}\n' \
@@ -91,9 +91,18 @@ installed_packages="$(
     | grep -c '^install ok installed$' \
     || true
 )"
-if [[ "$installed_packages" != "${#font_packages[@]}" ]]; then
+emoji_version="$(
+  dpkg-query -W -f='${Version}' fonts-noto-color-emoji 2>/dev/null \
+    || true
+)"
+if [[ "$installed_packages" != "${#font_packages[@]}" \
+  || "$emoji_version" != "2.042-1" ]]; then
   apt-get update
-  apt-get install -y "${font_packages[@]}"
+  apt-get install -y --allow-downgrades \
+    fontconfig \
+    fonts-lxgw-wenkai \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji=2.042-1
 fi
 command -v ffprobe >/dev/null
 ffmpeg -nostdin -hide_banner -filters 2>/dev/null \

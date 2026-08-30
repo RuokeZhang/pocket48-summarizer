@@ -68,6 +68,9 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
 - 经过审核并由可信包管理器安装的 FFmpeg 和 ffprobe；FFmpeg 需包含 libass 的 `ass` 滤镜
 - 可供 libass 使用的 CJK 字体，生产默认安装 `fonts-noto-cjk` 与
   `fonts-lxgw-wenkai`
+- Ubuntu 官方 `fonts-noto-color-emoji=2.042-1`；包含 emoji 的整段文字
+  由固定版本 Pillow 在原生 109px 彩色字形上排版，再通过透明 RGBA 图集
+  与 FFmpeg 事件滤镜合成，libass 不再负责 emoji
 - 阿里云私有 OSS Bucket
 - 阿里云百炼 DashScope API Key
 - 一个 OpenAI-compatible 模型 API

@@ -20,7 +20,6 @@ from .boundaries import (
     ClipBoundaryService,
 )
 from .ffmpeg import FFmpegRunner, VideoDimensions
-from .fonts import contains_emoji, emoji_font_status
 from .layouts import (
     DEFAULT_LANDSCAPE_SUBTITLE_FONT,
     DEFAULT_LANDSCAPE_THEME,
@@ -39,19 +38,11 @@ from .overlays import (
     build_cover_overlay,
     build_clip_overlay,
 )
-
-def _overlays_need_missing_emoji_font(
-    documents: list[ClipOverlayDocument],
-) -> bool:
-    """Report whether a clip asks for emoji the renderer cannot draw.
-
-    libass drops uncovered codepoints without failing, so without this check
-    the export succeeds and the emoji are simply absent from the video.
-    """
-
-    if not any(contains_emoji(document.content) for document in documents):
-        return False
-    return emoji_font_status() == "missing"
+from .raster_overlays import (
+    RasterOverlayBundle,
+    RasterOverlayCue,
+    RasterOverlayRenderer,
+)
 
 
 ClipStatus = Literal["running", "completed", "failed"]
@@ -59,7 +50,7 @@ LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v15"
+RENDER_VERSION = "ass-pillow-emoji-v1"
 
 
 def file_sha256(path: Path) -> str:
@@ -104,6 +95,7 @@ class VideoClipService:
         self._retry_delay_seconds = settings.clip_retry_delay_seconds
         self._ass_supported: bool | None = None
         self._ass_probe_lock = asyncio.Lock()
+        self._raster_renderer: RasterOverlayRenderer | None = None
 
     async def startup(self) -> None:
         self.repository.recover_running_video_clips()
@@ -444,6 +436,7 @@ class VideoClipService:
             ".ai-cover.png"
         )
         main_output_path = state.output_path.with_suffix(".main.mp4")
+        raster_bundles: list[RasterOverlayBundle] = []
         try:
             async with self._capacity:
                 warning = record.warning_message
@@ -534,7 +527,12 @@ class VideoClipService:
                                         "AI 封面文件校验失败，请重新选择封面",
                                         False,
                                     )
-                            overlay_documents = []
+                            overlay_documents: list[
+                                ClipOverlayDocument
+                            ] = []
+                            overlay_raster_bundles: list[
+                                RasterOverlayBundle | None
+                            ] = []
                             if needs_clip_overlay:
                                 if dimensions is None:
                                     raise RuntimeError(
@@ -615,14 +613,17 @@ class VideoClipService:
                                     and danmaku_count == 0
                                 ):
                                     warnings.append("所选范围没有可渲染的弹幕")
-                                if _overlays_need_missing_emoji_font(
+                                warning = "；".join(warnings) or None
+                                for index, document in enumerate(
                                     overlay_documents
                                 ):
-                                    warnings.append(
-                                        "服务器缺少 emoji 字体，"
-                                        "画面中的 emoji 无法渲染"
+                                    bundle = self._render_raster_cues(
+                                        document.raster_cues,
+                                        ass_paths[index].with_suffix(""),
                                     )
-                                warning = "；".join(warnings) or None
+                                    overlay_raster_bundles.append(bundle)
+                                    if bundle is not None:
+                                        raster_bundles.append(bundle)
                             if record.cover_enabled:
                                 if (
                                     dimensions is None
@@ -648,13 +649,32 @@ class VideoClipService:
                                     cover_document.content,
                                     encoding="utf-8",
                                 )
+                                cover_raster_bundle = (
+                                    self._render_raster_cues(
+                                        cover_document.raster_cues,
+                                        cover_ass_path.with_suffix(""),
+                                    )
+                                )
+                                if cover_raster_bundle is not None:
+                                    raster_bundles.append(
+                                        cover_raster_bundle
+                                    )
+                                cover_render_kwargs = {
+                                    "output_layout": record.output_layout,
+                                    "landscape_theme": (
+                                        record.landscape_theme
+                                    ),
+                                }
+                                if cover_raster_bundle is not None:
+                                    cover_render_kwargs["raster_bundle"] = (
+                                        cover_raster_bundle
+                                    )
                                 await self.ffmpeg.render_cover_frame(
                                     manifest_url,
                                     cover_frame_path,
                                     record.cover_timestamp_ms,
                                     cover_ass_path,
-                                    output_layout=record.output_layout,
-                                    landscape_theme=record.landscape_theme,
+                                    **cover_render_kwargs,
                                 )
                             rendered_output_path = (
                                 main_output_path
@@ -692,6 +712,14 @@ class VideoClipService:
                                             "cover_path": ai_cover_frame_path,
                                             "cover_dimensions": dimensions,
                                         }
+                                    )
+                                if (
+                                    overlay_raster_bundles
+                                    and overlay_raster_bundles[index]
+                                    is not None
+                                ):
+                                    clip_kwargs["raster_bundle"] = (
+                                        overlay_raster_bundles[index]
                                     )
                                 await self.ffmpeg.clip_video(
                                     manifest_url,
@@ -765,6 +793,9 @@ class VideoClipService:
                     cover_frame_path.unlink(missing_ok=True)
                     ai_cover_frame_path.unlink(missing_ok=True)
                     main_output_path.unlink(missing_ok=True)
+                    for bundle in raster_bundles:
+                        bundle.cleanup()
+                    raster_bundles.clear()
                     await asyncio.sleep(
                         self._retry_delay_seconds * (2 ** (attempt - 1))
                     )
@@ -798,6 +829,8 @@ class VideoClipService:
             cover_frame_path.unlink(missing_ok=True)
             ai_cover_frame_path.unlink(missing_ok=True)
             main_output_path.unlink(missing_ok=True)
+            for bundle in raster_bundles:
+                bundle.cleanup()
             self._tasks.pop(record.id, None)
 
     async def _require_ass_support(self) -> None:
@@ -811,6 +844,17 @@ class VideoClipService:
                 "当前 FFmpeg 不支持 ASS 字幕滤镜，无法烧录字幕、弹幕或封面",
                 False,
             )
+
+    def _render_raster_cues(
+        self,
+        cues: tuple[RasterOverlayCue, ...],
+        output_prefix: Path,
+    ) -> RasterOverlayBundle | None:
+        if not cues:
+            return None
+        if self._raster_renderer is None:
+            self._raster_renderer = RasterOverlayRenderer()
+        return self._raster_renderer.render(cues, output_prefix)
 
     def _register_legacy_file(
         self, job_id: str, path: Path

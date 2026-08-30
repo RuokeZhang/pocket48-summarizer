@@ -21,6 +21,7 @@ iniconfig==2.3.0
 jmespath==1.1.0
 oss2==2.19.1
 packaging==26.3
+Pillow==12.3.0
 pluggy==1.6.0
 pycparser==3.0
 pycryptodome==3.23.0

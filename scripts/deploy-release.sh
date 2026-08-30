@@ -113,7 +113,7 @@ if [[ -f /etc/pocket48-summarizer/app.env ]]; then
   set +a
 fi
 ensure_clip_overlay_font_packages
-verify_clip_overlay_dependencies
+verify_clip_overlay_dependencies "$release_dir/.venv/bin/python"
 
 active_slot="$(read_active_slot)"
 standby_slot="$(other_slot "$active_slot")"

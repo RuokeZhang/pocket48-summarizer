@@ -5,9 +5,11 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
+from functools import lru_cache
 from pathlib import Path
 
 from ..config import Settings
@@ -18,6 +20,7 @@ from .layouts import (
     landscape_video_filters,
     resolve_landscape_theme,
 )
+from .raster_overlays import RasterOverlayBundle, RenderedRasterCue
 
 Heartbeat = Callable[[], Awaitable[None]]
 SILENCE_START_RE = re.compile(r"silence_start:\s*(-?\d+(?:\.\d+)?)")
@@ -37,6 +40,24 @@ class SilenceInterval:
 class VideoDimensions:
     width: int
     height: int
+
+
+@lru_cache(maxsize=8)
+def _filter_complex_file_option(executable: str) -> str:
+    try:
+        result = subprocess.run(
+            [executable, "-hide_banner", "-h", "full"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "-filter_complex_script"
+    help_text = result.stdout + result.stderr
+    if "-filter_complex_script" in help_text:
+        return "-filter_complex_script"
+    return "-/filter_complex"
 
 
 class FFmpegRunner:
@@ -59,6 +80,9 @@ class FFmpegRunner:
                 "FFprobe 未安装或 FFPROBE_PATH 无效，无法渲染字幕或弹幕"
             )
         return executable
+
+    def filter_complex_file_option(self) -> str:
+        return _filter_complex_file_option(self.require_executable())
 
     @staticmethod
     def require_ytdlp_executable() -> str:
@@ -193,6 +217,8 @@ class FFmpegRunner:
         landscape_theme: str | None = None,
         cover_path: Path | None = None,
         cover_dimensions: VideoDimensions | None = None,
+        raster_bundle: RasterOverlayBundle | None = None,
+        filter_script_path: Path | None = None,
     ) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -245,6 +271,15 @@ class FFmpegRunner:
             "-i",
             manifest_url,
         ]
+        if raster_bundle is not None:
+            if filter_script_path is None:
+                raise AppError(
+                    "clip_overlay_invalid",
+                    "彩色 emoji 滤镜脚本路径无效",
+                    False,
+                )
+            for atlas_path in raster_bundle.atlas_paths:
+                command.extend(["-i", str(atlas_path)])
         if cover_path is not None:
             if (
                 cover_dimensions is None
@@ -277,7 +312,18 @@ class FFmpegRunner:
             filters.append(
                 f"ass=filename='{self._escape_filter_path(ass_path)}'"
             )
-        if cover_path is not None:
+        if raster_bundle is not None:
+            command.extend(
+                [
+                    self.filter_complex_file_option(),
+                    str(filter_script_path),
+                    "-map",
+                    "[v]",
+                    "-map",
+                    "0:a:0?",
+                ]
+            )
+        elif cover_path is not None:
             base_filter = ",".join(filters) if filters else "null"
             width = cover_dimensions.width
             height = cover_dimensions.height
@@ -301,7 +347,7 @@ class FFmpegRunner:
             )
         else:
             command.extend(["-map", "0:v:0", "-map", "0:a:0?"])
-        if filters and cover_path is None:
+        if filters and cover_path is None and raster_bundle is None:
             command.extend(
                 [
                     "-vf",
@@ -329,6 +375,118 @@ class FFmpegRunner:
             ]
         )
         return command
+
+    def build_raster_filter_complex(
+        self,
+        *,
+        filters: list[str],
+        bundle: RasterOverlayBundle,
+        cover_input_index: int | None = None,
+        cover_dimensions: VideoDimensions | None = None,
+    ) -> str:
+        graph: list[str] = [
+            f"[0:v]{','.join(filters) if filters else 'null'}[rbase0]"
+        ]
+        atlas_cues: dict[int, list[tuple[int, RenderedRasterCue]]] = {}
+        for cue_index, cue in enumerate(bundle.cues):
+            atlas_cues.setdefault(cue.atlas_index, []).append(
+                (cue_index, cue)
+            )
+        for atlas_index, cues in atlas_cues.items():
+            input_index = atlas_index + 1
+            labels = "".join(
+                f"[ratlas{cue_index}]" for cue_index, _ in cues
+            )
+            if len(cues) == 1:
+                graph.append(
+                    f"[{input_index}:v]loop=loop=-1:size=1:start=0,"
+                    f"setpts=N/30/TB,format=rgba{labels}"
+                )
+            else:
+                graph.append(
+                    f"[{input_index}:v]loop=loop=-1:size=1:start=0,"
+                    "setpts=N/30/TB,format=rgba,"
+                    f"split={len(cues)}{labels}"
+                )
+            for cue_index, cue in cues:
+                operations = [
+                    (
+                        f"crop={cue.width}:{cue.height}:"
+                        f"{cue.crop_x}:{cue.crop_y}"
+                    ),
+                    "setpts=PTS-STARTPTS",
+                ]
+                if cue.fade_in_ms:
+                    operations.append(
+                        "fade=t=in:alpha=1:"
+                        f"st={cue.start_ms / 1000:.3f}:"
+                        f"d={cue.fade_in_ms / 1000:.3f}"
+                    )
+                graph.append(
+                    f"[ratlas{cue_index}]"
+                    f"{','.join(operations)}[rcue{cue_index}]"
+                )
+        previous = "rbase0"
+        for cue_index, cue in enumerate(bundle.cues):
+            output = f"rbase{cue_index + 1}"
+            enable = (
+                f"gte(t,{cue.start_ms / 1000:.3f})*"
+                f"lt(t,{cue.end_ms / 1000:.3f})"
+            )
+            graph.append(
+                f"[{previous}][rcue{cue_index}]overlay="
+                f"x={cue.x}:y='{self._raster_y_expression(cue)}':"
+                f"enable='{enable}':eof_action=repeat:shortest=0"
+                f"[{output}]"
+            )
+            previous = output
+        if cover_input_index is not None:
+            if cover_dimensions is None:
+                raise AppError(
+                    "ai_cover_dimensions_invalid",
+                    "AI 封面输出尺寸无效",
+                    False,
+                )
+            width = cover_dimensions.width
+            height = cover_dimensions.height
+            graph.append(
+                f"[{cover_input_index}:v]scale={width}:{height}:"
+                "force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},setsar=1[rcover]"
+            )
+            graph.append(
+                f"[{previous}][rcover]overlay=0:0:eof_action=pass:"
+                "repeatlast=0:enable='eq(n,0)'[v]"
+            )
+        else:
+            graph.append(f"[{previous}]null[v]")
+        return ";\n".join(graph) + "\n"
+
+    @staticmethod
+    def _raster_y_expression(cue: RenderedRasterCue) -> str:
+        expression = str(cue.placements[-1].y_to)
+        for placement in reversed(cue.placements):
+            start = placement.start_ms / 1000
+            end = placement.end_ms / 1000
+            if placement.move_ms and placement.y_from != placement.y_to:
+                move_end = (
+                    placement.start_ms + placement.move_ms
+                ) / 1000
+                value = (
+                    f"if(lt(t,{move_end:.3f}),"
+                    f"{placement.y_from}+"
+                    f"({placement.y_to - placement.y_from})*"
+                    f"(t-{start:.3f})/"
+                    f"{placement.move_ms / 1000:.3f},"
+                    f"{placement.y_to})"
+                )
+            else:
+                value = str(placement.y_to)
+            expression = (
+                f"if(between(t,{start:.3f},{end:.3f}),"
+                f"{value},{expression})"
+            )
+        return expression
 
     def build_extract_cover_source_command(
         self,
@@ -424,6 +582,8 @@ class FFmpegRunner:
         ass_path: Path,
         output_layout: ClipOutputLayout = "portrait",
         landscape_theme: str | None = None,
+        raster_bundle: RasterOverlayBundle | None = None,
+        filter_script_path: Path | None = None,
     ) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -453,7 +613,7 @@ class FFmpegRunner:
         filters.append(
             f"ass=filename='{self._escape_filter_path(ass_path)}'"
         )
-        return [
+        command = [
             self.require_executable(),
             "-nostdin",
             "-hide_banner",
@@ -479,14 +639,36 @@ class FFmpegRunner:
             f"{timestamp_ms / 1000:.3f}",
             "-i",
             manifest_url,
-            "-vf",
-            ",".join(filters),
+        ]
+        if raster_bundle is not None:
+            if filter_script_path is None:
+                raise AppError(
+                    "clip_overlay_invalid",
+                    "彩色 emoji 滤镜脚本路径无效",
+                    False,
+                )
+            for atlas_path in raster_bundle.atlas_paths:
+                command.extend(["-i", str(atlas_path)])
+            command.extend(
+                [
+                    self.filter_complex_file_option(),
+                    str(filter_script_path),
+                    "-map",
+                    "[v]",
+                ]
+            )
+        else:
+            command.extend(["-vf", ",".join(filters)])
+        command.extend(
+            [
             "-frames:v",
             "1",
             "-an",
             "-y",
             str(output_path),
-        ]
+            ]
+        )
+        return command
 
     def build_prepend_cover_command(
         self,
@@ -776,11 +958,43 @@ class FFmpegRunner:
         landscape_theme: str | None = None,
         cover_path: Path | None = None,
         cover_dimensions: VideoDimensions | None = None,
+        raster_bundle: RasterOverlayBundle | None = None,
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = output_path.with_suffix(".part.mp4")
+        filter_script_path = output_path.with_suffix(
+            ".emoji-filter.txt"
+        )
         temporary_path.unlink(missing_ok=True)
+        filter_script_path.unlink(missing_ok=True)
         try:
+            if raster_bundle is not None:
+                filters: list[str] = []
+                if output_layout == "landscape":
+                    filters.extend(
+                        landscape_video_filters(
+                            resolve_landscape_theme(landscape_theme)
+                        )
+                    )
+                if ass_path is not None:
+                    filters.append(
+                        "ass=filename='"
+                        f"{self._escape_filter_path(ass_path)}'"
+                    )
+                cover_input_index = (
+                    1 + len(raster_bundle.atlas_paths)
+                    if cover_path is not None
+                    else None
+                )
+                filter_script_path.write_text(
+                    self.build_raster_filter_complex(
+                        filters=filters,
+                        bundle=raster_bundle,
+                        cover_input_index=cover_input_index,
+                        cover_dimensions=cover_dimensions,
+                    ),
+                    encoding="utf-8",
+                )
             await self._run_command(
                 self.build_clip_command(
                     manifest_url,
@@ -792,6 +1006,8 @@ class FFmpegRunner:
                     landscape_theme=landscape_theme,
                     cover_path=cover_path,
                     cover_dimensions=cover_dimensions,
+                    raster_bundle=raster_bundle,
+                    filter_script_path=filter_script_path,
                 ),
                 timeout_seconds=max(
                     15 * 60, int((end_ms - start_ms) / 1000 * 2 + 300)
@@ -814,6 +1030,8 @@ class FFmpegRunner:
         except BaseException:
             temporary_path.unlink(missing_ok=True)
             raise
+        finally:
+            filter_script_path.unlink(missing_ok=True)
         return output_path
 
     async def extract_cover_source_frame(
@@ -907,11 +1125,34 @@ class FFmpegRunner:
         ass_path: Path,
         output_layout: ClipOutputLayout = "portrait",
         landscape_theme: str | None = None,
+        raster_bundle: RasterOverlayBundle | None = None,
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = output_path.with_suffix(".part.png")
+        filter_script_path = output_path.with_suffix(
+            ".emoji-filter.txt"
+        )
         temporary_path.unlink(missing_ok=True)
+        filter_script_path.unlink(missing_ok=True)
         try:
+            if raster_bundle is not None:
+                filters: list[str] = []
+                if output_layout == "landscape":
+                    filters.extend(
+                        landscape_video_filters(
+                            resolve_landscape_theme(landscape_theme)
+                        )
+                    )
+                filters.append(
+                    f"ass=filename='{self._escape_filter_path(ass_path)}'"
+                )
+                filter_script_path.write_text(
+                    self.build_raster_filter_complex(
+                        filters=filters,
+                        bundle=raster_bundle,
+                    ),
+                    encoding="utf-8",
+                )
             await self._run_command(
                 self.build_cover_frame_command(
                     manifest_url,
@@ -920,6 +1161,8 @@ class FFmpegRunner:
                     ass_path,
                     output_layout=output_layout,
                     landscape_theme=landscape_theme,
+                    raster_bundle=raster_bundle,
+                    filter_script_path=filter_script_path,
                 ),
                 timeout_seconds=10 * 60,
                 heartbeat=None,
@@ -940,6 +1183,8 @@ class FFmpegRunner:
         except BaseException:
             temporary_path.unlink(missing_ok=True)
             raise
+        finally:
+            filter_script_path.unlink(missing_ok=True)
         return output_path
 
     async def concat_clips(

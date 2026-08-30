@@ -13,7 +13,7 @@ concurrency:
 jobs:
   validate:
     name: Validate release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Require main branch
@@ -36,6 +36,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --allow-downgrades \
+            ffmpeg \
+            fontconfig \
+            fonts-lxgw-wenkai \
+            fonts-noto-cjk \
+            fonts-noto-color-emoji=2.042-1
           python -m pip install --disable-pip-version-check -r requirements.lock
           python -m pip install --disable-pip-version-check --no-deps .
 
@@ -43,6 +50,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python scripts/verify-color-emoji.py
           python -m pytest -q
           python -m compileall -q src
           node --check src/pocket48_summarizer/static/app.js

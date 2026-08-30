@@ -17,7 +17,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y \
+apt-get install -y --allow-downgrades \
   ca-certificates \
   curl \
   debian-archive-keyring \
@@ -26,7 +26,7 @@ apt-get install -y \
   fontconfig \
   fonts-lxgw-wenkai \
   fonts-noto-cjk \
-  fonts-symbola \
+  fonts-noto-color-emoji=2.042-1 \
   git \
   gnupg \
   python3 \
@@ -67,6 +67,8 @@ python3 -m venv "$install_dir/.venv"
   -r "$install_dir/requirements.lock"
 "$install_dir/.venv/bin/python" -m pip install \
   --no-deps "$install_dir"
+"$install_dir/.venv/bin/python" \
+  "$install_dir/scripts/verify-color-emoji.py"
 
 if [[ ! -f /etc/pocket48-summarizer/app.env ]]; then
   install -m 0640 -o root -g pocket48 \

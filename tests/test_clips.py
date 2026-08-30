@@ -7,6 +7,7 @@ import pytest
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.media.clips import VideoClipService
 from pocket48_summarizer.media.ffmpeg import VideoDimensions
+from pocket48_summarizer.media.raster_overlays import RasterOverlayBundle
 from pocket48_summarizer.models import ClipRange, TranscriptSegment
 
 
@@ -118,6 +119,8 @@ class OverlayFFmpeg(FakeFFmpeg):
         self.landscape_theme = ""
         self.ai_cover_bytes = None
         self.ai_cover_dimensions = None
+        self.raster_bundle = None
+        self.cover_raster_bundle = None
 
     async def supports_ass_filter(self) -> bool:
         return True
@@ -138,6 +141,7 @@ class OverlayFFmpeg(FakeFFmpeg):
         landscape_theme: str = "cream",
         cover_path: Path | None = None,
         cover_dimensions: VideoDimensions | None = None,
+        raster_bundle: RasterOverlayBundle | None = None,
     ) -> Path:
         if ass_path is not None:
             self.ass_content = ass_path.read_text(encoding="utf-8")
@@ -147,6 +151,7 @@ class OverlayFFmpeg(FakeFFmpeg):
             cover_path.read_bytes() if cover_path is not None else None
         )
         self.ai_cover_dimensions = cover_dimensions
+        self.raster_bundle = raster_bundle
         return await super().clip_video(
             manifest_url,
             output_path,
@@ -166,11 +171,14 @@ class OverlayFFmpeg(FakeFFmpeg):
         ass_path: Path,
         output_layout: str = "portrait",
         landscape_theme: str = "cream",
+        raster_bundle: RasterOverlayBundle | None = None,
     ) -> Path:
         self.cover_ass_content = ass_path.read_text(encoding="utf-8")
         self.cover_timestamp_ms = timestamp_ms
         self.output_layout = output_layout
         self.landscape_theme = landscape_theme
+        self.raster_bundle = raster_bundle
+        self.cover_raster_bundle = raster_bundle
         return await super().render_cover_frame(
             manifest_url,
             output_path,
@@ -478,6 +486,62 @@ async def test_overlay_export_keeps_warning_across_upload_retry(
 
 
 @pytest.mark.asyncio
+async def test_emoji_overlay_is_forwarded_as_raster_bundle(
+    settings, repository, monkeypatch
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=9911041",
+        "9911041",
+    )
+    repository.replace_transcript(
+        job.id,
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=1000,
+                end_ms=4000,
+                text="开心🎉时刻",
+            )
+        ],
+    )
+    ffmpeg = OverlayFFmpeg()
+    service = VideoClipService(
+        settings,
+        repository,
+        FakeOSS(),  # type: ignore[arg-type]
+        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+    )
+    bundle = RasterOverlayBundle(atlas_paths=(), cues=())
+
+    def fake_render(cues, output_prefix):
+        del output_prefix
+        assert cues
+        return bundle
+
+    monkeypatch.setattr(service, "_render_raster_cues", fake_render)
+
+    record = service.start_export(
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="彩色 emoji",
+        requested_by_user_id=None,
+        request_id="emoji-overlay-request",
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+    )
+    await service._tasks[record.id]
+
+    completed = repository.get_video_clip_export(job.id, record.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert ffmpeg.raster_bundle is bundle
+    assert "🎉" not in ffmpeg.ass_content
+
+
+@pytest.mark.asyncio
 async def test_landscape_export_uses_fixed_canvas_overlay(
     settings, repository
 ):
@@ -585,6 +649,56 @@ async def test_landscape_export_prepends_selected_custom_cover(
     assert "灯光亮起时" in ffmpeg.cover_ass_content
     assert r"\pos(692,670)\p1" in ffmpeg.cover_ass_content
     assert oss.uploads[0][2] == b"covervideo"
+
+
+@pytest.mark.asyncio
+async def test_manual_cover_emoji_uses_raster_title(
+    settings, repository, monkeypatch
+):
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=9911061",
+        "9911061",
+    )
+    ffmpeg = OverlayFFmpeg()
+    service = VideoClipService(
+        settings,
+        repository,
+        FakeOSS(),  # type: ignore[arg-type]
+        ffmpeg=ffmpeg,  # type: ignore[arg-type]
+    )
+    bundle = RasterOverlayBundle(atlas_paths=(), cues=())
+
+    def fake_render(cues, output_prefix):
+        del output_prefix
+        assert cues
+        return bundle
+
+    monkeypatch.setattr(service, "_render_raster_cues", fake_render)
+    record = service.start_export(
+        job_id=job.id,
+        timeline_index=0,
+        timeline_title="封面 emoji",
+        requested_by_user_id=None,
+        request_id="cover-emoji-request",
+        manifest_url="https://idol-vod.48.cn/replay.m3u8",
+        start_ms=1000,
+        end_ms=5000,
+        subtitle_mode="off",
+        include_danmaku=False,
+        output_layout="landscape",
+        cover_enabled=True,
+        cover_timestamp_ms=2300,
+        cover_title="开心🎉时刻",
+        cover_style="badge",
+    )
+    await service._tasks[record.id]
+
+    completed = repository.get_video_clip_export(job.id, record.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert ffmpeg.cover_raster_bundle is bundle
+    assert "开心🎉时刻" not in ffmpeg.cover_ass_content
+    assert r"\p1" in ffmpeg.cover_ass_content
 
 
 @pytest.mark.asyncio

@@ -66,6 +66,7 @@ prepare_runtime_locks() {
 }
 
 verify_clip_overlay_dependencies() {
+  local python_executable="${1:-python3}"
   local font_name="${CLIP_FONT_NAME:-Noto Sans CJK SC}"
   local required_font
   local matched_font
@@ -102,37 +103,47 @@ verify_clip_overlay_dependencies() {
     echo "No installed font covers emoji; clip danmaku would lose them." >&2
     return 1
   fi
+  if ! "$python_executable" \
+    "$REPOSITORY_DIR/scripts/verify-color-emoji.py"; then
+    echo "Pillow cannot render the required full-color emoji sequences." >&2
+    return 1
+  fi
 }
 
-# libass silently omits any glyph no installed font covers, so every family
-# the overlays can ask for has to be present. Keep the expected count derived
-# from the list: hard-coding it once let a new package go uninstalled.
-#
-# Symbola rather than fonts-noto-color-emoji: libass rasterises glyph
-# outlines and has no support for colour bitmap or COLR fonts, so a colour
-# emoji font still renders as tofu. Installing one alongside Symbola would
-# actively hurt, because fontconfig prefers it for emoji.
 CLIP_OVERLAY_FONT_PACKAGES=(
   fontconfig
   fonts-lxgw-wenkai
   fonts-noto-cjk
-  fonts-symbola
+  fonts-noto-color-emoji
+)
+CLIP_OVERLAY_FONT_INSTALL_SPECS=(
+  fontconfig
+  fonts-lxgw-wenkai
+  fonts-noto-cjk
+  "fonts-noto-color-emoji=2.042-1"
 )
 
 ensure_clip_overlay_font_packages() {
   local installed_packages
+  local emoji_version
   installed_packages="$(
     dpkg-query -W -f='${Status}\n' \
       "${CLIP_OVERLAY_FONT_PACKAGES[@]}" 2>/dev/null \
       | grep -c '^install ok installed$' \
       || true
   )"
-  if [[ "$installed_packages" == "${#CLIP_OVERLAY_FONT_PACKAGES[@]}" ]]; then
+  emoji_version="$(
+    dpkg-query -W -f='${Version}' fonts-noto-color-emoji 2>/dev/null \
+      || true
+  )"
+  if [[ "$installed_packages" == "${#CLIP_OVERLAY_FONT_PACKAGES[@]}" \
+    && "$emoji_version" == "2.042-1" ]]; then
     return 0
   fi
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y "${CLIP_OVERLAY_FONT_PACKAGES[@]}"
+  apt-get install -y --allow-downgrades \
+    "${CLIP_OVERLAY_FONT_INSTALL_SPECS[@]}"
 }
 
 activate_clip_maintenance() {

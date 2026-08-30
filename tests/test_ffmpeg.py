@@ -1,6 +1,9 @@
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
+from PIL import Image
 
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.media.ffmpeg import (
@@ -8,9 +11,47 @@ from pocket48_summarizer.media.ffmpeg import (
     SilenceInterval,
     VideoDimensions,
 )
+from pocket48_summarizer.media.raster_overlays import (
+    RasterOverlayBundle,
+    RasterPlacement,
+    RenderedRasterCue,
+)
 
 
 MANIFEST_URL = "https://idol-vod.48.cn/path/replay.m3u8"
+
+
+def _raster_bundle() -> RasterOverlayBundle:
+    return RasterOverlayBundle(
+        atlas_paths=(Path("/tmp/emoji-atlas.png"),),
+        cues=(
+            RenderedRasterCue(
+                atlas_index=0,
+                crop_x=2,
+                crop_y=3,
+                width=200,
+                height=80,
+                x=40,
+                placements=(
+                    RasterPlacement(
+                        start_ms=500,
+                        end_ms=1000,
+                        y_from=900,
+                        y_to=900,
+                    ),
+                    RasterPlacement(
+                        start_ms=1000,
+                        end_ms=3000,
+                        y_from=900,
+                        y_to=800,
+                        move_ms=220,
+                    ),
+                ),
+                layer=10,
+                fade_in_ms=120,
+            ),
+        ),
+    )
 
 
 class CapturingFFmpegRunner(FFmpegRunner):
@@ -299,6 +340,143 @@ def test_ai_cover_command_overlays_frame_zero_without_audio_offset(settings):
     assert "concat=" not in filter_complex
     assert "-itsoffset" not in command
     assert "0:a:0?" in command
+
+
+def test_raster_filter_uses_atlas_crops_timing_and_card_motion(settings):
+    runner = FFmpegRunner(settings)
+
+    graph = runner.build_raster_filter_complex(
+        filters=["setsar=1", "ass=filename='/work/overlay.ass'"],
+        bundle=_raster_bundle(),
+    )
+
+    assert (
+        "[1:v]loop=loop=-1:size=1:start=0,"
+        "setpts=N/30/TB,format=rgba[ratlas0]"
+        in graph
+    )
+    assert "crop=200:80:2:3" in graph
+    assert "fade=t=in:alpha=1:st=0.500:d=0.120" in graph
+    assert "x=40" in graph
+    assert "gte(t,0.500)*lt(t,3.000)" in graph
+    assert "(t-1.000)/0.220" in graph
+    assert "[rbase1]null[v]" in graph
+
+
+def test_raster_clip_command_keeps_ai_cover_last(settings):
+    runner = FFmpegRunner(settings)
+    bundle = _raster_bundle()
+
+    command = runner.build_clip_command(
+        MANIFEST_URL,
+        Path("/tmp/clip.mp4"),
+        start_ms=1000,
+        end_ms=5000,
+        ass_path=Path("/tmp/overlay.ass"),
+        output_layout="landscape",
+        cover_path=Path("/tmp/ai-cover.png"),
+        cover_dimensions=VideoDimensions(width=1920, height=1080),
+        raster_bundle=bundle,
+        filter_script_path=Path("/tmp/emoji-filter.txt"),
+    )
+    graph = runner.build_raster_filter_complex(
+        filters=["setsar=1", "ass=filename='/tmp/overlay.ass'"],
+        bundle=bundle,
+        cover_input_index=2,
+        cover_dimensions=VideoDimensions(width=1920, height=1080),
+    )
+
+    inputs = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "-i"
+    ]
+    assert inputs == [
+        MANIFEST_URL,
+        "/tmp/emoji-atlas.png",
+        "/tmp/ai-cover.png",
+    ]
+    option = runner.filter_complex_file_option()
+    assert command[command.index(option) + 1] == (
+        "/tmp/emoji-filter.txt"
+    )
+    assert graph.index("[rbase0][rcue0]overlay") < graph.index(
+        "[rbase1][rcover]overlay"
+    )
+    assert "enable='eq(n,0)'[v]" in graph
+
+
+def test_ffmpeg_composites_a_timed_rgba_atlas(settings, tmp_path):
+    runner = FFmpegRunner(settings)
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        pytest.skip("FFmpeg is not installed")
+    atlas_path = tmp_path / "atlas.png"
+    output_path = tmp_path / "frame.png"
+    filter_path = tmp_path / "filter.txt"
+    Image.new("RGBA", (24, 24), (255, 0, 0, 255)).save(atlas_path)
+    bundle = RasterOverlayBundle(
+        atlas_paths=(atlas_path,),
+        cues=(
+            RenderedRasterCue(
+                atlas_index=0,
+                crop_x=2,
+                crop_y=2,
+                width=20,
+                height=20,
+                x=10,
+                placements=(
+                    RasterPlacement(
+                        start_ms=0,
+                        end_ms=1000,
+                        y_from=15,
+                        y_to=15,
+                    ),
+                ),
+                layer=10,
+                fade_in_ms=0,
+            ),
+        ),
+    )
+    filter_path.write_text(
+        runner.build_raster_filter_complex(filters=[], bundle=bundle),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            executable,
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:s=100x100:d=1:r=30",
+            "-i",
+            str(atlas_path),
+            runner.filter_complex_file_option(),
+            str(filter_path),
+            "-map",
+            "[v]",
+            "-frames:v",
+            "1",
+            "-y",
+            str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    with Image.open(output_path).convert("RGB") as frame:
+        red, green, blue = frame.getpixel((10, 15))
+        assert red > 240
+        assert green < 10
+        assert blue < 10
 
 
 def test_ai_cover_source_command_extracts_clean_marked_frame(settings):

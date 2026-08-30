@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import textwrap
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from ..models import (
 )
 from ..datetimes import format_china_datetime
 from ..security import strip_control_chars
-from .fonts import EMOJI_FONT_FAMILY, contains_emoji, split_emoji_runs
+from .fonts import contains_emoji, split_emoji_runs
 from .layouts import (
     LANDSCAPE_CANVAS_WIDTH,
     LANDSCAPE_CANVAS_HEIGHT,
@@ -67,6 +68,13 @@ from .layouts import (
     LandscapeSubtitleFont,
     landscape_subtitle_font_name,
 )
+from .raster_overlays import (
+    RasterAsset,
+    RasterBox,
+    RasterOverlayCue,
+    RasterPlacement,
+    RasterTextLine,
+)
 
 SubtitleMode = Literal["off", "zh", "en", "bilingual"]
 CoverStyle = Literal["scrim", "display", "badge"]
@@ -117,6 +125,7 @@ class ClipOverlayDocument:
     subtitle_event_count: int
     danmaku_event_count: int
     warning_message: str | None = None
+    raster_cues: tuple[RasterOverlayCue, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +133,7 @@ class CoverOverlayDocument:
     content: str
     title: str
     style: CoverStyle
+    raster_cues: tuple[RasterOverlayCue, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +141,8 @@ class _PreparedDanmaku:
     relative_ms: int
     author: str
     body: str
+    author_plain: str
+    body_lines_plain: tuple[str, ...]
     body_lines: int
 
 
@@ -173,7 +185,13 @@ def build_clip_overlay(
             "横屏画布尺寸无效",
             False,
         )
-    subtitle_events = _subtitle_events(
+    try:
+        theme = resolve_landscape_theme(landscape_theme)
+    except ValueError as exc:
+        raise AppError(
+            "clip_theme_invalid", "视频配色方案无效", False
+        ) from exc
+    subtitle_events, subtitle_raster_cues = _subtitle_events(
         width=width,
         height=height,
         reserve_danmaku=include_danmaku,
@@ -185,8 +203,11 @@ def build_clip_overlay(
         output_layout=output_layout,
         subtitle_font_scale=subtitle_font_scale,
         allow_empty=allow_empty_subtitles,
+        font_name=font_name,
+        subtitle_font_family=subtitle_font_family,
+        theme=theme,
     )
-    danmaku_events, danmaku_count = (
+    danmaku_events, danmaku_count, danmaku_raster_cues = (
         _danmaku_events(
             width=width,
             height=height,
@@ -194,21 +215,17 @@ def build_clip_overlay(
             clip_end_ms=clip_end_ms,
             danmaku=danmaku,
             output_layout=output_layout,
+            font_name=font_name,
+            theme=theme,
         )
         if include_danmaku
-        else ([], 0)
+        else ([], 0, [])
     )
     warning = (
         "所选范围没有可渲染的弹幕"
         if include_danmaku and not danmaku_count
         else None
     )
-    try:
-        theme = resolve_landscape_theme(landscape_theme)
-    except ValueError as exc:
-        raise AppError(
-            "clip_theme_invalid", "视频配色方案无效", False
-        ) from exc
     header = _ass_header(
         width=width,
         height=height,
@@ -228,133 +245,24 @@ def build_clip_overlay(
         else []
     )
     return ClipOverlayDocument(
-        content=_apply_emoji_font(
-            "\n".join(
-                [
-                    header,
-                    *subtitle_events,
-                    *danmaku_events,
-                    *watermark_events,
-                    "",
-                ]
-            )
+        content="\n".join(
+            [
+                header,
+                *subtitle_events,
+                *danmaku_events,
+                *watermark_events,
+                "",
+            ]
         ),
-        subtitle_event_count=len(subtitle_events),
+        subtitle_event_count=(
+            len(subtitle_events) + len(subtitle_raster_cues)
+        ),
         danmaku_event_count=danmaku_count,
         warning_message=warning,
+        raster_cues=tuple(
+            [*subtitle_raster_cues, *danmaku_raster_cues]
+        ),
     )
-
-
-_ASS_OVERRIDE_BLOCK_RE = re.compile(r"(\{[^}]*\})")
-_ASS_STYLE_RESET_RE = re.compile(r"\\r([^\\}]*)")
-_ASS_FONT_NAME_RE = re.compile(r"\\fn([^\\}]*)")
-
-
-def _ass_format_index(format_line: str, field: str) -> int | None:
-    fields = [
-        name.strip().lower()
-        for name in format_line.split(":", 1)[1].split(",")
-    ]
-    try:
-        return fields.index(field)
-    except ValueError:
-        return None
-
-
-def _ass_style_fonts(lines: list[str]) -> dict[str, str]:
-    fonts: dict[str, str] = {}
-    name_index: int | None = None
-    font_index: int | None = None
-    in_styles = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("["):
-            in_styles = "styles" in stripped.lower()
-        elif in_styles and stripped.startswith("Format:"):
-            name_index = _ass_format_index(stripped, "name")
-            font_index = _ass_format_index(stripped, "fontname")
-        elif (
-            in_styles
-            and stripped.startswith("Style:")
-            and name_index is not None
-            and font_index is not None
-        ):
-            values = stripped.split(":", 1)[1].split(",")
-            if len(values) > max(name_index, font_index):
-                fonts[values[name_index].strip()] = values[
-                    font_index
-                ].strip()
-    return fonts
-
-
-def _emoji_tagged_text(
-    text: str, *, style_font: str, style_fonts: dict[str, str]
-) -> str:
-    current = style_font
-    pieces: list[str] = []
-    for part in _ASS_OVERRIDE_BLOCK_RE.split(text):
-        if not part:
-            continue
-        if part.startswith("{"):
-            if (reset := _ASS_STYLE_RESET_RE.search(part)) is not None:
-                current = style_fonts.get(reset.group(1).strip(), style_font)
-            if (override := _ASS_FONT_NAME_RE.search(part)) is not None:
-                current = override.group(1).strip()
-            pieces.append(part)
-            continue
-        for is_emoji, chunk in split_emoji_runs(part):
-            if is_emoji:
-                pieces.append(
-                    f"{{\\fn{EMOJI_FONT_FAMILY}}}{chunk}{{\\fn{current}}}"
-                )
-            else:
-                pieces.append(chunk)
-    return "".join(pieces)
-
-
-def _apply_emoji_font(content: str) -> str:
-    """Name the monochrome emoji family inline for every emoji run.
-
-    Installing the font is not enough. libass asks fontconfig for a fallback
-    whenever the styled font lacks a glyph, fontconfig prefers a colour emoji
-    font when one is installed, and libass cannot rasterise colour glyphs -- so
-    it silently draws nothing. Requesting the family by name is the only way to
-    make the choice deterministic, and the trailing tag restores whatever font
-    was in effect so the surrounding Chinese is untouched.
-    """
-
-    lines = content.split("\n")
-    style_fonts = _ass_style_fonts(lines)
-    style_index: int | None = None
-    text_index: int | None = None
-    in_events = False
-    for position, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("["):
-            in_events = "events" in stripped.lower()
-        elif in_events and stripped.startswith("Format:"):
-            style_index = _ass_format_index(stripped, "style")
-            text_index = _ass_format_index(stripped, "text")
-        elif (
-            in_events
-            and stripped.startswith("Dialogue:")
-            and style_index is not None
-            and text_index is not None
-        ):
-            prefix, _, payload = line.partition(":")
-            values = payload.split(",", text_index)
-            if len(values) <= max(style_index, text_index):
-                continue
-            if not contains_emoji(values[text_index]):
-                continue
-            style_name = values[style_index].strip()
-            values[text_index] = _emoji_tagged_text(
-                values[text_index],
-                style_font=style_fonts.get(style_name, ""),
-                style_fonts=style_fonts,
-            )
-            lines[position] = f"{prefix}:{','.join(values)}"
-    return "\n".join(lines)
 
 
 def build_cover_overlay(
@@ -491,6 +399,7 @@ Style: CoverBox,{safe_font_name},1,{box_fill},{box_fill},{box_fill},{box_fill},0
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"""
     events: list[str] = []
+    raster_cues: list[RasterOverlayCue] = []
     if box_y is not None and box_height is not None:
         box = _ass_rounded_rect(panel_width, box_height, radius)
         events.append(
@@ -505,21 +414,83 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
                 ),
             )
         )
-    events.append(
-        _dialogue(
-            layer=5,
-            start_ms=0,
-            end_ms=duration_ms,
-            style="CoverTitle",
-            text=f"{{\\an5\\pos({center_x},{title_y})}}{wrapped_title}",
+    if contains_emoji(normalized_title):
+        title_lines_list = _wrapped_text(
+            normalized_title,
+            width=wrap_width,
         )
-    )
+        if len(title_lines_list) > 2:
+            title_lines_list = title_lines_list[:2]
+            title_lines_list[-1] = (
+                _truncate(
+                    title_lines_list[-1],
+                    max(1, wrap_width - 1),
+                )
+                + "…"
+            )
+        title_lines = tuple(title_lines_list)
+        title_line_step = round(visual_size * 1.25)
+        title_line_box_height = (
+            round(visual_size * 1.6)
+            + outline_width * 2
+            + shadow
+        )
+        title_height = max(
+            title_line_box_height,
+            (len(title_lines) - 1) * title_line_step
+            + title_line_box_height,
+        )
+        raster_cues.append(
+            RasterOverlayCue(
+                asset=RasterAsset(
+                    width=panel_width,
+                    height=title_height,
+                    lines=tuple(
+                        RasterTextLine(
+                            text=line,
+                            x=panel_width // 2,
+                            y=index * title_line_step,
+                            font_name=safe_font_name,
+                            font_size=visual_size,
+                            color=_rgba(text_color),
+                            anchor="center",
+                            stroke_width=outline_width,
+                            stroke_color=_rgba(outline_color, alpha=231),
+                            shadow_offset=shadow,
+                            shadow_color=_rgba(
+                                outline_color, alpha=143
+                            ),
+                        )
+                        for index, line in enumerate(title_lines)
+                    ),
+                ),
+                x=panel_x,
+                placements=(
+                    RasterPlacement(
+                        start_ms=0,
+                        end_ms=duration_ms,
+                        y_from=title_y - title_height // 2,
+                        y_to=title_y - title_height // 2,
+                    ),
+                ),
+                layer=5,
+            )
+        )
+    else:
+        events.append(
+            _dialogue(
+                layer=5,
+                start_ms=0,
+                end_ms=duration_ms,
+                style="CoverTitle",
+                text=f"{{\\an5\\pos({center_x},{title_y})}}{wrapped_title}",
+            )
+        )
     return CoverOverlayDocument(
-        content=_apply_emoji_font(
-            "\n".join([header, *events, ""])
-        ),
+        content="\n".join([header, *events, ""]),
         title=normalized_title,
         style=style,
+        raster_cues=tuple(raster_cues),
     )
 
 
@@ -599,9 +570,12 @@ def _subtitle_events(
     subtitle_font_scale: int,
     reserve_danmaku: bool,
     allow_empty: bool,
-) -> list[str]:
+    font_name: str,
+    subtitle_font_family: LandscapeSubtitleFont,
+    theme: LandscapeTheme,
+) -> tuple[list[str], list[RasterOverlayCue]]:
     if subtitle_mode == "off":
-        return []
+        return ([], [])
     selected = [
         segment
         for segment in transcript
@@ -610,7 +584,7 @@ def _subtitle_events(
     ]
     if not selected:
         if allow_empty:
-            return []
+            return ([], [])
         raise AppError(
             "clip_subtitles_empty",
             "所选范围没有可渲染的字幕",
@@ -629,6 +603,7 @@ def _subtitle_events(
                 True,
             )
     events: list[str] = []
+    raster_cues: list[RasterOverlayCue] = []
     scale = _subtitle_scale(subtitle_font_scale)
     portrait = _portrait_subtitle_metrics(
         width=width,
@@ -671,26 +646,109 @@ def _subtitle_events(
                 translations.get(segment.sequence, ""),
                 width=landscape_en_width,
             )
-            events.extend(
-                _landscape_subtitle_events(
-                    start_ms=start_ms,
-                    end_ms=end_ms,
-                    subtitle_mode=subtitle_mode,
-                    zh_lines=zh_lines,
-                    en_lines=en_lines,
-                    scale=scale,
-                )
+            ass_events, line_cues = _landscape_subtitle_events(
+                start_ms=start_ms,
+                end_ms=end_ms,
+                subtitle_mode=subtitle_mode,
+                zh_lines=zh_lines,
+                en_lines=en_lines,
+                scale=scale,
+                font_name=landscape_subtitle_font_name(
+                    subtitle_font_family
+                ),
+                theme=theme,
             )
+            events.extend(ass_events)
+            raster_cues.extend(line_cues)
             continue
         else:
-            zh = _ass_wrapped_text(
+            zh_lines = _wrapped_text(
                 segment.text,
                 width=portrait.zh_line_width,
             )
-            en = _ass_wrapped_text(
+            en_lines = _wrapped_text(
                 translations.get(segment.sequence, ""),
                 width=portrait.en_line_width,
             )
+            zh = r"\N".join(_ass_text(line) for line in zh_lines)
+            en = r"\N".join(_ass_text(line) for line in en_lines)
+        selected_lines: list[tuple[str, int, int]] = []
+        if subtitle_mode in {"zh", "bilingual"}:
+            selected_lines.extend(
+                (
+                    line,
+                    max(
+                        1,
+                        round(
+                            portrait.zh_size * LIBASS_CJK_ADVANCE_RATIO
+                        ),
+                    ),
+                    portrait.zh_outline,
+                )
+                for line in zh_lines
+            )
+        if subtitle_mode in {"en", "bilingual"}:
+            selected_lines.extend(
+                (
+                    line,
+                    max(
+                        1,
+                        round(
+                            portrait.en_size * LIBASS_CJK_ADVANCE_RATIO
+                        ),
+                    ),
+                    portrait.en_outline,
+                )
+                for line in en_lines
+            )
+        if any(contains_emoji(line) for line, _, _ in selected_lines):
+            line_gap = max(1, round(height * 0.003))
+            line_heights = [
+                max(size, round(size * 1.35))
+                for _, size, _ in selected_lines
+            ]
+            asset_height = sum(line_heights) + line_gap * max(
+                0, len(selected_lines) - 1
+            )
+            cursor_y = 0
+            raster_lines: list[RasterTextLine] = []
+            for (line, size, outline), line_height in zip(
+                selected_lines, line_heights, strict=True
+            ):
+                raster_lines.append(
+                    RasterTextLine(
+                        text=line,
+                        x=portrait.band_width // 2,
+                        y=cursor_y,
+                        font_name=font_name,
+                        font_size=size,
+                        color=(255, 255, 255, 255),
+                        anchor="center",
+                        stroke_width=outline,
+                        stroke_color=(0, 0, 0, 255),
+                    )
+                )
+                cursor_y += line_height + line_gap
+            raster_cues.append(
+                RasterOverlayCue(
+                    asset=RasterAsset(
+                        width=portrait.band_width,
+                        height=max(1, asset_height),
+                        lines=tuple(raster_lines),
+                    ),
+                    x=portrait.margin_l,
+                    placements=(
+                        RasterPlacement(
+                            start_ms=start_ms,
+                            end_ms=end_ms,
+                            y_from=height - portrait.margin_v - asset_height,
+                            y_to=height - portrait.margin_v - asset_height,
+                        ),
+                    ),
+                    layer=20,
+                )
+            )
+            continue
         if subtitle_mode == "zh":
             style = "SubtitleZh"
             text = zh
@@ -710,14 +768,16 @@ def _subtitle_events(
             )
         )
     if not events:
-        if allow_empty:
-            return []
+        if allow_empty and not raster_cues:
+            return ([], [])
+        if raster_cues:
+            return (events, raster_cues)
         raise AppError(
             "clip_subtitles_empty",
             "所选范围没有可渲染的字幕",
             False,
         )
-    return events
+    return (events, raster_cues)
 
 
 def _landscape_watermark_events(
@@ -770,8 +830,20 @@ def _landscape_subtitle_events(
     zh_lines: list[str],
     en_lines: list[str],
     scale: float,
-) -> list[str]:
-    paragraphs: list[tuple[str, list[str], float]] = []
+    font_name: str,
+    theme: LandscapeTheme,
+) -> tuple[list[str], list[RasterOverlayCue]]:
+    paragraphs: list[
+        tuple[
+            str,
+            list[str],
+            float,
+            int,
+            tuple[int, int, int, int],
+            int,
+            int,
+        ]
+    ] = []
     if subtitle_mode in {"zh", "bilingual"} and zh_lines:
         paragraphs.append(
             (
@@ -780,6 +852,10 @@ def _landscape_subtitle_events(
                 LANDSCAPE_SUBTITLE_ZH_SIZE
                 * scale
                 * LANDSCAPE_SUBTITLE_LINE_HEIGHT,
+                max(16, round(LANDSCAPE_SUBTITLE_ZH_SIZE * scale)),
+                _rgba(theme.subtitle_zh),
+                LANDSCAPE_SUBTITLE_ZH_SCALE_X,
+                LANDSCAPE_SUBTITLE_ZH_SCALE_Y,
             )
         )
     if subtitle_mode in {"en", "bilingual"} and en_lines:
@@ -790,6 +866,13 @@ def _landscape_subtitle_events(
                 LANDSCAPE_SUBTITLE_EN_SIZE
                 * scale
                 * LANDSCAPE_SUBTITLE_LINE_HEIGHT,
+                max(13, round(LANDSCAPE_SUBTITLE_EN_SIZE * scale)),
+                _rgba(
+                    theme.subtitle_en,
+                    alpha=round(255 * LANDSCAPE_SUBTITLE_EN_OPACITY),
+                ),
+                LANDSCAPE_SUBTITLE_EN_SCALE_X,
+                LANDSCAPE_SUBTITLE_EN_SCALE_Y,
             )
         )
     total_height = sum(
@@ -797,30 +880,74 @@ def _landscape_subtitle_events(
             LANDSCAPE_SUBTITLE_PARAGRAPH_GAP
             + len(lines) * line_height
         )
-        for _, lines, line_height in paragraphs
+        for _, lines, line_height, _, _, _, _ in paragraphs
     )
     cursor_y = (LANDSCAPE_CANVAS_HEIGHT - total_height) / 2
     events: list[str] = []
-    for style, lines, line_height in paragraphs:
+    raster_cues: list[RasterOverlayCue] = []
+    for (
+        style,
+        lines,
+        line_height,
+        font_size,
+        color,
+        scale_x,
+        scale_y,
+    ) in paragraphs:
         cursor_y += LANDSCAPE_SUBTITLE_PARAGRAPH_GAP
         for line in lines:
             position_y = round(
                 cursor_y + LANDSCAPE_SUBTITLE_POSITION_OFFSET
             )
-            events.append(
-                _dialogue(
-                    layer=20,
-                    start_ms=start_ms,
-                    end_ms=end_ms,
-                    style=style,
-                    text=(
-                        rf"{{\pos({LANDSCAPE_SUBTITLE_LEFT},{position_y})}}"
-                        f"{_ass_text(line)}"
+            if contains_emoji(line):
+                asset_height = max(
+                    1, math.ceil(font_size * 1.3 * scale_y / 100)
+                )
+                raster_cues.append(
+                    RasterOverlayCue(
+                        asset=RasterAsset(
+                            width=LANDSCAPE_SUBTITLE_WIDTH,
+                            height=asset_height,
+                            lines=(
+                                RasterTextLine(
+                                    text=line,
+                                    x=0,
+                                    y=0,
+                                    font_name=font_name,
+                                    font_size=font_size,
+                                    color=color,
+                                    scale_x=scale_x,
+                                    scale_y=scale_y,
+                                ),
+                            ),
+                        ),
+                        x=LANDSCAPE_SUBTITLE_LEFT,
+                        placements=(
+                            RasterPlacement(
+                                start_ms=start_ms,
+                                end_ms=end_ms,
+                                y_from=position_y,
+                                y_to=position_y,
+                            ),
+                        ),
+                        layer=20,
                     ),
                 )
-            )
+            else:
+                events.append(
+                    _dialogue(
+                        layer=20,
+                        start_ms=start_ms,
+                        end_ms=end_ms,
+                        style=style,
+                        text=(
+                            rf"{{\pos({LANDSCAPE_SUBTITLE_LEFT},{position_y})}}"
+                            f"{_ass_text(line)}"
+                        ),
+                    )
+                )
             cursor_y += line_height
-    return events
+    return (events, raster_cues)
 
 
 @dataclass(frozen=True)
@@ -915,7 +1042,9 @@ def _danmaku_events(
     clip_end_ms: int,
     danmaku: list[DanmakuEntry],
     output_layout: ClipOutputLayout,
-) -> tuple[list[str], int]:
+    font_name: str,
+    theme: LandscapeTheme,
+) -> tuple[list[str], int, list[RasterOverlayCue]]:
     geometry = (
         _landscape_card_geometry()
         if output_layout == "landscape"
@@ -935,25 +1064,38 @@ def _danmaku_events(
         relative_ms = entry.timestamp_ms - clip_start_ms
         if relative_ms - last_accepted_ms < DANMAKU_MIN_GAP_MS:
             continue
-        author = _ass_text(_truncate(_plain_text(entry.author), 18))
-        body = _wrapped_ass_text(
+        author_plain = _truncate(_plain_text(entry.author), 18) or "匿名"
+        body_lines_plain = _wrapped_text(
             _plain_text(entry.text),
             width=geometry.body_line_width,
-            lines=3,
         )
-        if not body:
+        if len(body_lines_plain) > 3:
+            body_lines_plain = body_lines_plain[:3]
+            body_lines_plain[-1] = (
+                _truncate(
+                    body_lines_plain[-1],
+                    max(1, geometry.body_line_width - 1),
+                )
+                + "…"
+            )
+        if not body_lines_plain:
             continue
         prepared.append(
             _PreparedDanmaku(
                 relative_ms=relative_ms,
-                author=author or "匿名",
-                body=body,
-                body_lines=body.count(r"\N") + 1,
+                author=_ass_text(author_plain),
+                body=r"\N".join(
+                    _ass_text(line) for line in body_lines_plain
+                ),
+                author_plain=author_plain,
+                body_lines_plain=tuple(body_lines_plain),
+                body_lines=len(body_lines_plain),
             )
         )
         last_accepted_ms = relative_ms
 
     events: list[str] = []
+    raster_cues: list[RasterOverlayCue] = []
     clip_duration_ms = clip_end_ms - clip_start_ms
     # Mirror the browser's variable-height, bottom-anchored card stack.
     heights = [geometry.card_height(item.body_lines) for item in prepared]
@@ -962,7 +1104,16 @@ def _danmaku_events(
     box_style = f"{geometry.style_prefix}DanmakuBox"
     author_style = f"{geometry.style_prefix}DanmakuAuthor"
     body_style = f"{geometry.style_prefix}Danmaku"
+    rasterize_all = any(
+        contains_emoji(item.author_plain)
+        or any(
+            contains_emoji(line) for line in item.body_lines_plain
+        )
+        for item in prepared
+    )
     for index, item in enumerate(prepared):
+        raster_placements: list[RasterPlacement] = []
+        rasterized = rasterize_all
         maximum_age = min(
             geometry.max_stack - 1,
             len(prepared) - index - 1,
@@ -1023,6 +1174,17 @@ def _danmaku_events(
                 heights[index],
                 geometry.radius,
             )
+            if rasterized:
+                raster_placements.append(
+                    RasterPlacement(
+                        start_ms=segment_start_ms,
+                        end_ms=segment_end_ms,
+                        y_from=previous_y if age else card_y,
+                        y_to=card_y,
+                        move_ms=rise_ms if age else 0,
+                    )
+                )
+                continue
             # Fixed-width ASS cards need a vector box behind the text.
             events.append(
                 _dialogue(
@@ -1049,7 +1211,108 @@ def _danmaku_events(
                     ),
                 )
             )
-    return events, len(prepared)
+        if rasterized and raster_placements:
+            raster_cues.append(
+                _danmaku_raster_cue(
+                    item=item,
+                    geometry=geometry,
+                    height=heights[index],
+                    x=card_x,
+                    placements=tuple(raster_placements),
+                    output_layout=output_layout,
+                    font_name=font_name,
+                    theme=theme,
+                )
+            )
+    return events, len(prepared), raster_cues
+
+
+def _danmaku_raster_cue(
+    *,
+    item: _PreparedDanmaku,
+    geometry: _DanmakuCardGeometry,
+    height: int,
+    x: int,
+    placements: tuple[RasterPlacement, ...],
+    output_layout: ClipOutputLayout,
+    font_name: str,
+    theme: LandscapeTheme,
+) -> RasterOverlayCue:
+    if output_layout == "landscape":
+        author_size = LANDSCAPE_DANMAKU_AUTHOR_SIZE
+        body_size = LANDSCAPE_DANMAKU_BODY_SIZE
+        author_color = _rgba(theme.danmaku_author)
+        body_color = _rgba(theme.danmaku_text)
+        box = RasterBox(
+            fill=_rgba(theme.danmaku_background, alpha=243),
+            radius=geometry.radius,
+            outline=_rgba(theme.danmaku_author, alpha=87),
+            outline_width=2,
+            shadow=_rgba(theme.danmaku_text, alpha=31),
+            shadow_offset=3,
+            shadow_blur=3,
+        )
+    else:
+        author_size = max(
+            10,
+            round(
+                geometry.author_line_height
+                / PORTRAIT_DANMAKU_AUTHOR_LINE_HEIGHT
+            ),
+        )
+        body_size = max(
+            12,
+            round(
+                geometry.body_line_height / PORTRAIT_DANMAKU_LINE_HEIGHT
+            ),
+        )
+        author_color = _rgba(PORTRAIT_DANMAKU_AUTHOR_COLOR, alpha=199)
+        body_color = _rgba(PORTRAIT_DANMAKU_TEXT_COLOR, alpha=224)
+        box = RasterBox(
+            fill=_rgba(PORTRAIT_DANMAKU_BACKGROUND_COLOR, alpha=61),
+            radius=geometry.radius,
+            shadow=(0, 0, 0, 26),
+            shadow_offset=max(1, round(geometry.radius * 0.2)),
+            shadow_blur=max(1, round(geometry.radius * 0.3)),
+        )
+    lines = [
+        RasterTextLine(
+            text=item.author_plain,
+            x=geometry.padding_x,
+            y=geometry.padding_y,
+            font_name=font_name,
+            font_size=author_size,
+            color=author_color,
+        )
+    ]
+    body_y = (
+        geometry.padding_y
+        + geometry.author_line_height
+        + geometry.text_gap
+    )
+    lines.extend(
+        RasterTextLine(
+            text=line,
+            x=geometry.padding_x,
+            y=body_y + index * geometry.body_line_height,
+            font_name=font_name,
+            font_size=body_size,
+            color=body_color,
+        )
+        for index, line in enumerate(item.body_lines_plain)
+    )
+    return RasterOverlayCue(
+        asset=RasterAsset(
+            width=geometry.card_width,
+            height=height,
+            lines=tuple(lines),
+            box=box,
+        ),
+        x=x,
+        placements=placements,
+        layer=10,
+        fade_in_ms=120,
+    )
 
 
 def _ass_header(
@@ -1275,6 +1538,20 @@ def _ass_color(value: str, *, alpha: int = 0) -> str:
     return f"&H{alpha:02X}{blue}{green}{red}"
 
 
+def _rgba(
+    value: str, *, alpha: int = 255
+) -> tuple[int, int, int, int]:
+    normalized = normalize_subtitle_color(value)
+    if not 0 <= alpha <= 255:
+        raise ValueError("alpha must be between 0 and 255")
+    return (
+        int(normalized[1:3], 16),
+        int(normalized[3:5], 16),
+        int(normalized[5:7], 16),
+        alpha,
+    )
+
+
 def _subtitle_scale(value: int) -> float:
     return value / 100 * SUBTITLE_FONT_BASE_SCALE
 
@@ -1358,12 +1635,26 @@ def _wrapped_text(
     rebalance_cjk_orphan: bool = True,
 ) -> list[str]:
     normalized = _plain_text(value)
+    emoji_placeholders: dict[str, str] = {}
+    protected_parts: list[str] = []
+    for is_emoji, part in split_emoji_runs(normalized):
+        if not is_emoji:
+            protected_parts.append(part)
+            continue
+        placeholder = chr(0xE000 + len(emoji_placeholders))
+        emoji_placeholders[placeholder] = part
+        protected_parts.append(placeholder)
+    protected = "".join(protected_parts)
     wrapped = textwrap.wrap(
-        normalized,
+        protected,
         width=width,
         break_long_words=True,
         break_on_hyphens=False,
     )
+    wrapped = [
+        "".join(emoji_placeholders.get(char, char) for char in line)
+        for line in wrapped
+    ]
     for index in range(1, len(wrapped)):
         while (
             wrapped[index]

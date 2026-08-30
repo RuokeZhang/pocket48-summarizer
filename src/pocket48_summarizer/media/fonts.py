@@ -1,26 +1,21 @@
-"""Emoji font selection for the libass overlay renderer.
-
-libass cannot rasterise a colour font, and it resolves a glyph the styled font
-lacks by asking fontconfig for a fallback. On a machine that has any colour
-emoji font installed, fontconfig answers with that font, libass gets no
-outline, and it silently draws nothing -- so installing a monochrome emoji
-font is not enough to make emoji appear. The overlay therefore names the
-monochrome family explicitly in the ASS text instead of trusting fallback,
-and this module owns which characters need that treatment.
-"""
+"""Font discovery and emoji-run detection for clip overlays."""
 
 from __future__ import annotations
 
 import re
 import subprocess
 from collections.abc import Iterator
+from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-# The monochrome outline emoji font installed by the deployment scripts.
-# libass is asked for it by name, so fontconfig's fallback preference -- which
-# favours a colour font whenever one is installed -- cannot hijack the glyph.
-EMOJI_FONT_FAMILY = "Symbola"
+from PIL import Image, ImageDraw, ImageFont, features
+
+from ..errors import AppError
+
+EMOJI_FONT_FAMILY = "Noto Color Emoji"
+COLOR_EMOJI_NATIVE_SIZE = 109
 
 # Unicode gives every emoji-capable codepoint a default presentation, and only
 # the ones defaulting to *emoji* presentation break: those are the ones
@@ -38,23 +33,46 @@ _EMOJI_PRESENTATION_BMP = (
 # A text-presentation character followed by U+FE0F is an explicit request for
 # the colour glyph, so it fails the same way and belongs to the same run.
 _EMOJI_TEXT_DEFAULT = "\u0023\u002a\u0030-\u0039\u00a9\u00ae\u203c-\u3299"
-# Joiners, variation selectors, keycaps and skin tones only ever extend a run.
-_EMOJI_MODIFIER = "\u200d\ufe0e\ufe0f\u20e3\U0001f3fb-\U0001f3ff"
+# Variation selectors, skin tones and subdivision-flag tags extend one
+# grapheme. ZWJ is handled separately because it joins another full base.
+_EMOJI_EXTENDER = (
+    "\ufe0e\ufe0f\U0001f3fb-\U0001f3ff"
+    "\U000e0020-\U000e007f"
+)
+_EMOJI_REGIONAL_INDICATOR = "\U0001f1e6-\U0001f1ff"
 
 _EMOJI_ATOM = (
     f"(?:[{_EMOJI_PRESENTATION_SUPPLEMENTARY}{_EMOJI_PRESENTATION_BMP}]"
     f"|[{_EMOJI_TEXT_DEFAULT}]\ufe0f)"
 )
-# Whole grapheme clusters are matched together so a family or skin-tone
-# sequence is not split across two font changes.
+# Match one grapheme at a time. In particular, adjacent emoji must remain
+# separate cells while ZWJ families, flags, keycaps and skin tones stay whole.
 _EMOJI_RE = re.compile(
-    f"{_EMOJI_ATOM}(?:{_EMOJI_ATOM}|[{_EMOJI_MODIFIER}])*"
+    f"(?:"
+    f"[{_EMOJI_REGIONAL_INDICATOR}][{_EMOJI_REGIONAL_INDICATOR}]"
+    f"|[0-9#*]\ufe0f?\u20e3"
+    f"|{_EMOJI_ATOM}[{_EMOJI_EXTENDER}]*"
+    f"(?:\u200d{_EMOJI_ATOM}[{_EMOJI_EXTENDER}]*)*"
+    f")"
 )
 
 # 🎉 PARTY POPPER, a plain single-codepoint emoji that every emoji font ships.
 EMOJI_PROBE_CODEPOINT = 0x1F389
 
 EmojiFontStatus = Literal["available", "missing", "unknown"]
+
+
+@dataclass(frozen=True, slots=True)
+class FontFace:
+    path: Path
+    index: int
+
+
+def has_chromatic_pixels(image: Image.Image) -> bool:
+    return any(
+        alpha > 0 and (red != green or green != blue)
+        for red, green, blue, alpha in image.get_flattened_data()
+    )
 
 
 def contains_emoji(value: str) -> bool:
@@ -76,12 +94,6 @@ def split_emoji_runs(value: str) -> Iterator[tuple[bool, str]]:
 
 @lru_cache(maxsize=1)
 def emoji_font_family() -> str | None:
-    """Return the first installed family covering emoji, if it can be probed.
-
-    ``None`` covers both "no such font" and "cannot ask", so callers that need
-    to tell those apart should use :func:`emoji_font_status`.
-    """
-
     return _probe_emoji_font()[1]
 
 
@@ -95,36 +107,115 @@ def emoji_font_status() -> EmojiFontStatus:
 
 def reset_font_probe_cache() -> None:
     _probe_emoji_font.cache_clear()
+    resolve_font_face.cache_clear()
+    resolve_font_path.cache_clear()
     emoji_font_family.cache_clear()
     emoji_font_status.cache_clear()
 
 
 @lru_cache(maxsize=1)
 def _probe_emoji_font() -> tuple[bool, str | None]:
-    """Check that the family we name in the ASS text is actually installed.
+    try:
+        path = resolve_font_path(EMOJI_FONT_FAMILY)
+    except AppError:
+        return (True, None)
+    try:
+        if not features.check_module("freetype2") or not features.check_feature(
+            "raqm"
+        ):
+            return (True, None)
+        font = ImageFont.truetype(
+            str(path),
+            COLOR_EMOJI_NATIVE_SIZE,
+            layout_engine=ImageFont.Layout.RAQM,
+        )
+        image = Image.new("RGBA", (180, 150))
+        ImageDraw.Draw(image).text(
+            (0, 0),
+            chr(EMOJI_PROBE_CODEPOINT),
+            font=font,
+            embedded_color=True,
+        )
+    except (OSError, ValueError):
+        return (True, None)
+    if image.getchannel("A").getbbox() and has_chromatic_pixels(image):
+        return (True, EMOJI_FONT_FAMILY)
+    return (True, None)
 
-    The query is constrained to :data:`EMOJI_FONT_FAMILY` rather than asking
-    which font happens to cover the codepoint, because any answer other than
-    the family we request tells us nothing about what libass will draw.
-    """
 
+@lru_cache(maxsize=32)
+def resolve_font_path(family: str) -> Path:
+    return resolve_font_face(family).path
+
+
+@lru_cache(maxsize=32)
+def resolve_font_face(family: str) -> FontFace:
     try:
         result = subprocess.run(
-            [
-                "fc-list",
-                f":family={EMOJI_FONT_FAMILY}"
-                f":charset={EMOJI_PROBE_CODEPOINT:x}",
-                "family",
-            ],
+            ["fc-match", "--format=%{file}\t%{index}\n", family],
             capture_output=True,
             text=True,
             timeout=15,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return (False, None)
-    if result.returncode != 0:
-        return (False, None)
-    if any(line.strip() for line in result.stdout.splitlines()):
-        return (True, EMOJI_FONT_FAMILY)
-    return (True, None)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AppError(
+            "clip_font_unavailable",
+            f"无法检查剪辑字体：{family}",
+            False,
+        ) from exc
+    first_line = result.stdout.splitlines()[0] if result.stdout else ""
+    path_value, _, index_value = first_line.partition("\t")
+    path = Path(path_value)
+    if result.returncode != 0 or not path.is_file():
+        raise AppError(
+            "clip_font_unavailable",
+            f"服务器缺少剪辑字体：{family}",
+            False,
+        )
+    if family == EMOJI_FONT_FAMILY:
+        try:
+            family_result = subprocess.run(
+                ["fc-scan", "--format=%{family}\n", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise AppError(
+                "color_emoji_unavailable",
+                "无法验证服务器彩色 emoji 字体",
+                False,
+            ) from exc
+        if (
+            family_result.returncode != 0
+            or EMOJI_FONT_FAMILY not in family_result.stdout
+        ):
+            raise AppError(
+                "color_emoji_unavailable",
+                "服务器没有安装 Noto Color Emoji",
+                False,
+            )
+    try:
+        index = int(index_value or "0")
+    except ValueError:
+        index = 0
+    return FontFace(path=path, index=index)
+
+
+def require_color_emoji_font_path() -> Path:
+    if emoji_font_status() != "available":
+        raise AppError(
+            "color_emoji_unavailable",
+            "服务器缺少可用的 Noto Color Emoji 彩色字体或 RAQM 支持",
+            False,
+        )
+    try:
+        return resolve_font_path(EMOJI_FONT_FAMILY)
+    except AppError as exc:
+        raise AppError(
+            "color_emoji_unavailable",
+            "服务器缺少可用的 Noto Color Emoji 彩色字体",
+            False,
+        ) from exc
