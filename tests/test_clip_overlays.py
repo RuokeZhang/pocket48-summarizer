@@ -719,3 +719,156 @@ def test_emoji_overlays_warn_only_when_no_font_covers_them(
 
     assert clips._overlays_need_missing_emoji_font([document]) is False
     assert clips._overlays_need_missing_emoji_font([with_emoji]) is expected
+
+
+def _dialogue_lines(content: str, style: str) -> list[str]:
+    return [
+        line
+        for line in content.splitlines()
+        if line.startswith("Dialogue:")
+        and line.split(",", 9)[3].strip() == style
+    ]
+
+
+def test_emoji_runs_name_the_monochrome_font_and_restore_the_style_font():
+    """Installing an emoji font is not enough to make libass draw emoji.
+
+    libass asks fontconfig for a fallback, fontconfig prefers a colour emoji
+    font when one is installed, and libass cannot rasterise colour glyphs, so
+    it silently draws nothing. The family has to be named in the text.
+    """
+
+    document = build_clip_overlay(
+        width=1080,
+        height=1920,
+        clip_start_ms=0,
+        clip_end_ms=6000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1, start_ms=0, end_ms=6000, text="开心🎉真的"
+            )
+        ],
+        translations={},
+        danmaku=[],
+        output_layout="portrait",
+    )
+
+    text = _dialogue_text(_dialogue_lines(document.content, "SubtitleZh")[0])
+    assert (
+        r"{\fnSymbola}🎉{\fnNoto Sans CJK SC}" in text
+    ), text
+    assert "真的" in text.split(r"{\fnNoto Sans CJK SC}")[1]
+
+
+def test_emoji_font_restores_the_style_a_reset_tag_switched_to():
+    """A bilingual line switches style mid-text with ``{\\r<style>}``.
+
+    Restoring the outer style's font after an emoji would silently drag the
+    rest of the translated line back to the wrong font.
+    """
+
+    document = build_clip_overlay(
+        width=1080,
+        height=1920,
+        clip_start_ms=0,
+        clip_end_ms=6000,
+        subtitle_mode="bilingual",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(sequence=1, start_ms=0, end_ms=6000, text="开心")
+        ],
+        translations={1: "so happy 🎉 today"},
+        danmaku=[],
+        output_layout="portrait",
+    )
+
+    text = _dialogue_text(_dialogue_lines(document.content, "SubtitleZh")[0])
+    english = text.split(r"{\rSubtitleEn}", 1)[1]
+    assert r"{\fnSymbola}🎉{\fn" in english
+    assert english.endswith(" today")
+
+
+def test_only_emoji_presentation_characters_are_rerouted():
+    """Text-presentation symbols already render from the CJK font.
+
+    Rerouting them would restyle glyphs that are not broken, so the split has
+    to follow Unicode's default presentation rather than a block range.
+    """
+
+    document = build_clip_overlay(
+        width=1080,
+        height=1920,
+        clip_start_ms=0,
+        clip_end_ms=6000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1, start_ms=0, end_ms=6000, text="星★亮⭐心♥"
+            )
+        ],
+        translations={},
+        danmaku=[],
+        output_layout="portrait",
+    )
+
+    text = _dialogue_text(_dialogue_lines(document.content, "SubtitleZh")[0])
+    assert r"{\fnSymbola}⭐{\fn" in text
+    assert r"{\fnSymbola}★" not in text
+    assert r"{\fnSymbola}♥" not in text
+
+
+def test_grapheme_clusters_are_not_split_across_font_changes():
+    document = build_clip_overlay(
+        width=1080,
+        height=1920,
+        clip_start_ms=0,
+        clip_end_ms=6000,
+        subtitle_mode="off",
+        include_danmaku=True,
+        font_name="Noto Sans CJK SC",
+        transcript=[],
+        translations={},
+        danmaku=[
+            DanmakuEntry(
+                sequence=1,
+                timestamp_ms=500,
+                author="粉丝",
+                text="家人👨\u200d👩\u200d👧和❤\ufe0f",
+            )
+        ],
+        output_layout="portrait",
+    )
+
+    text = "".join(
+        _dialogue_text(line)
+        for line in document.content.splitlines()
+        if line.startswith("Dialogue:")
+    )
+    assert "{\\fnSymbola}👨\u200d👩\u200d👧{\\fn" in text
+    assert "{\\fnSymbola}❤\ufe0f{\\fn" in text
+
+
+def test_documents_without_emoji_are_left_byte_identical():
+    kwargs = dict(
+        width=1080,
+        height=1920,
+        clip_start_ms=0,
+        clip_end_ms=6000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(sequence=1, start_ms=0, end_ms=6000, text="开心")
+        ],
+        translations={},
+        danmaku=[],
+        output_layout="portrait",
+    )
+
+    assert "\\fn" not in build_clip_overlay(**kwargs).content

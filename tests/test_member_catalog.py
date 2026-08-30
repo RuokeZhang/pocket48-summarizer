@@ -243,3 +243,151 @@ async def test_sync_failure_keeps_last_successful_catalog(settings, repository):
     assert state.last_success_at is not None
     assert state.last_error == "官方目录暂时不可用"
     assert member and member.active is True
+
+
+def _idft_catalog():
+    return [
+        MemberCatalogEntry(
+            member_id="10337",
+            canonical_name="曹可甜",
+            group_id="10",
+            group_name="SNH",
+            status="99",
+            active=True,
+        ),
+        MemberCatalogEntry(
+            member_id="70001",
+            canonical_name="工厂甲",
+            group_id="70",
+            group_name="IDFT",
+            status="99",
+            active=True,
+        ),
+        MemberCatalogEntry(
+            member_id="70002",
+            canonical_name="工厂乙",
+            group_id="70",
+            group_name="IDFT",
+            status="99",
+            active=True,
+        ),
+    ]
+
+
+def test_disabling_a_group_removes_only_that_group_from_the_glossary(
+    repository,
+):
+    repository.replace_member_catalog(
+        _idft_catalog(),
+        source_url="https://h5.48.cn/catalog",
+        source_hash="d" * 64,
+    )
+    before = repository.get_glossary_sync_state().glossary_fingerprint
+
+    changed = repository.set_group_admin_disabled("70", disabled=True)
+
+    vocabulary = repository.list_active_vocabulary_texts()
+    assert changed == 2
+    assert "曹可甜" in vocabulary
+    assert "工厂甲" not in vocabulary
+    assert "工厂乙" not in vocabulary
+    assert "IDFT" not in vocabulary
+    assert repository.get_glossary_sync_state().glossary_fingerprint != before
+
+
+def test_a_catalog_sync_does_not_revive_administratively_disabled_members(
+    repository,
+):
+    """The feed owns `active` and rewrites it on every sync.
+
+    Without a column of its own the administrator's decision would silently
+    come undone the next time the catalog refreshed.
+    """
+
+    catalog = _idft_catalog()
+    repository.replace_member_catalog(
+        catalog,
+        source_url="https://h5.48.cn/catalog",
+        source_hash="e" * 64,
+    )
+    repository.set_group_admin_disabled("70", disabled=True)
+
+    state = repository.replace_member_catalog(
+        catalog,
+        source_url="https://h5.48.cn/catalog",
+        source_hash="f" * 64,
+    )
+
+    disabled = repository.get_member_catalog("70001")
+    assert disabled is not None
+    assert disabled.admin_disabled is True
+    assert disabled.source_active is True
+    assert disabled.active is False
+    assert "工厂甲" not in repository.list_active_vocabulary_texts()
+    assert state.member_count == 3
+    assert state.active_member_count == 1
+
+
+def test_re_enabling_does_not_activate_a_member_the_feed_dropped(repository):
+    """Restoring an override must hand ownership back to the feed."""
+
+    catalog = _idft_catalog()
+    repository.replace_member_catalog(
+        catalog,
+        source_url="https://h5.48.cn/catalog",
+        source_hash="0" * 64,
+    )
+    repository.set_group_admin_disabled("70", disabled=True)
+    repository.replace_member_catalog(
+        [
+            catalog[0],
+            catalog[1].model_copy(update={"active": False}),
+            catalog[2],
+        ],
+        source_url="https://h5.48.cn/catalog",
+        source_hash="1" * 64,
+    )
+
+    repository.set_group_admin_disabled("70", disabled=False)
+
+    graduated = repository.get_member_catalog("70001")
+    restored = repository.get_member_catalog("70002")
+    assert graduated is not None and graduated.active is False
+    assert restored is not None and restored.active is True
+
+
+def test_a_single_member_can_be_disabled_and_restored(repository):
+    repository.replace_member_catalog(
+        _idft_catalog(),
+        source_url="https://h5.48.cn/catalog",
+        source_hash="2" * 64,
+    )
+
+    repository.set_member_admin_disabled("10337", disabled=True)
+    assert "曹可甜" not in repository.list_active_vocabulary_texts()
+
+    repository.set_member_admin_disabled("10337", disabled=False)
+    assert "曹可甜" in repository.list_active_vocabulary_texts()
+
+    with pytest.raises(AppError) as exc_info:
+        repository.set_member_admin_disabled("missing", disabled=True)
+    assert exc_info.value.code == "member_catalog_member_not_found"
+
+
+def test_group_summary_reports_catalog_and_glossary_counts(repository):
+    repository.replace_member_catalog(
+        _idft_catalog(),
+        source_url="https://h5.48.cn/catalog",
+        source_hash="3" * 64,
+    )
+    repository.set_group_admin_disabled("70", disabled=True)
+
+    groups = {
+        group.group_id: group
+        for group in repository.list_member_catalog_groups()
+    }
+    assert groups["70"].group_name == "IDFT"
+    assert groups["70"].member_count == 2
+    assert groups["70"].disabled_count == 2
+    assert groups["70"].active_count == 0
+    assert groups["10"].active_count == 1

@@ -71,6 +71,41 @@
     </form>
   </section>
 
+  <section class="panel">
+    <h3 data-i18n="memberGroups">按团体启用</h3>
+    <p class="muted" data-i18n="memberGroupsHint">停用的团体不会进入 ASR 热词和总结词库。停用状态会在之后的官方目录同步中保留。</p>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th data-i18n="group">团体</th>
+            <th data-i18n="catalogMembers">目录成员</th>
+            <th data-i18n="glossaryMembers">词库成员</th>
+            <th data-i18n="actions">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in member_groups %}
+            <tr>
+              <td>{{ group.group_name or group.group_id }}</td>
+              <td>{{ group.member_count }}</td>
+              <td>{{ group.active_count }}</td>
+              <td>
+                <form action="/admin/glossary/groups/{{ group.group_id }}/disabled" method="post">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <input type="hidden" name="disabled" value="{{ 0 if group.disabled_count else 1 }}">
+                  <button type="submit" data-i18n="{{ 'enableGroup' if group.disabled_count else 'disableGroup' }}">{{ "全部启用" if group.disabled_count else "全部停用" }}</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" data-i18n="catalogNotSynced">官方成员目录尚未同步。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="admin-form-grid">
     <form class="panel admin-form" action="/admin/glossary/aliases" method="post">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -231,6 +266,7 @@
             <th data-i18n="group">团体</th>
             <th data-i18n="team">队伍</th>
             <th data-i18n="state">状态</th>
+            <th data-i18n="actions">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -240,10 +276,17 @@
               <td>{{ member.canonical_name }}<small>{{ member.pinyin }}</small></td>
               <td>{{ member.group_name }}</td>
               <td>{{ member.team_name }}</td>
-              <td>{{ member.status }} · <span data-i18n="{{ 'activeState' if member.active else 'inactiveState' }}">{{ "active" if member.active else "inactive" }}</span></td>
+              <td>{{ member.status }} · <span data-i18n="{{ 'activeState' if member.active else 'inactiveState' }}">{{ "active" if member.active else "inactive" }}</span>{% if member.admin_disabled %} · <span data-i18n="adminDisabledState">管理员停用</span>{% endif %}</td>
+              <td>
+                <form action="/admin/glossary/members/{{ member.member_id }}/disabled" method="post">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <input type="hidden" name="disabled" value="{{ 0 if member.admin_disabled else 1 }}">
+                  <button type="submit" data-i18n="{{ 'enableMember' if member.admin_disabled else 'disableMember' }}">{{ "启用" if member.admin_disabled else "停用" }}</button>
+                </form>
+              </td>
             </tr>
           {% else %}
-            <tr><td colspan="5" data-i18n="catalogNotSynced">官方成员目录尚未同步。</td></tr>
+            <tr><td colspan="6" data-i18n="catalogNotSynced">官方成员目录尚未同步。</td></tr>
           {% endfor %}
         </tbody>
       </table>

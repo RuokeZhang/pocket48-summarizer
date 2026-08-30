@@ -734,6 +734,7 @@ async def glossary_admin_page(request: Request) -> Response:
             "csrf_token": context.csrf_token,
             "sync_state": repository.get_glossary_sync_state(),
             "members": repository.list_member_catalog(limit=2000),
+            "member_groups": repository.list_member_catalog_groups(),
             "active_members": repository.list_member_catalog(
                 active_only=True, limit=2000
             ),
@@ -772,6 +773,51 @@ async def sync_member_catalog(request: Request) -> Response:
     return RedirectResponse(
         "/admin/glossary?saved=sync", status_code=303
     )
+
+
+@router.post("/admin/glossary/members/{member_id}/disabled")
+async def set_member_admin_disabled(
+    request: Request, member_id: str
+) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    request.app.state.services.repository.set_member_admin_disabled(
+        member_id, disabled=_disabled_flag(form)
+    )
+    return RedirectResponse(
+        "/admin/glossary?saved=member-state", status_code=303
+    )
+
+
+@router.post("/admin/glossary/groups/{group_id}/disabled")
+async def set_member_group_disabled(
+    request: Request, group_id: str
+) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    request.app.state.services.repository.set_group_admin_disabled(
+        group_id, disabled=_disabled_flag(form)
+    )
+    return RedirectResponse(
+        "/admin/glossary?saved=group-state", status_code=303
+    )
+
+
+def _disabled_flag(form: dict[str, str]) -> bool:
+    disabled = form.get("disabled")
+    if disabled not in {"0", "1"}:
+        raise AppError(
+            "glossary_active_state_invalid",
+            "词库启用状态无效",
+            False,
+        )
+    return disabled == "1"
 
 
 @router.post("/admin/glossary/terms")

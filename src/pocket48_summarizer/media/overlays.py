@@ -12,6 +12,7 @@ from ..models import (
     TranscriptSegment,
 )
 from ..security import strip_control_chars
+from .fonts import EMOJI_FONT_FAMILY, contains_emoji, split_emoji_runs
 from .layouts import (
     LANDSCAPE_CANVAS_WIDTH,
     LANDSCAPE_CANVAS_HEIGHT,
@@ -205,11 +206,127 @@ def build_clip_overlay(
         subtitle_font_family=subtitle_font_family,
     )
     return ClipOverlayDocument(
-        content="\n".join([header, *subtitle_events, *danmaku_events, ""]),
+        content=_apply_emoji_font(
+            "\n".join(
+                [header, *subtitle_events, *danmaku_events, ""]
+            )
+        ),
         subtitle_event_count=len(subtitle_events),
         danmaku_event_count=danmaku_count,
         warning_message=warning,
     )
+
+
+_ASS_OVERRIDE_BLOCK_RE = re.compile(r"(\{[^}]*\})")
+_ASS_STYLE_RESET_RE = re.compile(r"\\r([^\\}]*)")
+_ASS_FONT_NAME_RE = re.compile(r"\\fn([^\\}]*)")
+
+
+def _ass_format_index(format_line: str, field: str) -> int | None:
+    fields = [
+        name.strip().lower()
+        for name in format_line.split(":", 1)[1].split(",")
+    ]
+    try:
+        return fields.index(field)
+    except ValueError:
+        return None
+
+
+def _ass_style_fonts(lines: list[str]) -> dict[str, str]:
+    fonts: dict[str, str] = {}
+    name_index: int | None = None
+    font_index: int | None = None
+    in_styles = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_styles = "styles" in stripped.lower()
+        elif in_styles and stripped.startswith("Format:"):
+            name_index = _ass_format_index(stripped, "name")
+            font_index = _ass_format_index(stripped, "fontname")
+        elif (
+            in_styles
+            and stripped.startswith("Style:")
+            and name_index is not None
+            and font_index is not None
+        ):
+            values = stripped.split(":", 1)[1].split(",")
+            if len(values) > max(name_index, font_index):
+                fonts[values[name_index].strip()] = values[
+                    font_index
+                ].strip()
+    return fonts
+
+
+def _emoji_tagged_text(
+    text: str, *, style_font: str, style_fonts: dict[str, str]
+) -> str:
+    current = style_font
+    pieces: list[str] = []
+    for part in _ASS_OVERRIDE_BLOCK_RE.split(text):
+        if not part:
+            continue
+        if part.startswith("{"):
+            if (reset := _ASS_STYLE_RESET_RE.search(part)) is not None:
+                current = style_fonts.get(reset.group(1).strip(), style_font)
+            if (override := _ASS_FONT_NAME_RE.search(part)) is not None:
+                current = override.group(1).strip()
+            pieces.append(part)
+            continue
+        for is_emoji, chunk in split_emoji_runs(part):
+            if is_emoji:
+                pieces.append(
+                    f"{{\\fn{EMOJI_FONT_FAMILY}}}{chunk}{{\\fn{current}}}"
+                )
+            else:
+                pieces.append(chunk)
+    return "".join(pieces)
+
+
+def _apply_emoji_font(content: str) -> str:
+    """Name the monochrome emoji family inline for every emoji run.
+
+    Installing the font is not enough. libass asks fontconfig for a fallback
+    whenever the styled font lacks a glyph, fontconfig prefers a colour emoji
+    font when one is installed, and libass cannot rasterise colour glyphs -- so
+    it silently draws nothing. Requesting the family by name is the only way to
+    make the choice deterministic, and the trailing tag restores whatever font
+    was in effect so the surrounding Chinese is untouched.
+    """
+
+    lines = content.split("\n")
+    style_fonts = _ass_style_fonts(lines)
+    style_index: int | None = None
+    text_index: int | None = None
+    in_events = False
+    for position, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_events = "events" in stripped.lower()
+        elif in_events and stripped.startswith("Format:"):
+            style_index = _ass_format_index(stripped, "style")
+            text_index = _ass_format_index(stripped, "text")
+        elif (
+            in_events
+            and stripped.startswith("Dialogue:")
+            and style_index is not None
+            and text_index is not None
+        ):
+            prefix, _, payload = line.partition(":")
+            values = payload.split(",", text_index)
+            if len(values) <= max(style_index, text_index):
+                continue
+            if not contains_emoji(values[text_index]):
+                continue
+            style_name = values[style_index].strip()
+            values[text_index] = _emoji_tagged_text(
+                values[text_index],
+                style_font=style_fonts.get(style_name, ""),
+                style_fonts=style_fonts,
+            )
+            lines[position] = f"{prefix}:{','.join(values)}"
+    return "\n".join(lines)
 
 
 def build_cover_overlay(
@@ -370,7 +487,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         )
     )
     return CoverOverlayDocument(
-        content="\n".join([header, *events, ""]),
+        content=_apply_emoji_font(
+            "\n".join([header, *events, ""])
+        ),
         title=normalized_title,
         style=style,
     )

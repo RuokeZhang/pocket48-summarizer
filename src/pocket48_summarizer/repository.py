@@ -26,6 +26,7 @@ from .models import (
     JobStage,
     JobStatus,
     MemberCatalogEntry,
+    MemberCatalogGroupRecord,
     MemberCatalogRecord,
     MemberJobFilterRecord,
     ReplayMetadata,
@@ -294,9 +295,10 @@ class JobRepository:
                 INSERT INTO member_catalog (
                     member_id, canonical_name, pinyin,
                     group_id, group_name, team_id, team_name,
-                    status, ranking, active, source_present, source,
+                    status, ranking, source_active, active,
+                    source_present, source,
                     first_seen_at, last_seen_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
                           'snh48_official', ?, ?)
                 ON CONFLICT(member_id) DO UPDATE SET
                     canonical_name = excluded.canonical_name,
@@ -307,7 +309,9 @@ class JobRepository:
                     team_name = excluded.team_name,
                     status = excluded.status,
                     ranking = excluded.ranking,
-                    active = excluded.active,
+                    source_active = excluded.source_active,
+                    active = excluded.source_active
+                        * (1 - member_catalog.admin_disabled),
                     source_present = 1,
                     source = excluded.source,
                     last_seen_at = excluded.last_seen_at
@@ -324,6 +328,7 @@ class JobRepository:
                         member.status,
                         member.ranking,
                         int(member.active),
+                        int(member.active),
                         now,
                         now,
                     )
@@ -331,6 +336,12 @@ class JobRepository:
                 ],
             )
             fingerprint = self._calculate_glossary_fingerprint(connection)
+            active_count = connection.execute(
+                """
+                SELECT COUNT(*) AS total FROM member_catalog
+                WHERE active = 1 AND source_present = 1
+                """
+            ).fetchone()["total"]
             connection.execute(
                 """
                 UPDATE glossary_sync_state
@@ -352,7 +363,7 @@ class JobRepository:
                     source_hash[:16],
                     fingerprint,
                     len(members),
-                    sum(member.active for member in members),
+                    active_count,
                     now,
                     now,
                 ),
@@ -738,6 +749,80 @@ class JobRepository:
         self._set_glossary_record_active(
             "glossary_aliases", alias_id, active=active
         )
+
+    def set_member_admin_disabled(
+        self, member_id: str, *, disabled: bool
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE member_catalog
+                SET admin_disabled = ?,
+                    active = source_active * (1 - ?)
+                WHERE member_id = ?
+                """,
+                (int(disabled), int(disabled), member_id),
+            )
+            if cursor.rowcount != 1:
+                raise AppError(
+                    "member_catalog_member_not_found",
+                    "官方成员不存在",
+                    False,
+                )
+            self._update_glossary_fingerprint(connection)
+
+    def set_group_admin_disabled(
+        self, group_id: str, *, disabled: bool
+    ) -> int:
+        """Disable or restore a whole group in one action.
+
+        Groups such as IDFT contribute hundreds of names that never appear in
+        the livestreams being transcribed, and every one of them is a chance
+        for the recogniser to snap a common word onto a stranger's name.
+        """
+
+        group_id = group_id.strip()
+        if not group_id:
+            raise AppError(
+                "member_catalog_group_invalid",
+                "请选择要操作的团体",
+                False,
+            )
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE member_catalog
+                SET admin_disabled = ?,
+                    active = source_active * (1 - ?)
+                WHERE group_id = ? AND admin_disabled != ?
+                """,
+                (int(disabled), int(disabled), group_id, int(disabled)),
+            )
+            changed = cursor.rowcount
+            if changed:
+                self._update_glossary_fingerprint(connection)
+        return changed
+
+    def list_member_catalog_groups(self) -> list[MemberCatalogGroupRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT group_id,
+                       MAX(group_name) AS group_name,
+                       COUNT(*) AS member_count,
+                       SUM(admin_disabled) AS disabled_count,
+                       SUM(active) AS active_count
+                FROM member_catalog
+                WHERE source_present = 1
+                GROUP BY group_id
+                ORDER BY group_id
+                """
+            ).fetchall()
+        return [
+            MemberCatalogGroupRecord.model_validate(dict(row)) for row in rows
+        ]
 
     def _set_glossary_record_active(
         self, table: str, record_id: str, *, active: bool

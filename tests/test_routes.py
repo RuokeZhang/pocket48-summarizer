@@ -1220,6 +1220,72 @@ def test_glossary_admin_requires_admin_and_manages_entries(
         assert member_catalog.force is True
 
 
+def test_administrators_can_disable_a_whole_member_group(
+    settings, repository
+):
+    repository.replace_member_catalog(
+        [
+            MemberCatalogEntry(
+                member_id="10337",
+                canonical_name="曹可甜",
+                group_id="10",
+                group_name="SNH",
+                status="99",
+                active=True,
+            ),
+            MemberCatalogEntry(
+                member_id="70001",
+                canonical_name="工厂甲",
+                group_id="70",
+                group_name="IDFT",
+                status="99",
+                active=True,
+            ),
+        ],
+        source_url=settings.member_catalog_url,
+        source_hash="a" * 64,
+    )
+    app = auth_app(settings, repository, member_catalog=DummyMemberCatalog())
+
+    with TestClient(app) as bob:
+        login(bob, "bob", "bob also has secure password")
+        refused = bob.post(
+            "/admin/glossary/groups/70/disabled",
+            data={"_csrf": bob.cookies.get("p48_csrf"), "disabled": "1"},
+            follow_redirects=False,
+        )
+        assert refused.status_code == 403
+        assert repository.get_member_catalog("70001").active is True
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        csrf = alice.cookies.get("p48_csrf")
+
+        disabled = alice.post(
+            "/admin/glossary/groups/70/disabled",
+            data={"_csrf": csrf, "disabled": "1"},
+            follow_redirects=False,
+        )
+        assert disabled.status_code == 303
+        assert repository.get_member_catalog("70001").active is False
+        assert repository.get_member_catalog("10337").active is True
+
+        one = alice.post(
+            "/admin/glossary/members/10337/disabled",
+            data={"_csrf": csrf, "disabled": "1"},
+            follow_redirects=False,
+        )
+        assert one.status_code == 303
+        assert repository.get_member_catalog("10337").active is False
+
+        invalid = alice.post(
+            "/admin/glossary/members/10337/disabled",
+            data={"_csrf": csrf, "disabled": "maybe"},
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 400
+
+
 def test_authentication_and_csrf(settings, repository):
     app = auth_app(settings, repository)
     with TestClient(app) as client:
@@ -1675,9 +1741,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-8" in page.text
-    assert "styles.css?v=20260829-8" in page.text
-    assert "app.js?v=20260829-8" in page.text
+    assert "i18n.js?v=20260829-9" in page.text
+    assert "styles.css?v=20260829-9" in page.text
+    assert "app.js?v=20260829-9" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

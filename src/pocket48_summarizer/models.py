@@ -67,8 +67,20 @@ class MemberCatalogEntry(BaseModel):
 class MemberCatalogRecord(MemberCatalogEntry):
     source_present: bool
     source: str
+    # Whether the official feed still lists the member. `active` is the
+    # effective flag, derived as `source_active and not admin_disabled`.
+    source_active: bool = False
+    admin_disabled: bool = False
     first_seen_at: str
     last_seen_at: str
+
+
+class MemberCatalogGroupRecord(BaseModel):
+    group_id: str
+    group_name: str = ""
+    member_count: int = 0
+    disabled_count: int = 0
+    active_count: int = 0
 
 
 class MemberJobFilterRecord(BaseModel):
