@@ -363,6 +363,7 @@ const CLIP_SUBTITLE_FONT_SCALE_MIN = 50;
 const CLIP_SUBTITLE_FONT_SCALE_MAX = 150;
 const CLIP_DEFAULT_FONT_SCALE = 100;
 const CLIP_SUBTITLE_BASE_SCALE = 1.6;
+const CLIP_ASS_ADVANCE = .69;
 const AI_COVER_POLL_MS = 1_500;
 const CLIP_DEFAULT_FONT_FAMILY = "wenkai";
 const CLIP_PORTRAIT_TEXT_COLOR = "#FFFFFF";
@@ -664,13 +665,17 @@ const applyClipSubtitleStyle = () => {
     "--clip-landscape-subtitle-font-family",
     CLIP_LANDSCAPE_FONT_STACKS[fontFamily]
   );
+  // The export derives portrait caption sizes from the frame height, so the
+  // preview has to as well; a viewport-relative clamp only lined up by
+  // coincidence. CLIP_ASS_ADVANCE converts an ASS font size to the glyph size
+  // libass actually draws.
   clipEditor.style.setProperty(
     "--clip-subtitle-zh-size",
-    `clamp(${Math.max(8, Math.round(11 * scale))}px, ${(1.5 * scale).toFixed(2)}vw, ${Math.round(17 * scale)}px)`
+    `${(3.4 * scale * CLIP_ASS_ADVANCE).toFixed(3)}cqh`
   );
   clipEditor.style.setProperty(
     "--clip-subtitle-en-size",
-    `clamp(${Math.max(7, Math.round(9 * scale))}px, ${(1.2 * scale).toFixed(2)}vw, ${Math.round(14 * scale)}px)`
+    `${(2.5 * scale * CLIP_ASS_ADVANCE).toFixed(3)}cqh`
   );
   clipEditor.style.setProperty(
     "--clip-landscape-subtitle-zh-size",

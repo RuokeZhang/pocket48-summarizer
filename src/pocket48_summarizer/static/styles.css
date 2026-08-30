@@ -620,8 +620,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 
 .clip-editor {
-  --clip-subtitle-zh-size: clamp(11px, 1.5vw, 17px);
-  --clip-subtitle-en-size: clamp(9px, 1.2vw, 14px);
+  --clip-subtitle-zh-size: 3.754cqh;
+  --clip-subtitle-en-size: 2.760cqh;
   --clip-lyric-current-size: 13px;
   width: min(1080px, calc(100vw - 32px));
   max-width: none;
@@ -858,11 +858,21 @@ button:disabled { opacity: .45; cursor: not-allowed; }
    to *be* the exported frame. Left stretched it was the full column wide,
    which pushed the danmaku column and caption band off the video. */
 .clip-preview-stage:not(.is-landscape-layout) {
+  /* An ASS font size is not an em: libass derives the pixel size from the
+     face's ascender plus descender, so a CJK glyph advances Fontsize * this
+     (measured under libass 0.17). Scaling a preview font size by it makes a
+     glyph cover the same share of the frame as the burned-in one, and
+     dividing the ASS line heights by it keeps the card stack the same
+     height, so the preview evicts danmaku exactly when the export does. */
+  --clip-ass-advance: .69;
   min-height: 0;
   width: 100%;
   max-width: calc(var(--clip-preview-max-height) * var(--clip-preview-ratio));
   margin-inline: auto;
   aspect-ratio: var(--clip-preview-aspect);
+  /* Safe here only because the box above is sized entirely by its parent and
+     its ratio, never by its contents. */
+  container-type: size;
 }
 .clip-preview-stage:not(.is-landscape-layout) video {
   height: 100%;
@@ -892,11 +902,13 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   transform: translateX(-50%);
 }
 .clip-preview-subtitles {
+  /* Mirrors the export's portrait margins. The landscape stage replaces all
+     four of these below, so they are portrait's in practice. */
   position: absolute;
   z-index: 2;
-  right: 5%;
-  bottom: 12px;
-  left: 5%;
+  right: 4%;
+  bottom: 2.5cqh;
+  left: 4%;
   pointer-events: none;
   text-align: center;
 }
@@ -924,8 +936,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .clip-preview-stage:not(.is-landscape-layout) .clip-preview-subtitles p {
   width: fit-content;
-  max-width: 94%;
-  margin: 3px auto 0;
+  max-width: 100%;
+  margin: .3cqh auto 0;
   padding: 0;
   border: 0;
   background: none;
@@ -936,13 +948,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   box-shadow: none;
   /* Stands in for the ASS black outline the export renders. */
   paint-order: stroke fill;
-  -webkit-text-stroke: .14em #000;
+  -webkit-text-stroke: .16em #000;
 }
 .clip-preview-stage:not(.is-landscape-layout) .clip-preview-subtitles p + p {
   color: #fff;
   font-size: var(--clip-subtitle-en-size);
   font-weight: 650;
-  -webkit-text-stroke-width: .1em;
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-subtitles {
   top: 50%;
@@ -1023,6 +1034,29 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   text-shadow: 0 1px 4px rgba(0, 0, 0, .78);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+}
+.clip-preview-stage:not(.is-landscape-layout) .clip-preview-danmaku {
+  top: 1.25cqh;
+  right: 2.2cqw;
+  bottom: 1.25cqh;
+  width: 42cqw;
+  gap: .63cqh;
+}
+.clip-preview-stage:not(.is-landscape-layout) .clip-preview-danmaku article {
+  /* The exported card is drawn with Outline 0, so a border here would make
+     every card two pixels taller and drop one off the top of the stack. */
+  border: 0;
+  padding: .78cqh 1.94cqw;
+  border-radius: 1.56cqh 1.56cqh 1.56cqh .47cqh;
+}
+.clip-preview-stage:not(.is-landscape-layout) .clip-preview-danmaku strong {
+  font-size: calc(1.41cqh * var(--clip-ass-advance));
+  line-height: calc(1.22 / var(--clip-ass-advance));
+}
+.clip-preview-stage:not(.is-landscape-layout) .clip-preview-danmaku p {
+  margin-top: .16cqh;
+  font-size: calc(1.72cqh * var(--clip-ass-advance));
+  line-height: calc(1.3 / var(--clip-ass-advance));
 }
 .clip-preview-stage.is-landscape-layout .clip-preview-danmaku {
   z-index: 2;

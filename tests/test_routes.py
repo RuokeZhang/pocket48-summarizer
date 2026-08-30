@@ -8,6 +8,20 @@ from pocket48_summarizer.media.ai_covers import (
 )
 from pocket48_summarizer.media.boundaries import BoundarySuggestion
 from pocket48_summarizer.media.clips import ClipState
+from pocket48_summarizer.media.layouts import (
+    PORTRAIT_DANMAKU_AUTHOR_LINE_HEIGHT,
+    PORTRAIT_DANMAKU_AUTHOR_SIZE_RATIO,
+    PORTRAIT_DANMAKU_BODY_SIZE_RATIO,
+    PORTRAIT_DANMAKU_BOTTOM_RATIO,
+    PORTRAIT_DANMAKU_GAP_RATIO,
+    PORTRAIT_DANMAKU_LINE_HEIGHT,
+    PORTRAIT_DANMAKU_RIGHT_RATIO,
+    PORTRAIT_DANMAKU_WIDTH_RATIO,
+)
+from pocket48_summarizer.media.overlays import (
+    LIBASS_CJK_ADVANCE_RATIO,
+    SUBTITLE_FONT_BASE_SCALE,
+)
 from pocket48_summarizer.models import (
     ClipRange,
     DanmakuEntry,
@@ -1558,9 +1572,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-6" in page.text
-    assert "styles.css?v=20260829-6" in page.text
-    assert "app.js?v=20260829-6" in page.text
+    assert "i18n.js?v=20260829-7" in page.text
+    assert "styles.css?v=20260829-7" in page.text
+    assert "app.js?v=20260829-7" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -1675,14 +1689,18 @@ def test_portrait_clip_preview_styles_stay_scoped_to_portrait(settings, reposito
     assert styles.status_code == 200
     sheet = styles.text
 
-    containment = [
-        line.strip()
-        for line in sheet.splitlines()
-        if "container-type" in line
-    ]
-    assert containment == ["container-type: size;"]
-    landscape_stage = sheet.split(".clip-preview-stage.is-landscape-layout {", 1)[1]
-    assert "container-type: size;" in landscape_stage.split("}", 1)[0]
+    # Size containment is only safe on a stage whose box is fixed by its
+    # parent and its ratio. On the shared rule it flattens the portrait stage
+    # onto min-height and crops the video into a wide band.
+    shared_stage = sheet.split("\n.clip-preview-stage {", 1)[1].split("}", 1)[0]
+    assert "container-type" not in shared_stage
+    for selector in (
+        ".clip-preview-stage.is-landscape-layout {",
+        ".clip-preview-stage:not(.is-landscape-layout) {",
+    ):
+        block = sheet.split(selector, 1)[1].split("}", 1)[0]
+        assert "container-type: size;" in block, selector
+        assert "aspect-ratio:" in block, selector
 
     assert "\n.clip-preview-subtitles p {" not in sheet
     assert (
@@ -1725,3 +1743,71 @@ def test_portrait_clip_preview_stage_matches_the_exported_frame(
     # The ratio is only correct if it tracks the real source dimensions.
     assert "--clip-preview-aspect" in javascript.text
     assert "videoWidth" in javascript.text
+
+
+def test_portrait_preview_overlays_use_the_export_ratios(settings, repository):
+    """Preview and export must derive their sizes from the same numbers.
+
+    The preview used viewport-relative caption sizes and fixed-pixel danmaku
+    cards, so it only ever agreed with the burned-in overlays by coincidence:
+    the same clip showed ten cards in the browser and fifteen in the file.
+    """
+
+    app = create_app(
+        settings,
+        ApplicationServices(repository=repository, worker=DummyWorker()),
+    )
+
+    with TestClient(app) as client:
+        sheet = client.get("/static/styles.css").text
+        javascript = client.get("/static/app.js").text
+
+    def css(value: float) -> str:
+        # The stylesheet drops the leading zero, as the rest of the file does.
+        rendered = f"{value:g}"
+        return rendered[1:] if rendered.startswith("0.") else rendered
+
+    def portrait_block(suffix: str) -> str:
+        selector = (
+            f".clip-preview-stage:not(.is-landscape-layout) {suffix} {{"
+        )
+        assert selector in sheet, selector
+        return sheet.split(selector, 1)[1].split("}", 1)[0]
+
+    column = portrait_block(".clip-preview-danmaku")
+    assert f"width: {css(PORTRAIT_DANMAKU_WIDTH_RATIO * 100)}cqw;" in column
+    assert f"right: {css(PORTRAIT_DANMAKU_RIGHT_RATIO * 100)}cqw;" in column
+    assert f"bottom: {css(PORTRAIT_DANMAKU_BOTTOM_RATIO * 100)}cqh;" in column
+    assert f"gap: {css(PORTRAIT_DANMAKU_GAP_RATIO * 100)}cqh;" in column
+
+    author = portrait_block(".clip-preview-danmaku strong")
+    assert (
+        f"font-size: calc({css(PORTRAIT_DANMAKU_AUTHOR_SIZE_RATIO * 100)}cqh"
+        " * var(--clip-ass-advance));"
+    ) in author
+    assert (
+        f"line-height: calc({css(PORTRAIT_DANMAKU_AUTHOR_LINE_HEIGHT)}"
+        " / var(--clip-ass-advance));"
+    ) in author
+
+    body = portrait_block(".clip-preview-danmaku p")
+    assert (
+        f"font-size: calc({css(PORTRAIT_DANMAKU_BODY_SIZE_RATIO * 100)}cqh"
+        " * var(--clip-ass-advance));"
+    ) in body
+    assert (
+        f"line-height: calc({css(PORTRAIT_DANMAKU_LINE_HEIGHT)}"
+        " / var(--clip-ass-advance));"
+    ) in body
+
+    # An exported card is drawn with Outline 0; a preview border would make
+    # every card taller and evict one card early.
+    assert "border: 0;" in portrait_block(".clip-preview-danmaku article")
+
+    assert f"const CLIP_ASS_ADVANCE = {css(LIBASS_CJK_ADVANCE_RATIO)};" in (
+        javascript
+    )
+    assert f"const CLIP_SUBTITLE_BASE_SCALE = {SUBTITLE_FONT_BASE_SCALE:g};" in (
+        javascript
+    )
+    assert "cqh`" in javascript.split("--clip-subtitle-zh-size", 1)[1][:200]
