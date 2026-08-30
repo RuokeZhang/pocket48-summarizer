@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}成员与术语词库 · 口袋48直播总结{% endblock %}
+{% block head_scripts %}
+  <script defer src="{{ url_for('static', path='/glossary-admin.js') }}?v=20260829-10"></script>
+{% endblock %}
 {% block content %}
   <a class="back-link" href="/" data-i18n="backHome">返回首页</a>
 
@@ -255,13 +258,16 @@
     </div>
   </section>
 
-  <details class="panel catalog-details">
-    <summary data-i18n="browseOfficialMembers">查看官方成员资料</summary>
+  <section class="panel" id="member-catalog-panel">
+    <h3 data-i18n="memberCatalogControl">成员启用管理</h3>
+    <p class="muted" data-i18n="memberCatalogHint">只有「词库中」的成员会进入 ASR 热词和总结词库。管理员停用会在之后的官方目录同步中保留。</p>
+    <label class="visually-hidden" for="member-filter" data-i18n="memberFilterLabel">搜索成员</label>
+    <input id="member-filter" type="search" autocomplete="off" data-i18n-placeholder="memberFilterPlaceholder" placeholder="按姓名、拼音、团体或队伍搜索">
+    <p class="muted" id="member-filter-count" data-member-total="{{ members | length }}"></p>
     <div class="admin-table-wrap">
-      <table class="admin-table">
+      <table class="admin-table" id="member-catalog-table">
         <thead>
           <tr>
-            <th>ID</th>
             <th data-i18n="canonicalMember">规范成员</th>
             <th data-i18n="group">团体</th>
             <th data-i18n="team">队伍</th>
@@ -271,12 +277,19 @@
         </thead>
         <tbody>
           {% for member in members %}
-            <tr>
-              <td>{{ member.member_id }}</td>
+            <tr data-member-search="{{ member.canonical_name }} {{ member.pinyin }} {{ member.group_name }} {{ member.team_name }} {{ member.member_id }}">
               <td>{{ member.canonical_name }}<small>{{ member.pinyin }}</small></td>
               <td>{{ member.group_name }}</td>
               <td>{{ member.team_name }}</td>
-              <td>{{ member.status }} · <span data-i18n="{{ 'activeState' if member.active else 'inactiveState' }}">{{ "active" if member.active else "inactive" }}</span>{% if member.admin_disabled %} · <span data-i18n="adminDisabledState">管理员停用</span>{% endif %}</td>
+              <td>
+                {% if member.admin_disabled %}
+                  <span class="member-state is-disabled" data-i18n="adminDisabledState">管理员停用</span>
+                {% elif member.active %}
+                  <span class="member-state is-active" data-i18n="inGlossaryState">词库中</span>
+                {% else %}
+                  <span class="member-state" data-i18n="notCurrentState">非现役</span>
+                {% endif %}
+              </td>
               <td>
                 <form action="/admin/glossary/members/{{ member.member_id }}/disabled" method="post">
                   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -286,10 +299,11 @@
               </td>
             </tr>
           {% else %}
-            <tr><td colspan="6" data-i18n="catalogNotSynced">官方成员目录尚未同步。</td></tr>
+            <tr><td colspan="5" data-i18n="catalogNotSynced">官方成员目录尚未同步。</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-  </details>
+  </section>
+
 {% endblock %}

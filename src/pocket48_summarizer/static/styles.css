@@ -148,6 +148,20 @@ button, input, select, textarea { font: inherit; }
 .admin-table td small { display: block; margin-top: 4px; color: #9299aa; }
 .admin-table form { margin: 0; }
 .small-button { padding: 7px 10px; font-size: 12px; }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+#member-catalog-panel #member-filter { width: 100%; max-width: 420px; }
+/* Seven hundred rows would push everything below the table off screen. */
+#member-catalog-panel .admin-table-wrap { max-height: 60vh; overflow-y: auto; }
+.member-state { font-size: 12px; white-space: nowrap; }
+.member-state.is-active { color: #6fcf97; }
+.member-state.is-disabled { color: #eb8c8c; }
 .catalog-details summary { cursor: pointer; font-size: 18px; font-weight: 800; }
 .catalog-details[open] summary { margin-bottom: 18px; }
 
@@ -914,6 +928,21 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .clip-preview-subtitles.is-with-danmaku {
   right: 44%;
+}
+/* Mirrors the exported LandscapeWatermark style: 22px on a 1080 canvas, 26px
+   down from the top and 72px/65px in from the left and right edges. */
+.clip-preview-watermark {
+  position: absolute;
+  z-index: 2;
+  top: 2.41cqh;
+  right: 3.39%;
+  left: 3.75%;
+  display: flex;
+  justify-content: space-between;
+  color: rgba(91, 58, 66, .75);
+  font-size: 2.04cqh;
+  line-height: 1;
+  pointer-events: none;
 }
 .clip-preview-cut-notice {
   position: absolute;

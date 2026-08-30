@@ -11,6 +11,7 @@ from ..models import (
     DanmakuEntry,
     TranscriptSegment,
 )
+from ..datetimes import format_china_datetime
 from ..security import strip_control_chars
 from .fonts import EMOJI_FONT_FAMILY, contains_emoji, split_emoji_runs
 from .layouts import (
@@ -37,8 +38,15 @@ from .layouts import (
     LANDSCAPE_SUBTITLE_COLOR,
     LANDSCAPE_SUBTITLE_EN_COLOR,
     LANDSCAPE_SUBTITLE_EN_SIZE,
+    CLIP_WATERMARK_TEXT,
     LANDSCAPE_SUBTITLE_LEFT,
     LANDSCAPE_SUBTITLE_WIDTH,
+    LANDSCAPE_WATERMARK_ALPHA,
+    LANDSCAPE_WATERMARK_TOP,
+    LANDSCAPE_WATERMARK_COLOR,
+    LANDSCAPE_WATERMARK_LEFT,
+    LANDSCAPE_WATERMARK_RIGHT,
+    LANDSCAPE_WATERMARK_SIZE,
     LANDSCAPE_SUBTITLE_ZH_SIZE,
     LANDSCAPE_VIDEO_WIDTH,
     PORTRAIT_DANMAKU_AUTHOR_COLOR,
@@ -147,6 +155,7 @@ def build_clip_overlay(
         DEFAULT_LANDSCAPE_SUBTITLE_FONT
     ),
     allow_empty_subtitles: bool = False,
+    live_started_at: str | None = None,
 ) -> ClipOverlayDocument:
     if width <= 0 or height <= 0 or clip_end_ms <= clip_start_ms:
         raise AppError(
@@ -205,10 +214,24 @@ def build_clip_overlay(
         output_layout=output_layout,
         subtitle_font_family=subtitle_font_family,
     )
+    watermark_events = (
+        _landscape_watermark_events(
+            duration_ms=clip_end_ms - clip_start_ms,
+            live_started_at=live_started_at,
+        )
+        if output_layout == "landscape"
+        else []
+    )
     return ClipOverlayDocument(
         content=_apply_emoji_font(
             "\n".join(
-                [header, *subtitle_events, *danmaku_events, ""]
+                [
+                    header,
+                    *subtitle_events,
+                    *danmaku_events,
+                    *watermark_events,
+                    "",
+                ]
             )
         ),
         subtitle_event_count=len(subtitle_events),
@@ -692,6 +715,48 @@ def _subtitle_events(
     return events
 
 
+def _landscape_watermark_events(
+    *,
+    duration_ms: int,
+    live_started_at: str | None,
+) -> list[str]:
+    """Credit the tool in one top corner and date the replay in the other.
+
+    The top band of the cream columns is free by construction rather than by
+    luck: the danmaku column is bounded below it and fills upward from the
+    bottom, and subtitles are centred vertically. Nothing else can reach here
+    however busy the clip gets.
+    """
+
+    corners = [
+        (
+            rf"{{\an7\pos("
+            rf"{LANDSCAPE_WATERMARK_LEFT},{LANDSCAPE_WATERMARK_TOP})}}",
+            CLIP_WATERMARK_TEXT,
+        )
+    ]
+    live_time = format_china_datetime(live_started_at)
+    if live_time:
+        corners.append(
+            (
+                rf"{{\an9\pos("
+                rf"{LANDSCAPE_CANVAS_WIDTH - LANDSCAPE_WATERMARK_RIGHT},"
+                rf"{LANDSCAPE_WATERMARK_TOP})}}",
+                live_time,
+            )
+        )
+    return [
+        _dialogue(
+            layer=10,
+            start_ms=0,
+            end_ms=duration_ms,
+            style="LandscapeWatermark",
+            text=f"{position}{_ass_text(text)}",
+        )
+        for position, text in corners
+    ]
+
+
 def _landscape_subtitle_events(
     *,
     start_ms: int,
@@ -1104,6 +1169,13 @@ def _ass_header(
         LANDSCAPE_DANMAKU_TEXT_COLOR,
         alpha=224,
     )
+    landscape_watermark_color = _ass_color(
+        LANDSCAPE_WATERMARK_COLOR,
+        alpha=LANDSCAPE_WATERMARK_ALPHA,
+    )
+    landscape_watermark_size = round(
+        LANDSCAPE_WATERMARK_SIZE * LANDSCAPE_LIBASS_FONT_SCALE
+    )
     return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -1124,6 +1196,7 @@ Style: LandscapeSubtitleEn,{landscape_font_name},{landscape_en_size},{landscape_
 Style: LandscapeDanmaku,{font_name},{landscape_danmaku_size},{landscape_danmaku_text},{landscape_danmaku_text},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: LandscapeDanmakuAuthor,{font_name},{landscape_danmaku_author_size},{landscape_danmaku_author},{landscape_danmaku_author},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: LandscapeDanmakuBox,{font_name},1,{landscape_danmaku_background},{landscape_danmaku_background},{landscape_danmaku_border},{landscape_danmaku_box_shadow},0,0,0,0,100,100,0,0,1,2,3,7,0,0,0,1
+Style: LandscapeWatermark,{landscape_font_name},{landscape_watermark_size},{landscape_watermark_color},{landscape_watermark_color},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"""

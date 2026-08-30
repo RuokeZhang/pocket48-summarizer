@@ -391,3 +391,29 @@ def test_group_summary_reports_catalog_and_glossary_counts(repository):
     assert groups["70"].disabled_count == 2
     assert groups["70"].active_count == 0
     assert groups["10"].active_count == 1
+
+
+def test_the_reported_member_count_follows_an_override_immediately(
+    repository,
+):
+    """The headline count must not wait for the next catalog sync.
+
+    A number that stays put after disabling a group reads as the override
+    having silently failed.
+    """
+
+    repository.replace_member_catalog(
+        _idft_catalog(),
+        source_url="https://h5.48.cn/catalog",
+        source_hash="4" * 64,
+    )
+    assert repository.get_glossary_sync_state().active_member_count == 3
+
+    repository.set_group_admin_disabled("70", disabled=True)
+    assert repository.get_glossary_sync_state().active_member_count == 1
+
+    repository.set_member_admin_disabled("10337", disabled=True)
+    assert repository.get_glossary_sync_state().active_member_count == 0
+
+    repository.set_group_admin_disabled("70", disabled=False)
+    assert repository.get_glossary_sync_state().active_member_count == 2

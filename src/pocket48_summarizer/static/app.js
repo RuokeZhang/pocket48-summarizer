@@ -285,6 +285,9 @@ const clipPreviewSubtitles = document.querySelector("#clip-preview-subtitles");
 const clipPreviewZh = document.querySelector("#clip-preview-zh");
 const clipPreviewEn = document.querySelector("#clip-preview-en");
 const clipPreviewDanmaku = document.querySelector("#clip-preview-danmaku");
+const clipPreviewWatermark = document.querySelector(
+  "#clip-preview-watermark"
+);
 const clipPreviewCutNotice = document.querySelector("#clip-preview-cut-notice");
 const clipCutSummary = document.querySelector("#clip-cut-summary");
 const clipSplitAtMarker = document.querySelector("#clip-split-at-marker");
@@ -702,6 +705,11 @@ const applyClipOutputLayout = ({ resetRequest = true } = {}) => {
     landscape
   );
   clipStylePanel?.classList.toggle("is-landscape-layout", landscape);
+  // Only the landscape export has cream columns beside the frame to put a
+  // watermark in, so the portrait preview must not promise one.
+  if (clipPreviewWatermark) {
+    clipPreviewWatermark.hidden = !landscape;
+  }
   if (clipLandscapeStyleNote) {
     clipLandscapeStyleNote.hidden = !landscape;
   }

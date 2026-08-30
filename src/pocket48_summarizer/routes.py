@@ -16,6 +16,7 @@ from fastapi.responses import (
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .auth import AuthContext
+from .datetimes import format_china_datetime as format_china_time
 from .errors import AppError
 from .media.clips import ClipState
 from .media.fonts import emoji_font_family
@@ -192,17 +193,7 @@ class RegenerateAICoverRequest(BaseModel):
 
 
 def format_china_datetime(value: str | None) -> str:
-    if not value:
-        return "时间未知"
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return "时间未知"
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(ZoneInfo("Asia/Shanghai")).strftime(
-        "%Y-%m-%d %H:%M"
-    )
+    return format_china_time(value, fallback="时间未知")
 
 
 def require_auth(request: Request) -> AuthContext:

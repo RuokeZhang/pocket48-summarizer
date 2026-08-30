@@ -57,7 +57,7 @@ LEGACY_CLIP_RE = re.compile(
     r"^timeline-(?P<index>\d+)-(?P<start>\d+)-(?P<end>\d+)\.mp4$"
 )
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-RENDER_VERSION = "ass-v13"
+RENDER_VERSION = "ass-v14"
 
 
 def file_sha256(path: Path) -> str:
@@ -550,6 +550,7 @@ class VideoClipService:
                                 danmaku = self.repository.get_all_danmaku(
                                     record.job_id
                                 )
+                                job = self.repository.get_job(record.job_id)
                                 for clip_range in record.kept_ranges:
                                     overlay_documents.append(
                                         build_clip_overlay(
@@ -577,6 +578,11 @@ class VideoClipService:
                                                 record.subtitle_font_family
                                             ),
                                             allow_empty_subtitles=True,
+                                            live_started_at=(
+                                                job.replay_started_at
+                                                if job
+                                                else None
+                                            ),
                                         )
                                     )
                                 subtitle_count = sum(

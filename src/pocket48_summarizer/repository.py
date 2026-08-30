@@ -335,13 +335,6 @@ class JobRepository:
                     for member in members
                 ],
             )
-            fingerprint = self._calculate_glossary_fingerprint(connection)
-            active_count = connection.execute(
-                """
-                SELECT COUNT(*) AS total FROM member_catalog
-                WHERE active = 1 AND source_present = 1
-                """
-            ).fetchone()["total"]
             connection.execute(
                 """
                 UPDATE glossary_sync_state
@@ -349,9 +342,7 @@ class JobRepository:
                     sync_status = 'success',
                     source_hash = ?,
                     catalog_version = ?,
-                    glossary_fingerprint = ?,
                     member_count = ?,
-                    active_member_count = ?,
                     last_attempt_at = ?,
                     last_success_at = ?,
                     last_error = NULL
@@ -361,13 +352,12 @@ class JobRepository:
                     source_url,
                     source_hash,
                     source_hash[:16],
-                    fingerprint,
                     len(members),
-                    active_count,
                     now,
                     now,
                 ),
             )
+            self._update_glossary_fingerprint(connection)
         return self.get_glossary_sync_state()
 
     def record_member_catalog_sync_failure(self, message: str) -> None:
@@ -801,8 +791,7 @@ class JobRepository:
                 (int(disabled), int(disabled), group_id, int(disabled)),
             )
             changed = cursor.rowcount
-            if changed:
-                self._update_glossary_fingerprint(connection)
+            self._update_glossary_fingerprint(connection)
         return changed
 
     def list_member_catalog_groups(self) -> list[MemberCatalogGroupRecord]:
@@ -851,10 +840,22 @@ class JobRepository:
     def _update_glossary_fingerprint(
         self, connection: sqlite3.Connection
     ) -> None:
+        """Refresh every value derived from the effective glossary.
+
+        The reported member count belongs here rather than at the call sites,
+        because it is derived from exactly the same rows as the fingerprint.
+        Maintaining it anywhere else lets the headline number drift away from
+        what the glossary actually contains.
+        """
+
         connection.execute(
             """
             UPDATE glossary_sync_state
-            SET glossary_fingerprint = ?
+            SET glossary_fingerprint = ?,
+                active_member_count = (
+                    SELECT COUNT(*) FROM member_catalog
+                    WHERE active = 1 AND source_present = 1
+                )
             WHERE singleton = 1
             """,
             (self._calculate_glossary_fingerprint(connection),),

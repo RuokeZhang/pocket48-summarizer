@@ -1286,6 +1286,48 @@ def test_administrators_can_disable_a_whole_member_group(
         assert invalid.status_code == 400
 
 
+def test_the_member_panel_exposes_a_button_for_every_member(
+    settings, repository
+):
+    repository.replace_member_catalog(
+        [
+            MemberCatalogEntry(
+                member_id="10337",
+                canonical_name="曹可甜",
+                pinyin="Cao KeTian",
+                group_id="10",
+                group_name="SNH",
+                status="99",
+                active=True,
+            ),
+            MemberCatalogEntry(
+                member_id="70001",
+                canonical_name="工厂甲",
+                pinyin="Gong ChangJia",
+                group_id="70",
+                group_name="IDFT",
+                status="99",
+                active=True,
+            ),
+        ],
+        source_url=settings.member_catalog_url,
+        source_hash="b" * 64,
+    )
+    app = auth_app(settings, repository, member_catalog=DummyMemberCatalog())
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        page = alice.get("/admin/glossary").text
+
+    assert "/admin/glossary/members/10337/disabled" in page
+    assert "/admin/glossary/members/70001/disabled" in page
+    assert "/admin/glossary/groups/70/disabled" in page
+    assert 'id="member-filter"' in page
+    assert "glossary-admin.js" in page
+    # The search haystack is what makes one member findable among hundreds.
+    assert 'data-member-search="曹可甜 Cao KeTian SNH ' in page
+
+
 def test_authentication_and_csrf(settings, repository):
     app = auth_app(settings, repository)
     with TestClient(app) as client:
@@ -1741,9 +1783,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-9" in page.text
-    assert "styles.css?v=20260829-9" in page.text
-    assert "app.js?v=20260829-9" in page.text
+    assert "i18n.js?v=20260829-10" in page.text
+    assert "styles.css?v=20260829-10" in page.text
+    assert "app.js?v=20260829-10" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

@@ -872,3 +872,61 @@ def test_documents_without_emoji_are_left_byte_identical():
     )
 
     assert "\\fn" not in build_clip_overlay(**kwargs).content
+
+
+def _watermark_overlay(
+    *, output_layout: str, live_started_at: str | None
+) -> str:
+    return build_clip_overlay(
+        width=1920 if output_layout == "landscape" else 720,
+        height=1080 if output_layout == "landscape" else 1280,
+        clip_start_ms=0,
+        clip_end_ms=4000,
+        subtitle_mode="zh",
+        include_danmaku=False,
+        font_name="Noto Sans CJK SC",
+        transcript=[
+            TranscriptSegment(
+                sequence=1, start_ms=0, end_ms=3000, text="今天真开心"
+            )
+        ],
+        translations={},
+        danmaku=[],
+        output_layout=output_layout,
+        live_started_at=live_started_at,
+    ).content
+
+
+def test_landscape_watermark_credits_the_tool_and_dates_the_replay():
+    content = _watermark_overlay(
+        output_layout="landscape", live_started_at="2026-08-29T12:15:00Z"
+    )
+
+    lines = _dialogue_lines(content, "LandscapeWatermark")
+    assert len(lines) == 2
+    assert "AI剪切片工具 p48.ruokezhang.com" in lines[0]
+    assert "2026-08-29 20:15" in lines[1]
+    # The danmaku column is bounded at LANDSCAPE_DANMAKU_TOP and fills upward,
+    # so anchoring above it is what keeps a busy clip from covering the mark.
+    assert rf"\an7\pos({LANDSCAPE_SUBTITLE_LEFT},26)" in lines[0]
+    assert r"\an9\pos(1855,26)" in lines[1]
+    assert 26 + 22 < LANDSCAPE_DANMAKU_TOP
+
+
+def test_landscape_watermark_omits_a_time_the_replay_never_recorded():
+    content = _watermark_overlay(
+        output_layout="landscape", live_started_at=None
+    )
+
+    lines = _dialogue_lines(content, "LandscapeWatermark")
+    assert len(lines) == 1
+    assert "AI剪切片工具 p48.ruokezhang.com" in lines[0]
+
+
+def test_portrait_exports_carry_no_watermark():
+    content = _watermark_overlay(
+        output_layout="portrait", live_started_at="2026-08-29T12:15:00Z"
+    )
+
+    assert _dialogue_lines(content, "LandscapeWatermark") == []
+    assert "p48.ruokezhang.com" not in content

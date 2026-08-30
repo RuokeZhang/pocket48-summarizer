@@ -55,6 +55,21 @@ PORTRAIT_DANMAKU_TEXT_COLOR = "#FFFFFF"
 PORTRAIT_DANMAKU_BACKGROUND_COLOR = "#0A0C12"
 
 # libass glyphs render smaller than CSS pixels at the same numeric size.
+# The 1080-tall video fills the middle 608px of the canvas, so a watermark can
+# only live in the cream columns beside it. The top band is the one strip that
+# is free by construction: the danmaku column is bounded at
+# LANDSCAPE_DANMAKU_TOP and stacks upward from the bottom, and subtitles are
+# centred vertically, so neither can ever reach above it however full the clip
+# gets.
+LANDSCAPE_WATERMARK_SIZE = 22
+LANDSCAPE_WATERMARK_TOP = 26
+LANDSCAPE_WATERMARK_LEFT = 72
+LANDSCAPE_WATERMARK_RIGHT = 65
+LANDSCAPE_WATERMARK_COLOR = "#5B3A42"
+# ASS alpha out of 255, where 0 is opaque.
+LANDSCAPE_WATERMARK_ALPHA = 64
+CLIP_WATERMARK_TEXT = "AI剪切片工具 p48.ruokezhang.com"
+
 LANDSCAPE_LIBASS_FONT_SCALE = 1.4
 LANDSCAPE_LIBASS_DANMAKU_AUTHOR_SCALE = 1.5
 DEFAULT_LANDSCAPE_SUBTITLE_FONT: LandscapeSubtitleFont = "wenkai"
