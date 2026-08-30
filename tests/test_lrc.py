@@ -1,4 +1,5 @@
 from pocket48_summarizer.parsing.lrc import (
+    DANMAKU_SYNC_ADVANCE_MS,
     detect_danmaku_peaks,
     parse_lrc,
     parse_lrc_timestamp,
@@ -17,9 +18,22 @@ def test_parse_lrc_sorts_and_preserves_unicode():
         )
     )
     assert [entry.sequence for entry in entries] == [1, 2, 3]
-    assert entries[0].timestamp_ms == 31_345
+    assert entries[0].timestamp_ms == 28_345
     assert entries[0].text == "这么早👀"
     assert entries[2].author == "娜娜"
+
+
+def test_parse_lrc_advances_danmaku_and_clamps_the_start():
+    entries = parse_lrc(
+        "\n".join(
+            [
+                "[00:00:01.250]早到\t开场",
+                "[00:00:05.750]准时\t继续",
+            ]
+        )
+    )
+
+    assert [entry.timestamp_ms for entry in entries] == [0, 2_750]
 
 
 def test_lrc_timestamp_variants():
@@ -55,6 +69,8 @@ def test_splits_long_continuous_peak_without_losing_late_window():
     assert len(peaks) >= 3
     assert all(0 < peak.end_ms - peak.start_ms <= 300_000 for peak in peaks)
     assert any(
-        peak.start_ms <= 660_000 < peak.end_ms
+        peak.start_ms
+        <= 660_000 - DANMAKU_SYNC_ADVANCE_MS
+        < peak.end_ms
         for peak in peaks
     )

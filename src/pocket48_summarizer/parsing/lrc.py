@@ -9,6 +9,7 @@ from ..models import DanmakuEntry, DanmakuPeak
 from ..security import strip_control_chars
 
 LRC_LINE_RE = re.compile(r"^\[([0-9:.]+)\](.*)$")
+DANMAKU_SYNC_ADVANCE_MS = 3_000
 
 
 def parse_lrc(text: str) -> list[DanmakuEntry]:
@@ -17,9 +18,13 @@ def parse_lrc(text: str) -> list[DanmakuEntry]:
         match = LRC_LINE_RE.match(raw_line.strip())
         if not match:
             continue
-        timestamp_ms = parse_lrc_timestamp(match.group(1))
-        if timestamp_ms is None:
+        source_timestamp_ms = parse_lrc_timestamp(match.group(1))
+        if source_timestamp_ms is None:
             continue
+        timestamp_ms = max(
+            0,
+            source_timestamp_ms - DANMAKU_SYNC_ADVANCE_MS,
+        )
         body = match.group(2)
         author, separator, comment = body.partition("\t")
         if not separator:

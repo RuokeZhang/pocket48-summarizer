@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -45,7 +46,136 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "019_ai_cover_prompt_template.sql",
         "020_member_admin_disable.sql",
         "021_clip_landscape_theme.sql",
+        "022_advance_danmaku_timestamps.sql",
     ]
+
+
+def test_danmaku_timing_migration_updates_existing_related_windows(tmp_path):
+    database_path = tmp_path / "danmaku-sync.sqlite3"
+    migration_dir = (
+        Path(__file__).parents[1]
+        / "src"
+        / "pocket48_summarizer"
+        / "migrations"
+    )
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE schema_migrations (
+            version TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    for migration in sorted(migration_dir.glob("*.sql")):
+        if migration.name == "022_advance_danmaku_timestamps.sql":
+            break
+        connection.executescript(migration.read_text(encoding="utf-8"))
+        connection.execute(
+            """
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?, datetime('now'))
+            """,
+            (migration.name,),
+        )
+    summary = {
+        "overview": "测试",
+        "timeline": [],
+        "topics": [],
+        "highlights": [],
+        "danmaku_peak_summaries": [
+            {
+                "start_ms": 5_000,
+                "end_ms": 35_000,
+                "summary": "弹幕高峰",
+                "evidence_segment_ids": [],
+            }
+        ],
+        "verification_needed": [],
+    }
+    connection.execute(
+        """
+        INSERT INTO jobs (
+            id, source_url, live_id, status, stage,
+            summary_json, created_at, updated_at
+        ) VALUES (
+            'job-danmaku-sync', 'https://example.com/live', 'danmaku-sync',
+            'completed', 'completed', ?, datetime('now'), datetime('now')
+        )
+        """,
+        (json.dumps(summary),),
+    )
+    connection.executemany(
+        """
+        INSERT INTO danmaku_entries (
+            job_id, sequence, timestamp_ms, author, text
+        ) VALUES ('job-danmaku-sync', ?, ?, 'fan', 'message')
+        """,
+        [(1, 1_500), (2, 6_500)],
+    )
+    connection.execute(
+        """
+        INSERT INTO danmaku_peaks (
+            job_id, rank, start_ms, end_ms,
+            message_count, score, samples_json
+        ) VALUES (
+            'job-danmaku-sync', 1, 5000, 35000, 2, 4.0, ?
+        )
+        """,
+        (
+            json.dumps(
+                [
+                    {
+                        "timestamp_ms": 6_500,
+                        "author": "fan",
+                        "text": "message",
+                    }
+                ]
+            ),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    Database(database_path).initialize()
+
+    with Database(database_path).connect() as migrated:
+        entry_times = [
+            row["timestamp_ms"]
+            for row in migrated.execute(
+                """
+                SELECT timestamp_ms
+                FROM danmaku_entries
+                ORDER BY sequence
+                """
+            ).fetchall()
+        ]
+        peak = migrated.execute(
+            """
+            SELECT start_ms, end_ms, samples_json
+            FROM danmaku_peaks
+            WHERE job_id = 'job-danmaku-sync'
+            """
+        ).fetchone()
+        migrated_summary = json.loads(
+            migrated.execute(
+                """
+                SELECT summary_json
+                FROM jobs
+                WHERE id = 'job-danmaku-sync'
+                """
+            ).fetchone()["summary_json"]
+        )
+
+    assert entry_times == [0, 3_500]
+    assert (peak["start_ms"], peak["end_ms"]) == (2_000, 32_000)
+    assert json.loads(peak["samples_json"])[0]["timestamp_ms"] == 3_500
+    assert migrated_summary["danmaku_peak_summaries"][0][
+        "start_ms"
+    ] == 2_000
+    assert migrated_summary["danmaku_peak_summaries"][0][
+        "end_ms"
+    ] == 32_000
 
 
 def test_clip_ranges_migration_backfills_existing_exports(tmp_path):
