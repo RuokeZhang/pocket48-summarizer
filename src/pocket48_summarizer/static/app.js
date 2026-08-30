@@ -1153,6 +1153,15 @@ const regenerateAICover = () => {
     setAICoverStatus(t("aiCoverTextRequired"), { error: true });
     return;
   }
+  // The panel shows the current mark, so regenerating has to use it. Omitting
+  // it keeps the frame this cover already used, which is what an untouched
+  // timeline means.
+  const markerMs = clipEditorState.markerMs;
+  const sourceTimestampMs = (
+    Number.isFinite(markerMs) && clipTimeIsKept(markerMs)
+      ? Math.round(markerMs)
+      : null
+  );
   void runAICoverAction(() => apiFetch(
     (
       `/api/jobs/${clipEditor.dataset.jobId}/ai-covers/`
@@ -1163,6 +1172,7 @@ const regenerateAICover = () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         request_id: newAICoverRequestId(),
+        source_timestamp_ms: sourceTimestampMs,
         title_text: titleText,
         prompt_template: aiCoverPromptValue()
       })

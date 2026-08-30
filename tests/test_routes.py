@@ -968,6 +968,109 @@ def test_ai_cover_routes_are_admin_only_and_keep_paired_assets(
     )
 
 
+def test_regenerating_an_ai_cover_follows_a_moved_mark(
+    settings, repository
+):
+    """Moving the mark has to change the frame the cover is built from.
+
+    Regenerate re-read the title and the prompt from the request but kept the
+    stored timestamp, so the panel showed the new mark while the cover was
+    still built from the old screenshot.
+    """
+
+    job, _ = repository.create_or_get_job(
+        "https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=778899",
+        "778899",
+    )
+    repository.set_media_details(
+        job.id,
+        "https://idol-vod.48.cn/path/replay.m3u8",
+        600_000,
+    )
+    repository.save_summary(
+        job.id,
+        FinalSummary(
+            overview="测试",
+            timeline=[
+                TimelineItem(
+                    start_ms=30_000,
+                    end_ms=60_000,
+                    title="AI 封面测试",
+                    detail="测试详情",
+                    evidence_segment_ids=[1],
+                )
+            ],
+            topics=[],
+            highlights=[],
+        ).model_dump_json(),
+        "# 测试",
+    )
+    repository.claim_next_job("worker", 120)
+    repository.mark_completed(job.id)
+    app = auth_app(
+        settings.model_copy(
+            update={
+                "ark_api_key": "test-ark-key",
+                "ark_seedream_model": "seedream-test",
+            }
+        ),
+        repository,
+        ai_covers=DummyAICovers(repository),
+    )
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        created = alice.post(
+            f"/api/jobs/{job.id}/ai-covers",
+            json={
+                "request_id": "ai-cover-mark-original",
+                "timeline_index": 0,
+                "source_timestamp_ms": 40_000,
+                "title_text": "原始 MARK",
+            },
+            headers=csrf_headers(alice),
+        )
+        generation_id = created.json()["id"]
+        moved = alice.post(
+            f"/api/jobs/{job.id}/ai-covers/{generation_id}/regenerate",
+            json={
+                "request_id": "ai-cover-mark-moved",
+                "source_timestamp_ms": 52_000,
+                "title_text": "原始 MARK",
+            },
+            headers=csrf_headers(alice),
+        )
+        kept = alice.post(
+            f"/api/jobs/{job.id}/ai-covers/{generation_id}/regenerate",
+            json={
+                "request_id": "ai-cover-mark-kept",
+                "title_text": "原始 MARK",
+            },
+            headers=csrf_headers(alice),
+        )
+        outside = alice.post(
+            f"/api/jobs/{job.id}/ai-covers/{generation_id}/regenerate",
+            json={
+                "request_id": "ai-cover-mark-outside",
+                "source_timestamp_ms": 900_000,
+                "title_text": "原始 MARK",
+            },
+            headers=csrf_headers(alice),
+        )
+
+    assert created.json()["source_timestamp_ms"] == 40_000
+    assert moved.status_code == 202
+    assert moved.json()["source_timestamp_ms"] == 52_000
+    # An omitted mark still means "rebuild from the frame this cover used".
+    assert kept.status_code == 202
+    assert kept.json()["source_timestamp_ms"] == 40_000
+    # A moved mark is bound-checked exactly like a new cover's is.
+    assert outside.status_code == 400
+    assert outside.json()["error"]["code"] == (
+        "ai_cover_timestamp_out_of_window"
+    )
+
+
 def auth_app(
     settings,
     repository,
@@ -1572,9 +1675,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-7" in page.text
-    assert "styles.css?v=20260829-7" in page.text
-    assert "app.js?v=20260829-7" in page.text
+    assert "i18n.js?v=20260829-8" in page.text
+    assert "styles.css?v=20260829-8" in page.text
+    assert "app.js?v=20260829-8" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

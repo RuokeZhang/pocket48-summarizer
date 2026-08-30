@@ -171,6 +171,9 @@ class RegenerateAICoverRequest(BaseModel):
         max_length=128,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+    # Omitted means "keep the frame this cover already used", so reopening the
+    # editor without a mark can still retry the same image.
+    source_timestamp_ms: int | None = Field(default=None, ge=0)
     title_text: str | None = Field(
         default=None,
         max_length=AI_COVER_TITLE_MAX_LENGTH,
@@ -1147,6 +1150,29 @@ async def retry_job(request: Request, job_id: str) -> dict:
     return public_job_payload(job)
 
 
+def require_ai_cover_mark(
+    request: Request,
+    job_id: str,
+    timeline_index: int,
+    source_timestamp_ms: int,
+) -> JobRecord:
+    """Bound-check an AI cover mark against its timeline item's window.
+
+    Creating and regenerating a cover have to agree on this, because both may
+    be handed a freshly moved mark.
+    """
+
+    job, item = timeline_clip_context(request, job_id, timeline_index)
+    lower_bound, upper_bound = clip_editor_bounds(request, job, item)
+    if not lower_bound <= source_timestamp_ms <= upper_bound:
+        raise AppError(
+            "ai_cover_timestamp_out_of_window",
+            "AI 封面标记时间超出当前时间线条目的可编辑窗口",
+            False,
+        )
+    return job
+
+
 @router.post("/api/jobs/{job_id}/ai-covers")
 async def create_ai_cover(
     request: Request,
@@ -1155,16 +1181,12 @@ async def create_ai_cover(
 ) -> Response:
     context = require_admin(request)
     request.app.state.auth.require_csrf(request, context)
-    job, item = timeline_clip_context(
-        request, job_id, payload.timeline_index
+    job = require_ai_cover_mark(
+        request,
+        job_id,
+        payload.timeline_index,
+        payload.source_timestamp_ms,
     )
-    lower_bound, upper_bound = clip_editor_bounds(request, job, item)
-    if not lower_bound <= payload.source_timestamp_ms <= upper_bound:
-        raise AppError(
-            "ai_cover_timestamp_out_of_window",
-            "AI 封面标记时间超出当前时间线条目的可编辑窗口",
-            False,
-        )
     service = require_ai_cover_service(request)
     settings = request.app.state.settings
     with shared_runtime_lock(settings.clip_operation_lock_path):
@@ -1293,6 +1315,18 @@ async def regenerate_ai_cover(
             "AI 封面不存在",
             False,
         )
+    source_timestamp_ms = (
+        source.source_timestamp_ms
+        if payload.source_timestamp_ms is None
+        else payload.source_timestamp_ms
+    )
+    if source_timestamp_ms != source.source_timestamp_ms:
+        require_ai_cover_mark(
+            request,
+            job_id,
+            source.timeline_index,
+            source_timestamp_ms,
+        )
     if not job.media_url:
         raise AppError("media_not_ready", "回放媒体地址尚未生成", True)
     service = require_ai_cover_service(request)
@@ -1304,7 +1338,7 @@ async def regenerate_ai_cover(
             timeline_index=source.timeline_index,
             requested_by_user_id=context.user.id,
             request_id=payload.request_id,
-            source_timestamp_ms=source.source_timestamp_ms,
+            source_timestamp_ms=source_timestamp_ms,
             layout_style=source.layout_style,
             title_text=payload.title_text or source.title_text,
             highlight_text=source.highlight_text,
