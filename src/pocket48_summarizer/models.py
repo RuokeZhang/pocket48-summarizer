@@ -83,6 +83,15 @@ class MemberCatalogGroupRecord(BaseModel):
     active_count: int = 0
 
 
+class MemberCatalogTeamRecord(BaseModel):
+    group_id: str
+    group_name: str = ""
+    team_name: str = ""
+    member_count: int = 0
+    disabled_count: int = 0
+    active_count: int = 0
+
+
 class MemberJobFilterRecord(BaseModel):
     member_id: str
     member_name: str

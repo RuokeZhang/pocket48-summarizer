@@ -11,8 +11,8 @@ from pocket48_summarizer.media.layouts import (
     LANDSCAPE_DANMAKU_RIGHT,
     LANDSCAPE_DANMAKU_TOP,
     LANDSCAPE_DANMAKU_WIDTH,
-    LANDSCAPE_SUBTITLE_EN_COLOR,
     LANDSCAPE_SUBTITLE_LEFT,
+    LANDSCAPE_THEMES,
     LANDSCAPE_SUBTITLE_WIDTH,
 )
 from pocket48_summarizer.media.overlays import (
@@ -403,7 +403,7 @@ def test_landscape_english_wrap_uses_browser_equivalent_width():
         output_layout="landscape",
     )
 
-    assert LANDSCAPE_SUBTITLE_EN_COLOR == "#D6536D"
+    assert LANDSCAPE_THEMES["cream"].subtitle_en == "#D6536D"
     assert (
         "Style: LandscapeSubtitleEn,LXGW WenKai,40,"
         "&H1F6D53D6,&H1F6D53D6,&H00000000,&H00000000,"

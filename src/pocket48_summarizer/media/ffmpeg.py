@@ -16,6 +16,7 @@ from ..security import MEDIA_HOSTS, redact_url, validate_https_url
 from .layouts import (
     ClipOutputLayout,
     landscape_video_filters,
+    resolve_landscape_theme,
 )
 
 Heartbeat = Callable[[], Awaitable[None]]
@@ -189,6 +190,7 @@ class FFmpegRunner:
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: ClipOutputLayout = "portrait",
+        landscape_theme: str | None = None,
         cover_path: Path | None = None,
         cover_dimensions: VideoDimensions | None = None,
     ) -> list[str]:
@@ -260,7 +262,11 @@ class FFmpegRunner:
         )
         filters: list[str] = []
         if output_layout == "landscape":
-            filters.extend(landscape_video_filters())
+            filters.extend(
+                landscape_video_filters(
+                    resolve_landscape_theme(landscape_theme)
+                )
+            )
         elif output_layout != "portrait":
             raise AppError(
                 "clip_layout_invalid",
@@ -417,6 +423,7 @@ class FFmpegRunner:
         timestamp_ms: int,
         ass_path: Path,
         output_layout: ClipOutputLayout = "portrait",
+        landscape_theme: str | None = None,
     ) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -432,7 +439,11 @@ class FFmpegRunner:
             )
         filters: list[str] = []
         if output_layout == "landscape":
-            filters.extend(landscape_video_filters())
+            filters.extend(
+                landscape_video_filters(
+                    resolve_landscape_theme(landscape_theme)
+                )
+            )
         elif output_layout != "portrait":
             raise AppError(
                 "clip_layout_invalid",
@@ -762,6 +773,7 @@ class FFmpegRunner:
         end_ms: int,
         ass_path: Path | None = None,
         output_layout: ClipOutputLayout = "portrait",
+        landscape_theme: str | None = None,
         cover_path: Path | None = None,
         cover_dimensions: VideoDimensions | None = None,
     ) -> Path:
@@ -893,6 +905,7 @@ class FFmpegRunner:
         timestamp_ms: int,
         ass_path: Path,
         output_layout: ClipOutputLayout = "portrait",
+        landscape_theme: str | None = None,
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = output_path.with_suffix(".part.png")

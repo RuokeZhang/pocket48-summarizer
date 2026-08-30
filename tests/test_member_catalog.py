@@ -417,3 +417,111 @@ def test_the_reported_member_count_follows_an_override_immediately(
 
     repository.set_group_admin_disabled("70", disabled=False)
     assert repository.get_glossary_sync_state().active_member_count == 2
+
+
+def _trainee_catalog():
+    return [
+        MemberCatalogEntry(
+            member_id="10001",
+            canonical_name="上海预备甲",
+            group_id="10",
+            group_name="SNH",
+            team_name="S预备生",
+            status="99",
+            active=True,
+        ),
+        MemberCatalogEntry(
+            member_id="30001",
+            canonical_name="广州预备甲",
+            group_id="30",
+            group_name="GNZ",
+            team_name="G预备生",
+            status="99",
+            active=True,
+        ),
+        MemberCatalogEntry(
+            member_id="30002",
+            canonical_name="广州预备乙",
+            group_id="30",
+            group_name="GNZ",
+            team_name="G预备生",
+            status="44",
+            active=False,
+        ),
+        MemberCatalogEntry(
+            member_id="30003",
+            canonical_name="广州正选",
+            group_id="30",
+            group_name="GNZ",
+            team_name="NIII",
+            status="99",
+            active=True,
+        ),
+    ]
+
+
+def _synced_trainees(repository):
+    repository.replace_member_catalog(
+        _trainee_catalog(),
+        source_url="https://h5.48.cn/catalog",
+        source_hash="e" * 64,
+    )
+
+
+def test_disabling_a_team_leaves_the_rest_of_its_group_alone(repository):
+    _synced_trainees(repository)
+
+    changed = repository.set_team_admin_disabled(
+        "30", "G预备生", disabled=True
+    )
+
+    assert changed == 2
+    states = {
+        member.member_id: member
+        for member in repository.list_member_catalog()
+    }
+    assert states["30001"].admin_disabled is True
+    assert states["30001"].active is False
+    assert states["30003"].admin_disabled is False
+    assert states["30003"].active is True
+    # The same team name exists under other groups, so a team switch that
+    # ignored the group would quietly disable the wrong people.
+    assert states["10001"].active is True
+
+
+def test_team_counts_report_what_the_switch_will_actually_change(repository):
+    _synced_trainees(repository)
+
+    teams = {
+        (team.group_id, team.team_name): team
+        for team in repository.list_member_catalog_teams()
+    }
+
+    trainees = teams[("30", "G预备生")]
+    assert trainees.group_name == "GNZ"
+    assert trainees.member_count == 2
+    # One of the two is already retired upstream, so only one name actually
+    # leaves the glossary.
+    assert trainees.active_count == 1
+    assert trainees.disabled_count == 0
+
+
+def test_re_enabling_a_team_does_not_revive_retired_members(repository):
+    _synced_trainees(repository)
+    repository.set_team_admin_disabled("30", "G预备生", disabled=True)
+
+    repository.set_team_admin_disabled("30", "G预备生", disabled=False)
+
+    states = {
+        member.member_id: member
+        for member in repository.list_member_catalog()
+    }
+    assert states["30001"].active is True
+    assert states["30002"].active is False
+
+
+def test_a_team_switch_needs_both_a_group_and_a_team(repository):
+    _synced_trainees(repository)
+
+    with pytest.raises(AppError):
+        repository.set_team_admin_disabled("30", "  ", disabled=True)

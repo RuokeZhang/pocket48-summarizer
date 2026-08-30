@@ -47,15 +47,24 @@ button, input, select, textarea { font: inherit; }
   letter-spacing: .08em;
 }
 .account-actions { display: flex; align-items: center; gap: 10px; }
-.login-link { color: #d9def0; font-size: 13px; font-weight: 700; }
 .account-actions form { margin: 0; }
-.logout-button {
+/* The glossary link sits between the sign-out and language controls, so it
+   has to be the same pill rather than a bare text link. */
+.logout-button,
+.header-pill {
   padding: 7px 11px;
   border: 1px solid #373b48;
   border-radius: 999px;
   background: transparent;
   color: #bfc6d8;
   font-size: 12px;
+}
+.header-pill {
+  display: inline-grid;
+  height: 34px;
+  place-items: center;
+  font-weight: 700;
+  text-decoration: none;
 }
 .language-toggle {
   display: grid;
@@ -159,6 +168,7 @@ button, input, select, textarea { font: inherit; }
 #member-catalog-panel #member-filter { width: 100%; max-width: 420px; }
 /* Seven hundred rows would push everything below the table off screen. */
 #member-catalog-panel .admin-table-wrap { max-height: 60vh; overflow-y: auto; }
+.admin-table-wrap.is-scrollable { max-height: 44vh; overflow-y: auto; }
 .member-state { font-size: 12px; white-space: nowrap; }
 .member-state.is-active { color: #6fcf97; }
 .member-state.is-disabled { color: #eb8c8c; }

@@ -27,6 +27,7 @@ from .models import (
     JobStatus,
     MemberCatalogEntry,
     MemberCatalogGroupRecord,
+    MemberCatalogTeamRecord,
     MemberCatalogRecord,
     MemberJobFilterRecord,
     ReplayMetadata,
@@ -793,6 +794,65 @@ class JobRepository:
             changed = cursor.rowcount
             self._update_glossary_fingerprint(connection)
         return changed
+
+    def set_team_admin_disabled(
+        self, group_id: str, team_name: str, *, disabled: bool
+    ) -> int:
+        """Disable or restore one team inside a group.
+
+        Whole groups are too coarse for the trainee squads: a group's
+        performing teams are worth recognising while its 预备生 bench is
+        hundreds of names that never get said on stream.
+        """
+
+        group_id = group_id.strip()
+        team_name = team_name.strip()
+        if not group_id or not team_name:
+            raise AppError(
+                "member_catalog_team_invalid",
+                "请选择要操作的队伍",
+                False,
+            )
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE member_catalog
+                SET admin_disabled = ?,
+                    active = source_active * (1 - ?)
+                WHERE group_id = ? AND team_name = ? AND admin_disabled != ?
+                """,
+                (
+                    int(disabled),
+                    int(disabled),
+                    group_id,
+                    team_name,
+                    int(disabled),
+                ),
+            )
+            changed = cursor.rowcount
+            self._update_glossary_fingerprint(connection)
+        return changed
+
+    def list_member_catalog_teams(self) -> list[MemberCatalogTeamRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT group_id,
+                       MAX(group_name) AS group_name,
+                       team_name,
+                       COUNT(*) AS member_count,
+                       SUM(admin_disabled) AS disabled_count,
+                       SUM(active) AS active_count
+                FROM member_catalog
+                WHERE source_present = 1 AND team_name != ''
+                GROUP BY group_id, team_name
+                ORDER BY group_id, team_name
+                """
+            ).fetchall()
+        return [
+            MemberCatalogTeamRecord.model_validate(dict(row)) for row in rows
+        ]
 
     def list_member_catalog_groups(self) -> list[MemberCatalogGroupRecord]:
         with self.database.connect() as connection:

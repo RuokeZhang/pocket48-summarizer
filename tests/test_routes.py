@@ -1155,20 +1155,39 @@ def test_glossary_admin_requires_admin_and_manages_entries(
     )
 
     with TestClient(app) as anonymous:
-        response = anonymous.get(
-            "/admin/glossary", follow_redirects=False
+        moved = anonymous.get("/admin/glossary", follow_redirects=False)
+        assert moved.status_code == 307
+        assert moved.headers["location"] == "/glossary"
+
+        page = anonymous.get("/glossary")
+        assert page.status_code == 200
+        assert "曹可甜" in page.text
+        # A guest may read every entry but must not be handed a control that
+        # the server would only reject. Asserting on the action URL rather
+        # than on each button is what stops a future unguarded form from
+        # quietly reaching guests.
+        assert 'action="/admin/glossary' not in page.text
+
+        rejected = anonymous.post(
+            "/admin/glossary/sync", follow_redirects=False
         )
-        assert response.status_code == 303
-        assert response.headers["location"] == "/login"
+        assert rejected.status_code in {303, 401, 403}
 
     with TestClient(app) as bob:
         login(bob, "bob", "bob also has secure password")
-        response = bob.get("/admin/glossary")
-        assert response.status_code == 403
+        page = bob.get("/glossary")
+        assert page.status_code == 200
+        assert 'action="/admin/glossary' not in page.text
+        assert bob.post(
+            "/admin/glossary/sync",
+            data={"_csrf": bob.cookies.get("p48_csrf")},
+            follow_redirects=False,
+        ).status_code == 403
 
     with TestClient(app) as alice:
         login(alice, "alice", "alice has a secure password")
-        page = alice.get("/admin/glossary")
+        page = alice.get("/glossary")
+        assert 'action="/admin/glossary' in page.text
         assert page.status_code == 200
         assert "成员与术语词库" in page.text
         assert "曹可甜" in page.text
@@ -1783,9 +1802,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-10" in page.text
-    assert "styles.css?v=20260829-10" in page.text
-    assert "app.js?v=20260829-10" in page.text
+    assert "i18n.js?v=20260829-11" in page.text
+    assert "styles.css?v=20260829-11" in page.text
+    assert "app.js?v=20260829-11" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -2022,3 +2041,59 @@ def test_portrait_preview_overlays_use_the_export_ratios(settings, repository):
         javascript
     )
     assert "cqh`" in javascript.split("--clip-subtitle-zh-size", 1)[1][:200]
+
+
+def test_administrators_can_disable_one_team_without_its_group(
+    settings, repository
+):
+    repository.replace_member_catalog(
+        [
+            MemberCatalogEntry(
+                member_id="30001",
+                canonical_name="广州预备甲",
+                group_id="30",
+                group_name="GNZ",
+                team_name="G预备生",
+                status="99",
+                active=True,
+            ),
+            MemberCatalogEntry(
+                member_id="30002",
+                canonical_name="广州正选",
+                group_id="30",
+                group_name="GNZ",
+                team_name="NIII",
+                status="99",
+                active=True,
+            ),
+        ],
+        source_url="https://h5.48.cn/catalog",
+        source_hash="c" * 64,
+    )
+    app = auth_app(settings, repository)
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        page = alice.get("/glossary")
+        assert "按队伍启用" in page.text
+        assert "G预备生" in page.text
+
+        response = alice.post(
+            "/admin/glossary/teams/disabled",
+            data={
+                "_csrf": alice.cookies.get("p48_csrf"),
+                "group_id": "30",
+                "team_name": "G预备生",
+                "disabled": "1",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/glossary?saved=team-state"
+
+    states = {
+        member.member_id: member
+        for member in repository.list_member_catalog()
+    }
+    assert states["30001"].active is False
+    assert states["30002"].active is True

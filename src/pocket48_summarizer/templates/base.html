@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}口袋48直播总结{% endblock %}</title>
     {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
-    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260829-10">
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}?v=20260829-11">
     {% block head_scripts %}{% endblock %}
-    <script defer src="{{ url_for('static', path='/i18n.js') }}?v=20260829-10"></script>
-    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260829-10"></script>
+    <script defer src="{{ url_for('static', path='/i18n.js') }}?v=20260829-11"></script>
+    <script defer src="{{ url_for('static', path='/app.js') }}?v=20260829-11"></script>
   </head>
   <body>
     <header class="site-header">
@@ -22,9 +22,7 @@
       {% if current_user %}
         <div class="account-actions">
           <span class="local-pill">{{ current_user.username }}</span>
-          {% if current_user.is_admin %}
-            <a class="login-link" href="/admin/glossary" data-i18n="glossaryNav">词库</a>
-          {% endif %}
+          <a class="header-pill" href="/glossary" data-i18n="glossaryNav">词库</a>
           {% if csrf_token %}
             <form action="/logout" method="post">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -40,7 +38,8 @@
         </div>
       {% else %}
         <div class="account-actions">
-          <a class="login-link" href="/login" data-i18n="login">登录</a>
+          <a class="header-pill" href="/glossary" data-i18n="glossaryNav">词库</a>
+          <a class="header-pill" href="/login" data-i18n="login">登录</a>
           <button
             id="language-toggle"
             class="language-toggle"

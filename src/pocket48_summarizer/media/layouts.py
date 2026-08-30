@@ -1,23 +1,90 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 ClipOutputLayout = Literal["portrait", "landscape"]
 LandscapeSubtitleFont = Literal["wenkai", "serif", "sans"]
+LandscapeThemeKey = Literal["cream", "denim", "mint"]
+
+
+@dataclass(frozen=True, slots=True)
+class LandscapeTheme:
+    """Every colour the landscape canvas paints, in one place.
+
+    The individual colours are deliberately not exported as module constants.
+    A renderer that reached for a loose ``LANDSCAPE_..._COLOR`` would silently
+    ignore the clip's chosen theme, so the only way to obtain a colour is to
+    resolve a theme first.
+    """
+
+    key: LandscapeThemeKey
+    background: str
+    subtitle_zh: str
+    subtitle_en: str
+    danmaku_author: str
+    danmaku_text: str
+    danmaku_background: str
+    watermark: str
+
+
+LANDSCAPE_THEMES: dict[str, LandscapeTheme] = {
+    "cream": LandscapeTheme(
+        key="cream",
+        background="#EBE9E1",
+        subtitle_zh="#E43D12",
+        subtitle_en="#D6536D",
+        danmaku_author="#D6536D",
+        danmaku_text="#5B3A42",
+        danmaku_background="#FFF8F6",
+        watermark="#5B3A42",
+    ),
+    # The reference palette pairs #D9D9D9, #286181 and #FF5757. The blue is
+    # the only one dark enough to carry the primary subtitle over the grey,
+    # so the red stays an accent on the secondary line and the danmaku names.
+    "denim": LandscapeTheme(
+        key="denim",
+        background="#D9D9D9",
+        subtitle_zh="#286181",
+        subtitle_en="#FF5757",
+        danmaku_author="#FF5757",
+        danmaku_text="#286181",
+        danmaku_background="#FFFFFF",
+        watermark="#286181",
+    ),
+    # Built from the #D4EAE8 / #FF917A / #FCC439 pastel set. Pastels have no
+    # colour dark enough to read as text on their own background, so the
+    # coral and yellow are deepened for type while the mint stays the canvas.
+    "mint": LandscapeTheme(
+        key="mint",
+        background="#D4EAE8",
+        subtitle_zh="#D9512F",
+        subtitle_en="#C77F14",
+        danmaku_author="#D9512F",
+        danmaku_text="#2F5551",
+        danmaku_background="#FBFEFD",
+        watermark="#2F5551",
+    ),
+}
+DEFAULT_LANDSCAPE_THEME: LandscapeThemeKey = "cream"
+
+
+def resolve_landscape_theme(value: str | None) -> LandscapeTheme:
+    if not value:
+        return LANDSCAPE_THEMES[DEFAULT_LANDSCAPE_THEME]
+    try:
+        return LANDSCAPE_THEMES[value]
+    except KeyError as exc:
+        raise ValueError("unsupported landscape theme") from exc
+
 
 LANDSCAPE_CANVAS_WIDTH = 1920
 LANDSCAPE_CANVAS_HEIGHT = 1080
 LANDSCAPE_VIDEO_WIDTH = 608
-LANDSCAPE_BACKGROUND_COLOR = "#EBE9E1"
-LANDSCAPE_SUBTITLE_COLOR = "#E43D12"
-LANDSCAPE_SUBTITLE_EN_COLOR = "#D6536D"
 LANDSCAPE_SUBTITLE_LEFT = 72
 LANDSCAPE_SUBTITLE_WIDTH = 509
 LANDSCAPE_SUBTITLE_ZH_SIZE = 23
 LANDSCAPE_SUBTITLE_EN_SIZE = 18
-LANDSCAPE_DANMAKU_AUTHOR_COLOR = "#D6536D"
-LANDSCAPE_DANMAKU_TEXT_COLOR = "#5B3A42"
-LANDSCAPE_DANMAKU_BACKGROUND_COLOR = "#FFF8F6"
 LANDSCAPE_DANMAKU_WIDTH = 518
 LANDSCAPE_DANMAKU_RIGHT = 65
 LANDSCAPE_DANMAKU_BOTTOM = 76
@@ -65,7 +132,6 @@ LANDSCAPE_WATERMARK_SIZE = 22
 LANDSCAPE_WATERMARK_TOP = 26
 LANDSCAPE_WATERMARK_LEFT = 72
 LANDSCAPE_WATERMARK_RIGHT = 65
-LANDSCAPE_WATERMARK_COLOR = "#5B3A42"
 # ASS alpha out of 255, where 0 is opaque.
 LANDSCAPE_WATERMARK_ALPHA = 64
 CLIP_WATERMARK_TEXT = "AI剪切片工具 p48.ruokezhang.com"
@@ -87,7 +153,7 @@ def landscape_subtitle_font_name(value: str) -> str:
         raise ValueError("unsupported landscape subtitle font") from exc
 
 
-def landscape_video_filters() -> tuple[str, ...]:
+def landscape_video_filters(theme: LandscapeTheme) -> tuple[str, ...]:
     return (
         (
             f"scale={LANDSCAPE_VIDEO_WIDTH}:{LANDSCAPE_CANVAS_HEIGHT}:"
@@ -100,7 +166,7 @@ def landscape_video_filters() -> tuple[str, ...]:
         ),
         (
             f"pad={LANDSCAPE_CANVAS_WIDTH}:{LANDSCAPE_CANVAS_HEIGHT}:"
-            f"(ow-iw)/2:0:color=0x{LANDSCAPE_BACKGROUND_COLOR[1:]}"
+            f"(ow-iw)/2:0:color=0x{theme.background[1:]}"
         ),
         "setsar=1",
     )

@@ -713,19 +713,35 @@ def translation_payload(
 
 
 @router.get("/admin/glossary", response_class=HTMLResponse)
-async def glossary_admin_page(request: Request) -> Response:
-    context = require_admin(request)
+async def glossary_admin_redirect(request: Request) -> Response:
+    """Keep old bookmarks working now that the page itself is public.
+
+    Everything under /admin stays administrator-only, so a page guests are
+    meant to read cannot live there without making that rule a lie.
+    """
+
+    saved = request.query_params.get("saved")
+    target = "/glossary" + (f"?saved={saved}" if saved else "")
+    return RedirectResponse(target, status_code=307)
+
+
+@router.get("/glossary", response_class=HTMLResponse)
+async def glossary_page(request: Request) -> Response:
+    context = optional_auth(request)
+    can_manage_glossary = context is not None and context.user.is_admin
     repository = request.app.state.services.repository
     terms = repository.list_glossary_terms()
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="glossary_admin.html",
         context={
-            "current_user": context.user,
-            "csrf_token": context.csrf_token,
+            "current_user": context.user if context else None,
+            "csrf_token": context.csrf_token if context else "",
+            "can_manage_glossary": can_manage_glossary,
             "sync_state": repository.get_glossary_sync_state(),
             "members": repository.list_member_catalog(limit=2000),
             "member_groups": repository.list_member_catalog_groups(),
+            "member_teams": repository.list_member_catalog_teams(),
             "active_members": repository.list_member_catalog(
                 active_only=True, limit=2000
             ),
@@ -762,7 +778,7 @@ async def sync_member_catalog(request: Request) -> Response:
         )
     await service.sync_if_due(force=True)
     return RedirectResponse(
-        "/admin/glossary?saved=sync", status_code=303
+        "/glossary?saved=sync", status_code=303
     )
 
 
@@ -779,7 +795,7 @@ async def set_member_admin_disabled(
         member_id, disabled=_disabled_flag(form)
     )
     return RedirectResponse(
-        "/admin/glossary?saved=member-state", status_code=303
+        "/glossary?saved=member-state", status_code=303
     )
 
 
@@ -796,7 +812,24 @@ async def set_member_group_disabled(
         group_id, disabled=_disabled_flag(form)
     )
     return RedirectResponse(
-        "/admin/glossary?saved=group-state", status_code=303
+        "/glossary?saved=group-state", status_code=303
+    )
+
+
+@router.post("/admin/glossary/teams/disabled")
+async def set_member_team_disabled(request: Request) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    request.app.state.services.repository.set_team_admin_disabled(
+        form.get("group_id", ""),
+        form.get("team_name", ""),
+        disabled=_disabled_flag(form),
+    )
+    return RedirectResponse(
+        "/glossary?saved=team-state", status_code=303
     )
 
 
@@ -826,7 +859,7 @@ async def create_glossary_term(request: Request) -> Response:
         user_id=context.user.id,
     )
     return RedirectResponse(
-        "/admin/glossary?saved=term", status_code=303
+        "/glossary?saved=term", status_code=303
     )
 
 
@@ -852,7 +885,7 @@ async def create_glossary_alias(request: Request) -> Response:
         term_id=target_id if target_kind == "term" else None,
     )
     return RedirectResponse(
-        "/admin/glossary?saved=alias", status_code=303
+        "/glossary?saved=alias", status_code=303
     )
 
 
@@ -876,7 +909,7 @@ async def set_glossary_term_active(
         term_id, active=active == "1"
     )
     return RedirectResponse(
-        "/admin/glossary?saved=term-state", status_code=303
+        "/glossary?saved=term-state", status_code=303
     )
 
 
@@ -900,7 +933,7 @@ async def set_glossary_alias_active(
         alias_id, active=active == "1"
     )
     return RedirectResponse(
-        "/admin/glossary?saved=alias-state", status_code=303
+        "/glossary?saved=alias-state", status_code=303
     )
 
 

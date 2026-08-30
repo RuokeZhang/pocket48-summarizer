@@ -19,8 +19,6 @@ from .layouts import (
     LANDSCAPE_CANVAS_HEIGHT,
     LANDSCAPE_DANMAKU_AUTHOR_LINE_HEIGHT,
     LANDSCAPE_DANMAKU_AUTHOR_SIZE,
-    LANDSCAPE_DANMAKU_AUTHOR_COLOR,
-    LANDSCAPE_DANMAKU_BACKGROUND_COLOR,
     LANDSCAPE_DANMAKU_BODY_LINE_HEIGHT,
     LANDSCAPE_DANMAKU_BODY_SIZE,
     LANDSCAPE_DANMAKU_BOTTOM,
@@ -29,21 +27,19 @@ from .layouts import (
     LANDSCAPE_DANMAKU_PADDING_Y,
     LANDSCAPE_DANMAKU_RADIUS,
     LANDSCAPE_DANMAKU_RIGHT,
-    LANDSCAPE_DANMAKU_TEXT_COLOR,
     LANDSCAPE_DANMAKU_TEXT_GAP,
     LANDSCAPE_DANMAKU_TOP,
     LANDSCAPE_DANMAKU_WIDTH,
     LANDSCAPE_LIBASS_DANMAKU_AUTHOR_SCALE,
     LANDSCAPE_LIBASS_FONT_SCALE,
-    LANDSCAPE_SUBTITLE_COLOR,
-    LANDSCAPE_SUBTITLE_EN_COLOR,
     LANDSCAPE_SUBTITLE_EN_SIZE,
     CLIP_WATERMARK_TEXT,
     LANDSCAPE_SUBTITLE_LEFT,
     LANDSCAPE_SUBTITLE_WIDTH,
     LANDSCAPE_WATERMARK_ALPHA,
+    LandscapeTheme,
+    resolve_landscape_theme,
     LANDSCAPE_WATERMARK_TOP,
-    LANDSCAPE_WATERMARK_COLOR,
     LANDSCAPE_WATERMARK_LEFT,
     LANDSCAPE_WATERMARK_RIGHT,
     LANDSCAPE_WATERMARK_SIZE,
@@ -156,6 +152,7 @@ def build_clip_overlay(
     ),
     allow_empty_subtitles: bool = False,
     live_started_at: str | None = None,
+    landscape_theme: str | None = None,
 ) -> ClipOverlayDocument:
     if width <= 0 or height <= 0 or clip_end_ms <= clip_start_ms:
         raise AppError(
@@ -205,6 +202,12 @@ def build_clip_overlay(
         if include_danmaku and not danmaku_count
         else None
     )
+    try:
+        theme = resolve_landscape_theme(landscape_theme)
+    except ValueError as exc:
+        raise AppError(
+            "clip_theme_invalid", "视频配色方案无效", False
+        ) from exc
     header = _ass_header(
         width=width,
         height=height,
@@ -213,6 +216,7 @@ def build_clip_overlay(
         subtitle_font_scale=subtitle_font_scale,
         output_layout=output_layout,
         subtitle_font_family=subtitle_font_family,
+        theme=theme,
     )
     watermark_events = (
         _landscape_watermark_events(
@@ -1056,6 +1060,7 @@ def _ass_header(
     subtitle_font_scale: int,
     output_layout: ClipOutputLayout,
     subtitle_font_family: LandscapeSubtitleFont,
+    theme: LandscapeTheme,
 ) -> str:
     if output_layout not in {"portrait", "landscape"}:
         raise AppError(
@@ -1074,21 +1079,15 @@ def _ass_header(
             False,
         )
     try:
-        landscape_subtitle_color = _ass_color(
-            LANDSCAPE_SUBTITLE_COLOR
-        )
+        landscape_subtitle_color = _ass_color(theme.subtitle_zh)
         landscape_subtitle_en_color = _ass_color(
-            LANDSCAPE_SUBTITLE_EN_COLOR,
+            theme.subtitle_en,
             alpha=round(255 * (1 - LANDSCAPE_SUBTITLE_EN_OPACITY)),
         )
-        landscape_danmaku_text = _ass_color(
-            LANDSCAPE_DANMAKU_TEXT_COLOR
-        )
-        landscape_danmaku_author = _ass_color(
-            LANDSCAPE_DANMAKU_AUTHOR_COLOR
-        )
+        landscape_danmaku_text = _ass_color(theme.danmaku_text)
+        landscape_danmaku_author = _ass_color(theme.danmaku_author)
         landscape_danmaku_background = _ass_color(
-            LANDSCAPE_DANMAKU_BACKGROUND_COLOR,
+            theme.danmaku_background,
             alpha=12,
         )
     except ValueError as exc:
@@ -1162,15 +1161,15 @@ def _ass_header(
     margin_l = portrait.margin_l
     margin_r = portrait.margin_r
     landscape_danmaku_border = _ass_color(
-        LANDSCAPE_DANMAKU_AUTHOR_COLOR,
+        theme.danmaku_author,
         alpha=168,
     )
     landscape_danmaku_box_shadow = _ass_color(
-        LANDSCAPE_DANMAKU_TEXT_COLOR,
+        theme.danmaku_text,
         alpha=224,
     )
     landscape_watermark_color = _ass_color(
-        LANDSCAPE_WATERMARK_COLOR,
+        theme.watermark,
         alpha=LANDSCAPE_WATERMARK_ALPHA,
     )
     landscape_watermark_size = round(
