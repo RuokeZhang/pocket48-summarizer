@@ -22,6 +22,7 @@ from .clients.pocket48_auth import (
     load_room_voice_credentials,
 )
 from .clients.pocket48_voice import (
+    MemberRoom,
     Pocket48VoiceClient,
     Pocket48VoiceCredentials,
     RoomVoiceStatus,
@@ -49,6 +50,8 @@ ALLOWED_STREAM_PORTS = {None, 1935, 443}
 
 
 class VoiceClient(Protocol):
+    async def resolve_member_room(self, member_id: int) -> MemberRoom: ...
+
     async def fetch_status(
         self, channel_id: int, server_id: int
     ) -> RoomVoiceStatus: ...
@@ -60,6 +63,63 @@ ClientFactory = Callable[
     [Settings, Pocket48VoiceCredentials], VoiceClient
 ]
 DnsResolver = Callable[[str, int], Awaitable[set[str]]]
+
+
+class RoomVoiceStorageCoordinator:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._reservations: dict[object, int] = {}
+
+    async def reserve(
+        self, settings: Settings
+    ) -> tuple[object | None, str | None, int]:
+        async with self._lock:
+            total_bytes = 0
+            root = settings.room_voice_path
+            if root.is_dir():
+                for session_path in root.iterdir():
+                    segment_path = session_path / "segments"
+                    if not segment_path.is_dir():
+                        continue
+                    for path in segment_path.glob("segment-*.mp3"):
+                        try:
+                            metadata = path.stat()
+                        except FileNotFoundError:
+                            continue
+                        if stat.S_ISREG(metadata.st_mode):
+                            total_bytes += metadata.st_size
+            reserved_bytes = sum(self._reservations.values())
+            remaining_total_bytes = (
+                settings.pocket48_voice_max_total_bytes
+                - total_bytes
+                - reserved_bytes
+            )
+            if remaining_total_bytes <= 0:
+                return None, "room_voice_total_cap_reached", 0
+            try:
+                disk_path = root if root.exists() else settings.data_dir
+                free_bytes = shutil.disk_usage(disk_path).free
+            except OSError:
+                return None, "room_voice_disk_check_failed", 0
+            remaining_disk_bytes = (
+                free_bytes
+                - settings.pocket48_voice_min_free_bytes
+                - reserved_bytes
+            )
+            if remaining_disk_bytes <= 0:
+                return None, "room_voice_insufficient_disk", 0
+            byte_limit = min(
+                settings.pocket48_voice_max_local_bytes,
+                remaining_total_bytes,
+                remaining_disk_bytes,
+            )
+            reservation = object()
+            self._reservations[reservation] = byte_limit
+            return reservation, None, byte_limit
+
+    async def release(self, reservation: object) -> None:
+        async with self._lock:
+            self._reservations.pop(reservation, None)
 
 
 class RoomVoiceMonitor:
@@ -76,6 +136,7 @@ class RoomVoiceMonitor:
         monotonic: Callable[[], float] = time.monotonic,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
         recording_check_seconds: float = 1.0,
+        storage_coordinator: RoomVoiceStorageCoordinator | None = None,
     ) -> None:
         self.settings = settings
         self.client_factory = client_factory or Pocket48VoiceClient
@@ -87,6 +148,9 @@ class RoomVoiceMonitor:
         self.monotonic = monotonic
         self.uuid_factory = uuid_factory
         self.recording_check_seconds = recording_check_seconds
+        self.storage_coordinator = (
+            storage_coordinator or RoomVoiceStorageCoordinator()
+        )
         self._client: VoiceClient | None = None
         self._loaded_private_mtimes: tuple[int, int] | None = None
         self._auth_paused_mtime: int | None = None
@@ -95,14 +159,15 @@ class RoomVoiceMonitor:
         self._consecutive_recording_failures = 0
         self._ready_value: str | None = None
         self._secured_segments: set[Path] = set()
+        self._resolved_member_room: MemberRoom | None = None
 
     async def run(self, stop_event: asyncio.Event) -> None:
         self.settings.prepare_directories()
         self.recover_stale_sessions()
         self._restore_duplicate_guard()
         self._write_readiness()
-        self._write_monitor_status("waiting")
         try:
+            self._write_monitor_status("waiting")
             while not stop_event.is_set():
                 try:
                     await self.poll_once(stop_event)
@@ -138,9 +203,41 @@ class RoomVoiceMonitor:
             raise ConfigurationError(
                 "房间上麦监控客户端未能安全初始化"
             )
+        dynamically_resolved = channel_id is None
+        if dynamically_resolved:
+            if member_id is None:
+                raise ConfigurationError(
+                    "房间上麦监控动态房间解析需要 member ID"
+                )
+            if self._resolved_member_room is None:
+                self._resolved_member_room = (
+                    await self._client.resolve_member_room(member_id)
+                )
+            channel_id = self._resolved_member_room.channel_id
+            server_id = self._resolved_member_room.server_id
+        if channel_id is None or server_id is None:
+            raise ConfigurationError(
+                "房间上麦监控缺少可查询的 channel ID 或 server ID"
+            )
 
         self._write_monitor_status("polling")
-        status = await self._client.fetch_status(channel_id, server_id)
+        try:
+            status = await self._client.fetch_status(
+                channel_id, server_id
+            )
+        except AppError as exc:
+            if (
+                dynamically_resolved
+                and exc.code == "room_voice_lookup_failed"
+            ):
+                self._resolved_member_room = None
+            raise
+        if dynamically_resolved:
+            self._resolved_member_room = MemberRoom(
+                member_id=member_id,
+                channel_id=status.channel_id,
+                server_id=status.server_id,
+            )
         if status.stream_url is None:
             if not status.active:
                 self._await_inactive_fingerprint = None
@@ -165,22 +262,30 @@ class RoomVoiceMonitor:
         ):
             self._write_monitor_status("recording_cooldown")
             return
-        storage_error, recording_byte_limit = self._recording_byte_budget()
+        reservation, storage_error, recording_byte_limit = (
+            await self.storage_coordinator.reserve(self.settings)
+        )
         if storage_error is not None:
             self._write_monitor_status(
                 "storage_limit", error_code=storage_error
             )
             return
-        outcome = await self._record_session(
-            stop_event=stop_event,
-            member_id=member_id,
-            channel_id=channel_id,
-            server_id=server_id,
-            stream_url=stream_url,
-            endpoint=endpoint,
-            fingerprint=fingerprint,
-            recording_byte_limit=recording_byte_limit,
-        )
+        if reservation is None:
+            raise ConfigurationError(
+                "房间上麦录音容量预留状态无效"
+            )
+        try:
+            outcome = await self._record_session(
+                stop_event=stop_event,
+                channel_id=channel_id,
+                server_id=server_id,
+                stream_url=stream_url,
+                endpoint=endpoint,
+                fingerprint=fingerprint,
+                recording_byte_limit=recording_byte_limit,
+            )
+        finally:
+            await self.storage_coordinator.release(reservation)
         if outcome in {"completed", "max_duration", "max_bytes"}:
             self._await_inactive_fingerprint = fingerprint
         else:
@@ -217,6 +322,8 @@ class RoomVoiceMonitor:
                     state_path,
                     exc,
                 )
+                continue
+            if not self._session_belongs_to_monitor(state):
                 continue
             if state.get("status") not in RECORDING_STATES:
                 continue
@@ -291,23 +398,27 @@ class RoomVoiceMonitor:
 
     def _configured_target(
         self,
-    ) -> tuple[str | None, int, int] | None:
+    ) -> tuple[int | None, int | None, int | None] | None:
         channel_value = self.settings.pocket48_voice_channel_id
         server_value = self.settings.pocket48_voice_server_id
-        if not channel_value and not server_value:
-            return None
         if not channel_value or not server_value:
-            raise ConfigurationError(
-                "房间上麦监控必须同时配置 channel ID 和 server ID"
-            )
-        channel_id = self._positive_id(channel_value, "channel")
-        server_id = self._positive_id(server_value, "server")
+            if channel_value or server_value:
+                raise ConfigurationError(
+                    "房间上麦监控必须同时配置 channel ID 和 server ID"
+                )
+            channel_id = None
+            server_id = None
+        else:
+            channel_id = self._positive_id(channel_value, "channel")
+            server_id = self._positive_id(server_value, "server")
         member_value = self.settings.pocket48_voice_member_id
         member_id = (
-            str(self._positive_id(member_value, "member"))
+            self._positive_id(member_value, "member")
             if member_value
             else None
         )
+        if member_id is None and channel_id is None:
+            return None
         return member_id, channel_id, server_id
 
     @staticmethod
@@ -387,7 +498,6 @@ class RoomVoiceMonitor:
         self,
         *,
         stop_event: asyncio.Event,
-        member_id: str | None,
         channel_id: int,
         server_id: int,
         stream_url: str,
@@ -406,7 +516,7 @@ class RoomVoiceMonitor:
         state: dict[str, Any] = {
             "version": 1,
             "session_id": session_id,
-            "member_id": member_id,
+            "monitor_id": self.settings.pocket48_voice_monitor_id,
             "channel_id": str(channel_id),
             "server_id": str(server_id),
             "member_name": (
@@ -561,39 +671,6 @@ class RoomVoiceMonitor:
         )
         return outcome or "failed"
 
-    def _recording_byte_budget(self) -> tuple[str | None, int]:
-        total_bytes = 0
-        root = self.settings.room_voice_path
-        if root.is_dir():
-            for session_path in root.iterdir():
-                if not session_path.is_dir():
-                    continue
-                _, session_bytes = self._segment_stats(session_path)
-                total_bytes += session_bytes
-                if (
-                    total_bytes
-                    >= self.settings.pocket48_voice_max_total_bytes
-                ):
-                    return "room_voice_total_cap_reached", 0
-        remaining_total_bytes = (
-            self.settings.pocket48_voice_max_total_bytes - total_bytes
-        )
-        try:
-            disk_path = root if root.exists() else self.settings.data_dir
-            free_bytes = shutil.disk_usage(disk_path).free
-        except OSError:
-            return "room_voice_disk_check_failed", 0
-        remaining_disk_bytes = (
-            free_bytes - self.settings.pocket48_voice_min_free_bytes
-        )
-        if remaining_disk_bytes <= 0:
-            return "room_voice_insufficient_disk", 0
-        return None, min(
-            self.settings.pocket48_voice_max_local_bytes,
-            remaining_total_bytes,
-            remaining_disk_bytes,
-        )
-
     async def _terminate_process(
         self,
         process: RollingProcess,
@@ -680,6 +757,8 @@ class RoomVoiceMonitor:
                 ConfigurationError,
             ):
                 continue
+            if not self._session_belongs_to_monitor(state):
+                continue
             fingerprint = state.get("stream_sha256")
             if (
                 state.get("status")
@@ -695,6 +774,14 @@ class RoomVoiceMonitor:
                 newest = (modified, fingerprint)
         if newest is not None:
             self._await_inactive_fingerprint = newest[1]
+
+    def _session_belongs_to_monitor(
+        self, state: dict[str, Any]
+    ) -> bool:
+        monitor_id = state.get("monitor_id")
+        if monitor_id is None:
+            return self.settings.pocket48_voice_monitor_id == "primary"
+        return monitor_id == self.settings.pocket48_voice_monitor_id
 
     async def _sleep_until_next_poll(
         self, stop_event: asyncio.Event
@@ -746,18 +833,31 @@ class RoomVoiceMonitor:
         error_code: str | None = None,
         session_id: str | None = None,
     ) -> None:
+        channel_id, server_id = self._status_room_ids()
         payload = {
             "version": 1,
+            "monitor_id": self.settings.pocket48_voice_monitor_id,
             "phase": phase,
             "updated_at": self.now().isoformat(),
-            "channel_id": self.settings.pocket48_voice_channel_id,
-            "server_id": self.settings.pocket48_voice_server_id,
+            "channel_id": channel_id,
+            "server_id": server_id,
             "session_id": session_id,
             "error_code": error_code,
         }
         self._write_private_json(
             self.settings.room_voice_monitor_status_path,
             payload,
+        )
+
+    def _status_room_ids(self) -> tuple[str | None, str | None]:
+        if self._resolved_member_room is not None:
+            return (
+                str(self._resolved_member_room.channel_id),
+                str(self._resolved_member_room.server_id),
+            )
+        return (
+            self.settings.pocket48_voice_channel_id,
+            self.settings.pocket48_voice_server_id,
         )
 
     @staticmethod

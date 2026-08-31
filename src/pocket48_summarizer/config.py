@@ -1,14 +1,70 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .errors import ConfigurationError
+
+
+VOICE_MONITOR_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+class AdditionalRoomVoiceTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=100)
+    member_id: int = Field(gt=0)
+    channel_id: int | None = Field(default=None, gt=0)
+    server_id: int | None = Field(default=None, gt=0)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        if not VOICE_MONITOR_ID_RE.fullmatch(value):
+            raise ValueError(
+                "additional room voice target ID must be a safe lowercase slug"
+            )
+        if value == "primary":
+            raise ValueError(
+                "additional room voice target ID must not be primary"
+            )
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(
+            ord(character) < 32 or ord(character) == 127
+            for character in value
+        ):
+            raise ValueError(
+                "additional room voice target name contains unsafe characters"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_room_ids(self) -> "AdditionalRoomVoiceTarget":
+        if (self.channel_id is None) != (self.server_id is None):
+            raise ValueError(
+                "additional room voice target channel_id and server_id "
+                "must both be present or both be absent"
+            )
+        return self
 
 
 class Settings(BaseSettings):
@@ -51,6 +107,10 @@ class Settings(BaseSettings):
     pocket48_voice_member_id: str | None = None
     pocket48_voice_channel_id: str | None = None
     pocket48_voice_server_id: str | None = None
+    pocket48_voice_additional_targets_json: tuple[
+        AdditionalRoomVoiceTarget, ...
+    ] = ()
+    pocket48_voice_monitor_id: str = "primary"
     pocket48_voice_stream_hosts: str = ""
     pocket48_voice_probe_seconds: int = Field(default=60, ge=5, le=60)
     pocket48_voice_probe_max_bytes: int = Field(
@@ -209,6 +269,24 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_bind_address(self) -> "Settings":
+        if not VOICE_MONITOR_ID_RE.fullmatch(
+            self.pocket48_voice_monitor_id
+        ):
+            raise ValueError(
+                "POCKET48_VOICE_MONITOR_ID must be a safe lowercase slug"
+            )
+        additional_targets = self.pocket48_voice_additional_targets_json
+        if len(additional_targets) > 10:
+            raise ValueError(
+                "POCKET48_VOICE_ADDITIONAL_TARGETS_JSON supports at most "
+                "10 targets"
+            )
+        additional_ids = [target.id for target in additional_targets]
+        if len(additional_ids) != len(set(additional_ids)):
+            raise ValueError(
+                "POCKET48_VOICE_ADDITIONAL_TARGETS_JSON target IDs "
+                "must be unique"
+            )
         if (
             self.llm_truncation_retry_max_tokens
             < self.llm_max_output_tokens
@@ -349,15 +427,45 @@ class Settings(BaseSettings):
 
     @property
     def room_voice_monitor_status_path(self) -> Path:
-        return (
-            self.maintenance_dir or self.data_dir
-        ) / "room-voice-monitor-status.json"
+        root = self.maintenance_dir or self.data_dir
+        if self.pocket48_voice_monitor_id == "primary":
+            return root / "room-voice-monitor-status.json"
+        return root / (
+            f"room-voice-monitor-{self.pocket48_voice_monitor_id}-status.json"
+        )
 
     @property
     def room_voice_monitor_ready_path(self) -> Path:
-        return (
-            self.maintenance_dir or self.data_dir
-        ) / "room-voice-monitor-ready"
+        root = self.maintenance_dir or self.data_dir
+        if self.pocket48_voice_monitor_id == "primary":
+            return root / "room-voice-monitor-ready"
+        return root / f"room-voice-monitor-{self.pocket48_voice_monitor_id}-ready"
+
+    def room_voice_monitor_settings(self) -> tuple["Settings", ...]:
+        primary = self.model_copy(
+            update={"pocket48_voice_monitor_id": "primary"}
+        )
+        additional = tuple(
+            self.model_copy(
+                update={
+                    "pocket48_voice_monitor_id": target.id,
+                    "pocket48_voice_member_name": target.name,
+                    "pocket48_voice_member_id": str(target.member_id),
+                    "pocket48_voice_channel_id": (
+                        str(target.channel_id)
+                        if target.channel_id is not None
+                        else None
+                    ),
+                    "pocket48_voice_server_id": (
+                        str(target.server_id)
+                        if target.server_id is not None
+                        else None
+                    ),
+                }
+            )
+            for target in self.pocket48_voice_additional_targets_json
+        )
+        return (primary, *additional)
 
     @property
     def unlimited_job_username_set(self) -> set[str]:

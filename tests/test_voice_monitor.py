@@ -12,18 +12,25 @@ from pathlib import Path
 
 import pytest
 from pydantic import SecretStr, ValidationError
+from pydantic_settings import SettingsError
 
 from pocket48_summarizer.clients.pocket48_auth import (
     save_pa_signing_seed,
     save_room_voice_credentials,
 )
 from pocket48_summarizer.clients.pocket48_voice import (
+    MemberRoom,
     Pocket48VoiceCredentials,
     RoomVoiceParticipant,
     RoomVoiceStatus,
 )
+from pocket48_summarizer.config import AdditionalRoomVoiceTarget, Settings
 from pocket48_summarizer.errors import AppError
-from pocket48_summarizer.voice_monitor import RoomVoiceMonitor
+from pocket48_summarizer.voice_monitor import (
+    RoomVoiceMonitor,
+    RoomVoiceStorageCoordinator,
+)
+from pocket48_summarizer.voice_monitor_cli import run_voice_monitor
 
 
 STREAM_URL = (
@@ -46,6 +53,17 @@ class FakeClient:
 
     async def close(self):
         self.closed = True
+
+
+class ResolvingFakeClient(FakeClient):
+    def __init__(self, statuses, room: MemberRoom):
+        super().__init__(statuses)
+        self.room = room
+        self.resolve_calls: list[int] = []
+
+    async def resolve_member_room(self, member_id: int) -> MemberRoom:
+        self.resolve_calls.append(member_id)
+        return self.room
 
 
 class ImmediateProcess:
@@ -174,8 +192,6 @@ def load_only_session(settings) -> tuple[Path, dict]:
 
 
 def test_monitor_settings_are_safe_and_bounded(tmp_path):
-    from pocket48_summarizer.config import Settings
-
     configured = Settings(data_dir=tmp_path)
     assert configured.pocket48_voice_poll_seconds == 60
     assert configured.pocket48_voice_poll_jitter_seconds == 5
@@ -199,6 +215,138 @@ def test_monitor_settings_are_safe_and_bounded(tmp_path):
         )
 
 
+def test_additional_targets_parse_and_clone_with_safe_paths(tmp_path):
+    configured = Settings(
+        data_dir=tmp_path,
+        pocket48_voice_additional_targets_json=[
+            {
+                "id": "wang-ruiqi",
+                "name": "王睿琦",
+                "member_id": "530390",
+            }
+        ],
+    )
+
+    primary, wang = configured.room_voice_monitor_settings()
+
+    assert primary.pocket48_voice_monitor_id == "primary"
+    assert (
+        primary.room_voice_monitor_ready_path
+        == tmp_path / "room-voice-monitor-ready"
+    )
+    assert (
+        primary.room_voice_monitor_status_path
+        == tmp_path / "room-voice-monitor-status.json"
+    )
+    assert wang.pocket48_voice_monitor_id == "wang-ruiqi"
+    assert wang.pocket48_voice_member_name == "王睿琦"
+    assert wang.pocket48_voice_member_id == "530390"
+    assert wang.pocket48_voice_channel_id is None
+    assert (
+        wang.room_voice_monitor_ready_path
+        == tmp_path / "room-voice-monitor-wang-ruiqi-ready"
+    )
+    assert (
+        wang.room_voice_monitor_status_path
+        == tmp_path / "room-voice-monitor-wang-ruiqi-status.json"
+    )
+
+
+def test_production_target_file_configures_wang_member_only():
+    target_env = (
+        Path(__file__).parents[1] / "deploy" / "room-voice-target.env"
+    )
+
+    configured = Settings(_env_file=target_env)
+
+    assert configured.pocket48_voice_member_name == "杨晔"
+    assert configured.pocket48_voice_channel_id == "7587624"
+    assert configured.pocket48_voice_server_id == "6227955"
+    assert configured.pocket48_voice_additional_targets_json == (
+        AdditionalRoomVoiceTarget(
+            id="wang-ruiqi",
+            name="王睿琦",
+            member_id=530390,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {
+            "id": "primary",
+            "name": "王睿琦",
+            "member_id": 530390,
+        },
+        {"id": "../wang", "name": "王睿琦", "member_id": 530390},
+        {"id": "wang/ruiqi", "name": "王睿琦", "member_id": 530390},
+        {"id": "..", "name": "王睿琦", "member_id": 530390},
+        {
+            "id": "wang-ruiqi",
+            "name": "王睿琦",
+            "member_id": 0,
+        },
+        {
+            "id": "wang-ruiqi",
+            "name": "王睿琦",
+            "member_id": 530390,
+            "channel_id": 1279498,
+        },
+        {
+            "id": "wang-ruiqi",
+            "name": "王睿琦",
+            "member_id": 530390,
+            "unreviewed": True,
+        },
+    ],
+)
+def test_rejects_invalid_additional_targets(tmp_path, target):
+    with pytest.raises(ValidationError):
+        Settings(
+            data_dir=tmp_path,
+            pocket48_voice_additional_targets_json=[target],
+        )
+
+
+def test_rejects_duplicate_and_too_many_additional_targets(tmp_path):
+    duplicate = {
+        "id": "wang-ruiqi",
+        "name": "王睿琦",
+        "member_id": 530390,
+    }
+    with pytest.raises(ValidationError):
+        Settings(
+            data_dir=tmp_path,
+            pocket48_voice_additional_targets_json=[
+                duplicate,
+                duplicate,
+            ],
+        )
+    with pytest.raises(ValidationError):
+        Settings(
+            data_dir=tmp_path,
+            pocket48_voice_additional_targets_json=[
+                {
+                    "id": f"target-{index}",
+                    "name": f"Target {index}",
+                    "member_id": index + 1,
+                }
+                for index in range(11)
+            ],
+        )
+
+
+def test_rejects_malformed_additional_target_json(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv(
+        "POCKET48_VOICE_ADDITIONAL_TARGETS_JSON", "{not-json"
+    )
+    with pytest.raises(SettingsError):
+        Settings(_env_file=None, data_dir=tmp_path)
+
+
 @pytest.mark.asyncio
 async def test_inactive_poll_loads_credentials_and_keeps_polling(settings):
     monitor_settings(settings)
@@ -215,6 +363,84 @@ async def test_inactive_poll_loads_credentials_and_keeps_polling(settings):
         settings.room_voice_monitor_status_path.read_text()
     )
     assert status["phase"] == "inactive"
+    await monitor.close()
+
+
+@pytest.mark.asyncio
+async def test_member_only_target_resolves_room_before_status(settings):
+    settings.pocket48_voice_monitor_id = "wang-ruiqi"
+    settings.pocket48_voice_member_name = "王睿琦"
+    settings.pocket48_voice_member_id = "530390"
+    settings.pocket48_voice_channel_id = None
+    settings.pocket48_voice_server_id = None
+    provision_private_files(settings)
+    status = RoomVoiceStatus(
+        channel_id=1279498,
+        server_id=7654321,
+        stream_url=None,
+        participants=(),
+    )
+    client = ResolvingFakeClient(
+        [status],
+        MemberRoom(
+            member_id=530390,
+            channel_id=1279498,
+            server_id=7654321,
+        ),
+    )
+    monitor = RoomVoiceMonitor(
+        settings, client_factory=lambda *_: client
+    )
+
+    await monitor.poll_once(asyncio.Event())
+
+    assert client.resolve_calls == [530390]
+    assert client.calls == [(1279498, 7654321)]
+    safe_status = json.loads(
+        settings.room_voice_monitor_status_path.read_text()
+    )
+    assert safe_status["monitor_id"] == "wang-ruiqi"
+    assert safe_status["channel_id"] == "1279498"
+    assert safe_status["server_id"] == "7654321"
+    await monitor.close()
+
+
+@pytest.mark.asyncio
+async def test_member_room_cache_refreshes_after_lookup_failure(settings):
+    settings.pocket48_voice_monitor_id = "wang-ruiqi"
+    settings.pocket48_voice_member_name = "王睿琦"
+    settings.pocket48_voice_member_id = "530390"
+    settings.pocket48_voice_channel_id = None
+    settings.pocket48_voice_server_id = None
+    provision_private_files(settings)
+    lookup_error = AppError(
+        "room_voice_lookup_failed", "room moved", True
+    )
+    client = ResolvingFakeClient(
+        [
+            lookup_error,
+            RoomVoiceStatus(
+                channel_id=1279498,
+                server_id=7654321,
+                stream_url=None,
+                participants=(),
+            ),
+        ],
+        MemberRoom(
+            member_id=530390,
+            channel_id=1279498,
+            server_id=7654321,
+        ),
+    )
+    monitor = RoomVoiceMonitor(
+        settings, client_factory=lambda *_: client
+    )
+
+    with pytest.raises(AppError):
+        await monitor.poll_once(asyncio.Event())
+    await monitor.poll_once(asyncio.Event())
+
+    assert client.resolve_calls == [530390, 530390]
     await monitor.close()
 
 
@@ -334,7 +560,8 @@ async def test_active_recording_persists_private_redacted_state(settings):
 
     state_path, state = load_only_session(settings)
     assert state["status"] == "ended"
-    assert state["member_id"] == "407126"
+    assert state["monitor_id"] == "primary"
+    assert "member_id" not in state
     assert state["member_name"] == "杨晔"
     assert state["stream"] == {
         "host": "voice.example.test",
@@ -383,6 +610,206 @@ async def test_capture_state_never_persists_guest_identity(settings):
     serialized = state_path.read_text(encoding="utf-8")
     assert "private-guest-id" not in serialized
     assert "private-guest-name" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_concurrent_monitors_do_not_block_and_cancel_safely(settings):
+    monitor_settings(settings)
+    settings.pocket48_voice_additional_targets_json = (
+        AdditionalRoomVoiceTarget(
+            id="wang-ruiqi",
+            name="王睿琦",
+            member_id=530390,
+            channel_id=1279498,
+            server_id=7654321,
+        ),
+    )
+    provision_private_files(settings)
+    process = BlockingProcess()
+    primary_recorder = FakeRecorder(process=process)
+    additional_client = FakeClient(
+        [
+            RoomVoiceStatus(
+                channel_id=1279498,
+                server_id=7654321,
+                stream_url=None,
+                participants=(),
+            )
+        ]
+    )
+
+    def factory(target_settings, storage_coordinator):
+        if target_settings.pocket48_voice_monitor_id == "primary":
+            return RoomVoiceMonitor(
+                target_settings,
+                client_factory=lambda *_: FakeClient([active_status()]),
+                recorder=primary_recorder,
+                storage_coordinator=storage_coordinator,
+            )
+        return RoomVoiceMonitor(
+            target_settings,
+            client_factory=lambda *_: additional_client,
+            storage_coordinator=storage_coordinator,
+        )
+
+    task = asyncio.create_task(
+        run_voice_monitor(settings, monitor_factory=factory)
+    )
+    for _ in range(100):
+        if primary_recorder.calls and additional_client.calls:
+            break
+        await asyncio.sleep(0)
+    assert primary_recorder.calls
+    assert additional_client.calls == [(1279498, 7654321)]
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    _, state = load_only_session(settings)
+    assert state["status"] == "interrupted"
+    assert state["segment_count"] == 1
+    assert process.terminated is True
+    for target_settings in settings.room_voice_monitor_settings():
+        assert not target_settings.room_voice_monitor_ready_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_shared_credential_replacement_wakes_each_monitor(settings):
+    monitor_settings(settings)
+    settings.pocket48_voice_additional_targets_json = (
+        AdditionalRoomVoiceTarget(
+            id="wang-ruiqi",
+            name="王睿琦",
+            member_id=530390,
+            channel_id=1279498,
+            server_id=7654321,
+        ),
+    )
+    provision_private_files(settings)
+    target_settings = settings.room_voice_monitor_settings()
+    auth_error = AppError(
+        "room_voice_auth_required",
+        "manual replacement required",
+        False,
+    )
+    client_queues = {
+        "primary": [
+            FakeClient([auth_error]),
+            FakeClient([inactive_status()]),
+        ],
+        "wang-ruiqi": [
+            FakeClient([auth_error]),
+            FakeClient(
+                [
+                    RoomVoiceStatus(
+                        channel_id=1279498,
+                        server_id=7654321,
+                        stream_url=None,
+                        participants=(),
+                    )
+                ]
+            ),
+        ],
+    }
+    monitors = [
+        RoomVoiceMonitor(
+            item,
+            client_factory=(
+                lambda *_args, monitor_id=item.pocket48_voice_monitor_id: (
+                    client_queues[monitor_id].pop(0)
+                )
+            ),
+        )
+        for item in target_settings
+    ]
+
+    for monitor in monitors:
+        with pytest.raises(AppError) as captured:
+            await monitor.poll_once(asyncio.Event())
+        await monitor._handle_app_error(captured.value)
+        await monitor.poll_once(asyncio.Event())
+    assert all(len(queue) == 1 for queue in client_queues.values())
+
+    path = settings.pocket48_voice_credentials_path
+    mtime = path.stat().st_mtime_ns
+    os.utime(path, ns=(mtime + 1_000_000, mtime + 1_000_000))
+    for monitor in monitors:
+        await monitor.poll_once(asyncio.Event())
+        await monitor.close()
+    assert all(not queue for queue in client_queues.values())
+
+
+@pytest.mark.asyncio
+async def test_unexpected_monitor_crash_cancels_sibling(settings):
+    settings.pocket48_voice_additional_targets_json = (
+        AdditionalRoomVoiceTarget(
+            id="wang-ruiqi",
+            name="王睿琦",
+            member_id=530390,
+        ),
+    )
+    sibling_cancelled = asyncio.Event()
+
+    class FakeMonitor:
+        def __init__(self, target_settings, _storage_coordinator):
+            self.monitor_id = target_settings.pocket48_voice_monitor_id
+
+        async def run(self, stop_event):
+            if self.monitor_id == "primary":
+                await asyncio.sleep(0)
+                raise RuntimeError("unexpected monitor crash")
+            try:
+                await asyncio.Event().wait()
+            finally:
+                sibling_cancelled.set()
+
+        async def close(self):
+            return None
+
+    with pytest.raises(ExceptionGroup) as captured:
+        await run_voice_monitor(
+            settings, monitor_factory=FakeMonitor
+        )
+
+    assert any(
+        isinstance(error, RuntimeError)
+        for error in captured.value.exceptions
+    )
+    assert sibling_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_shared_storage_coordinator_reserves_capacity_once(
+    settings, monkeypatch
+):
+    monitor_settings(settings)
+    settings.pocket48_voice_max_local_bytes = 8
+    settings.pocket48_voice_max_total_bytes = 10
+    settings.pocket48_voice_min_free_bytes = 0
+    monkeypatch.setattr(
+        "pocket48_summarizer.voice_monitor.shutil.disk_usage",
+        lambda _: shutil._ntuple_diskusage(
+            total=100, used=0, free=100
+        ),
+    )
+    coordinator = RoomVoiceStorageCoordinator()
+
+    first, first_error, first_limit = await coordinator.reserve(
+        settings
+    )
+    second, second_error, second_limit = await coordinator.reserve(
+        settings
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first_error is None
+    assert second_error is None
+    assert first_limit == 8
+    assert second_limit == 2
+    await coordinator.release(first)
+    await coordinator.release(second)
 
 
 @pytest.mark.asyncio

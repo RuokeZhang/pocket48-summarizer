@@ -756,6 +756,41 @@ async def room_voice_admin_page(request: Request) -> Response:
             challenge = pending.challenge
     except AppError:
         pass
+    monitor_targets = []
+    for monitor_settings in settings.room_voice_monitor_settings():
+        monitor_status = read_safe_monitor_status(
+            monitor_settings.room_voice_monitor_status_path
+        )
+        monitor_id = monitor_settings.pocket48_voice_monitor_id
+        if monitor_status is not None and (
+            monitor_status.monitor_id not in {None, monitor_id}
+            or (
+                monitor_id != "primary"
+                and monitor_status.monitor_id is None
+            )
+        ):
+            monitor_status = None
+        monitor_targets.append(
+            {
+                "monitor_id": monitor_id,
+                "name": monitor_settings.pocket48_voice_member_name,
+                "member_id": monitor_settings.pocket48_voice_member_id,
+                "channel_id": (
+                    monitor_status.channel_id
+                    if monitor_status is not None
+                    and monitor_status.channel_id is not None
+                    else monitor_settings.pocket48_voice_channel_id
+                ),
+                "server_id": (
+                    monitor_status.server_id
+                    if monitor_status is not None
+                    and monitor_status.server_id is not None
+                    else monitor_settings.pocket48_voice_server_id
+                ),
+                "monitor": monitor_status,
+            }
+        )
+    primary_target = monitor_targets[0]
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="room_voice_admin.html",
@@ -770,17 +805,16 @@ async def room_voice_admin_page(request: Request) -> Response:
             "credentials_file": inspect_private_file(
                 settings.pocket48_voice_credentials_path
             ),
-            "monitor": read_safe_monitor_status(
-                settings.room_voice_monitor_status_path
-            ),
+            "monitor": primary_target["monitor"],
+            "monitors": monitor_targets,
             "sessions": list_safe_capture_sessions(
                 settings.room_voice_path, limit=20
             ),
             "target": {
-                "name": settings.pocket48_voice_member_name,
-                "member_id": settings.pocket48_voice_member_id,
-                "channel_id": settings.pocket48_voice_channel_id,
-                "server_id": settings.pocket48_voice_server_id,
+                "name": primary_target["name"],
+                "member_id": primary_target["member_id"],
+                "channel_id": primary_target["channel_id"],
+                "server_id": primary_target["server_id"],
             },
         },
     )

@@ -22,6 +22,7 @@ from pocket48_summarizer.clients.pocket48_auth import (
 from pocket48_summarizer.clients.pocket48_voice import (
     Pocket48VoiceCredentials,
 )
+from pocket48_summarizer.config import AdditionalRoomVoiceTarget
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.room_voice_admin import (
     PA_REFERENCE_MAX_BYTES,
@@ -125,6 +126,13 @@ def make_admin_app(settings, repository):
             "pocket48_voice_member_id": "407126",
             "pocket48_voice_channel_id": "7587624",
             "pocket48_voice_server_id": "6227955",
+            "pocket48_voice_additional_targets_json": (
+                AdditionalRoomVoiceTarget(
+                    id="wang-ruiqi",
+                    name="王睿琦",
+                    member_id=530390,
+                ),
+            ),
         }
     )
     auth_repository = AuthRepository(repository.database)
@@ -425,6 +433,8 @@ def test_safe_status_and_session_readers_redact_unsafe_fields(settings):
                 "error_code": "room_voice_safe_error",
                 "session_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                 "channel_id": "7587624",
+                "server_id": "6227955",
+                "monitor_id": "primary",
                 "token": "private-status-token",
             }
         ),
@@ -439,6 +449,8 @@ def test_safe_status_and_session_readers_redact_unsafe_fields(settings):
         json.dumps(
             {
                 "session_id": session_id,
+                "monitor_id": "primary",
+                "member_name": "杨晔",
                 "status": "partial",
                 "started_at": "2026-08-31T19:00:00+00:00",
                 "ended_at": "2026-08-31T19:05:00+00:00",
@@ -468,7 +480,12 @@ def test_safe_status_and_session_readers_redact_unsafe_fields(settings):
     monitor = read_safe_monitor_status(status_path)
     sessions = list_safe_capture_sessions(settings.room_voice_path)
     assert monitor is not None
+    assert monitor.monitor_id == "primary"
     assert monitor.phase == "recording"
+    assert monitor.channel_id == "7587624"
+    assert monitor.server_id == "6227955"
+    assert sessions[0].monitor_id == "primary"
+    assert sessions[0].member_name == "杨晔"
     assert sessions[0].stream_host == "voice.example.test"
     assert sessions[0].error_codes == ("room_voice_ffmpeg_partial",)
     serialized = repr((monitor, sessions))
@@ -554,7 +571,74 @@ def test_room_voice_routes_require_admin_and_csrf(settings, repository):
         assert "407126" in page.text
         assert "7587624" in page.text
         assert "6227955" in page.text
+        assert "王睿琦" in page.text
+        assert "530390" in page.text
+        assert "wang-ruiqi" in page.text
+        assert "待动态解析" in page.text
         assert "账号只能保持一个活跃会话" in page.text
+
+
+def test_admin_shows_independent_status_and_safe_session_attribution(
+    settings, repository
+):
+    app = make_admin_app(settings, repository)
+    configured = app.state.settings
+    configured.prepare_directories()
+    wang = configured.room_voice_monitor_settings()[1]
+    wang.room_voice_monitor_status_path.write_text(
+        json.dumps(
+            {
+                "monitor_id": "wang-ruiqi",
+                "phase": "inactive",
+                "updated_at": "2026-08-31T20:00:00+00:00",
+                "channel_id": "1279498",
+                "server_id": "7654321",
+                "session_id": None,
+                "error_code": None,
+                "stream_url": "rtmps://private.example/live?token=secret",
+            }
+        ),
+        encoding="utf-8",
+    )
+    wang.room_voice_monitor_status_path.chmod(0o600)
+    session_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    session_dir = configured.room_voice_path / session_id
+    session_dir.mkdir(mode=0o700)
+    state_path = session_dir / "session.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "monitor_id": "wang-ruiqi",
+                "member_name": "王睿琦",
+                "status": "completed",
+                "segment_count": 1,
+                "total_bytes": 42,
+                "participants": [
+                    {
+                        "name": "private guest",
+                        "token": "private participant token",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_path.chmod(0o600)
+
+    with TestClient(app) as alice:
+        login(alice, "alice", "alice has a secure password")
+        page = alice.get("/admin/room-voice")
+
+    assert page.status_code == 200
+    assert page.text.count("杨晔") >= 1
+    assert page.text.count("王睿琦") >= 2
+    assert "1279498" in page.text
+    assert "7654321" in page.text
+    assert "wang-ruiqi" in page.text
+    assert "private guest" not in page.text
+    assert "private participant token" not in page.text
+    assert "private.example" not in page.text
 
 
 def test_route_challenge_and_login_never_render_secrets(

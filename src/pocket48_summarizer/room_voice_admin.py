@@ -43,6 +43,7 @@ PA_SEED_RE = re.compile(rb'paSecret\s*=\s*"([A-F0-9]{32})"')
 LOGIN_PENDING_MAX_AGE = timedelta(minutes=10)
 SMS_COOLDOWN = timedelta(seconds=60)
 SAFE_CODE_RE = re.compile(r"^[a-z0-9_]{1,80}$")
+SAFE_MONITOR_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
 SAFE_PHASES = {
     "active_without_stream",
@@ -85,15 +86,20 @@ class PrivateFileStatus:
 
 @dataclass(frozen=True, slots=True)
 class SafeMonitorStatus:
+    monitor_id: str | None
     phase: str
     updated_at: str | None
     error_code: str | None
     session_id: str | None
+    channel_id: str | None
+    server_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class SafeCaptureSession:
     session_id: str
+    monitor_id: str
+    member_name: str | None
     status: str
     started_at: str | None
     ended_at: str | None
@@ -397,10 +403,13 @@ def read_safe_monitor_status(path: Path) -> SafeMonitorStatus | None:
         return None
     phase = payload.get("phase")
     return SafeMonitorStatus(
+        monitor_id=_safe_monitor_id(payload.get("monitor_id")),
         phase=phase if phase in SAFE_PHASES else "unknown",
         updated_at=_safe_datetime(payload.get("updated_at")),
         error_code=_safe_code(payload.get("error_code")),
         session_id=_safe_uuid(payload.get("session_id")),
+        channel_id=_safe_positive_id(payload.get("channel_id")),
+        server_id=_safe_positive_id(payload.get("server_id")),
     )
 
 
@@ -454,6 +463,10 @@ def _safe_capture_session(
                     error_codes.append(code)
     return SafeCaptureSession(
         session_id=session_id,
+        monitor_id=(
+            _safe_monitor_id(payload.get("monitor_id")) or "primary"
+        ),
+        member_name=_safe_display_name(payload.get("member_name")),
         status=status if status in SAFE_SESSION_STATES else "unknown",
         started_at=_safe_datetime(payload.get("started_at")),
         ended_at=_safe_datetime(payload.get("ended_at")),
@@ -565,6 +578,42 @@ def _safe_code(value: object) -> str | None:
     if not isinstance(value, str) or not SAFE_CODE_RE.fullmatch(value):
         return None
     return value
+
+
+def _safe_monitor_id(value: object) -> str | None:
+    if (
+        not isinstance(value, str)
+        or len(value) > 64
+        or not SAFE_MONITOR_ID_RE.fullmatch(value)
+    ):
+        return None
+    return value
+
+
+def _safe_display_name(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if (
+        not value
+        or len(value) > 100
+        or any(
+            ord(character) < 32 or ord(character) == 127
+            for character in value
+        )
+    ):
+        return None
+    return value
+
+
+def _safe_positive_id(value: object) -> str | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return str(parsed) if parsed > 0 else None
 
 
 def _safe_host(value: object) -> str | None:

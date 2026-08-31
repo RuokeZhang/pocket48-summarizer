@@ -18,6 +18,8 @@ WORKER_MAINTENANCE_FILE="$RUNTIME_DIR/worker-maintenance"
 WORKER_READY_FILE="$RUNTIME_DIR/worker-ready"
 VOICE_MONITOR_READY_FILE="$RUNTIME_DIR/room-voice-monitor-ready"
 VOICE_MONITOR_STATUS_FILE="$RUNTIME_DIR/room-voice-monitor-status.json"
+VOICE_MONITOR_WANG_RUIQI_READY_FILE="$RUNTIME_DIR/room-voice-monitor-wang-ruiqi-ready"
+VOICE_MONITOR_WANG_RUIQI_STATUS_FILE="$RUNTIME_DIR/room-voice-monitor-wang-ruiqi-status.json"
 CLIP_OPERATION_LOCK="$RUNTIME_DIR/clip-operation.lock"
 WORKER_OPERATION_LOCK="$RUNTIME_DIR/worker-operation.lock"
 UPSTREAM_FILE="/etc/caddy/pocket48-upstream.caddy"
@@ -228,6 +230,37 @@ restore_voice_monitor_unit() {
   systemctl daemon-reload
 }
 
+voice_monitor_expects_wang_ruiqi() {
+  local release_dir="$1"
+  local target_env="$release_dir/deploy/room-voice-target.env"
+  [[ -f "$target_env" ]] \
+    && grep -Fq '"id":"wang-ruiqi"' "$target_env"
+}
+
+voice_monitor_release_ready() {
+  local release_dir="$1"
+  local ready_files=("$VOICE_MONITOR_READY_FILE")
+  local status_files=("$VOICE_MONITOR_STATUS_FILE")
+  local path
+  if voice_monitor_expects_wang_ruiqi "$release_dir"; then
+    ready_files+=("$VOICE_MONITOR_WANG_RUIQI_READY_FILE")
+    status_files+=("$VOICE_MONITOR_WANG_RUIQI_STATUS_FILE")
+  fi
+  for path in "${ready_files[@]}"; do
+    if [[ ! -f "$path" || "$(< "$path")" != "$release_dir" ]]; then
+      return 1
+    fi
+  done
+  for path in "${status_files[@]}"; do
+    if [[ ! -f "$path" ]] \
+      || grep -Eq \
+        '"error_code":[[:space:]]*"configuration_error"' \
+        "$path" 2>/dev/null; then
+      return 1
+    fi
+  done
+}
+
 wait_for_status_zero() {
   local table="$1"
   local timeout_seconds="$2"
@@ -420,7 +453,9 @@ switch_voice_monitor_release() {
   if [[ ! -x "$release_dir/.venv/bin/pocket48-voice-monitor" \
     || ! -f "$candidate_unit" ]]; then
     systemctl disable --now pocket48-voice-monitor.service || true
-    rm -f "$VOICE_MONITOR_READY_FILE"
+    rm -f \
+      "$VOICE_MONITOR_READY_FILE" \
+      "$VOICE_MONITOR_WANG_RUIQI_READY_FILE"
     rm -f "$VOICE_MONITOR_LINK"
     return 3
   fi
@@ -443,7 +478,9 @@ switch_voice_monitor_release() {
     fi
     had_previous_unit=true
   fi
-  if ! rm -f "$VOICE_MONITOR_READY_FILE"; then
+  if ! rm -f \
+    "$VOICE_MONITOR_READY_FILE" \
+    "$VOICE_MONITOR_WANG_RUIQI_READY_FILE"; then
     rm -f "$unit_backup"
     return 1
   fi
@@ -484,11 +521,7 @@ switch_voice_monitor_release() {
   fi
   for _ in $(seq 1 30); do
     if systemctl is-active --quiet pocket48-voice-monitor.service \
-      && [[ -f "$VOICE_MONITOR_READY_FILE" ]] \
-      && [[ "$(< "$VOICE_MONITOR_READY_FILE")" == "$release_dir" ]] \
-      && ! grep -Eq \
-        '"error_code":[[:space:]]*"configuration_error"' \
-        "$VOICE_MONITOR_STATUS_FILE" 2>/dev/null; then
+      && voice_monitor_release_ready "$release_dir"; then
       monitor_ready=true
       break
     fi
@@ -498,11 +531,7 @@ switch_voice_monitor_release() {
     for _ in $(seq 1 5); do
       sleep 2
       if ! systemctl is-active --quiet pocket48-voice-monitor.service \
-        || [[ ! -f "$VOICE_MONITOR_READY_FILE" ]] \
-        || [[ "$(< "$VOICE_MONITOR_READY_FILE")" != "$release_dir" ]] \
-        || grep -Eq \
-          '"error_code":[[:space:]]*"configuration_error"' \
-          "$VOICE_MONITOR_STATUS_FILE" 2>/dev/null; then
+        || ! voice_monitor_release_ready "$release_dir"; then
         monitor_ready=false
         break
       fi

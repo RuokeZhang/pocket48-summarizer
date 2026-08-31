@@ -295,9 +295,10 @@ P48_RECORD_ROOM_VOICE_PROBE=I_UNDERSTAND_THIS_RECORDS_PRIVATE_AUDIO
 
 ### Capture-first 房间上麦监控
 
-独立监控进程只轮询一个已经明确配置的房间。它启动后会立即写 readiness；
-如果下面两个本地 `0600` 文件或目标 ID 尚未准备好，则安静等待，不影响
-Web/Worker 启动：
+独立监控进程会为 primary 和每个额外目标启动互不阻塞的监控任务。一个目标
+持续录音时，其他目标仍会正常轮询。进程启动后会为每个任务立即写独立
+readiness；如果下面两个共享的本地 `0600` 文件或目标 ID 尚未准备好，则
+对应任务安静等待，不影响 Web/Worker 启动：
 
 - `data/private/room-voice-pa-signing.json`
 - `data/private/room-voice-credentials.json`
@@ -309,6 +310,7 @@ POCKET48_VOICE_MEMBER_ID=407126
 POCKET48_VOICE_MEMBER_NAME=杨晔
 POCKET48_VOICE_CHANNEL_ID=7587624
 POCKET48_VOICE_SERVER_ID=6227955
+POCKET48_VOICE_ADDITIONAL_TARGETS_JSON='[{"id":"wang-ruiqi","name":"王睿琦","member_id":530390}]'
 POCKET48_VOICE_STREAM_HOSTS=已人工核验的精确流主机
 POCKET48_VOICE_POLL_SECONDS=60
 POCKET48_VOICE_POLL_JITTER_SECONDS=5
@@ -319,6 +321,13 @@ POCKET48_VOICE_MAX_TOTAL_BYTES=21474836480
 POCKET48_VOICE_MIN_FREE_BYTES=5368709120
 POCKET48_VOICE_ALLOW_PUBLIC_STREAM_HOSTS=false
 ```
+
+额外目标最多 10 个，ID 必须是唯一的小写安全 slug。`channel_id` 和
+`server_id` 必须同时提供或同时省略；省略时，任务会在加载生产凭证后按
+`member_id` 动态解析当前房间并缓存结果。`POCKET48_VOICE_MONITOR_ID` 由
+进程内部克隆配置时使用，普通部署保持默认 `primary`。primary 继续使用
+`room-voice-monitor-ready`/`room-voice-monitor-status.json`，命名目标使用
+带安全 ID 的独立文件。杨晔和王睿琦都空闲时总 API 负载约为每分钟 2 次请求。
 
 本地启动：
 
@@ -334,16 +343,17 @@ pocket48-voice-monitor
 执行下载内容，也不会保存或回显手机号、验证码、人机验证答案、PA 或 token。
 
 成功登录只会原子替换 `data/private/room-voice-credentials.json`（`0600`）。
-监控进程会热加载该文件，并在下一轮自动开始查询，无需重启。管理页只显示
-私有文件权限状态、脱敏后的监控阶段和最近 20 个采集摘要。短信请求至少间隔
-60 秒，系统不会自动发送、重发、轮询登录或自动登录。由于账号为单活会话，
-生产激活会让同账号的官方手机 App 退出。
+所有监控任务会分别热加载该文件，并在下一轮自动开始查询，无需重启。管理页
+分别显示每个目标的脱敏监控阶段、动态解析后的房间 ID 和最近 20 个带目标
+归属的采集摘要。短信请求至少间隔 60 秒，系统不会自动发送、重发、轮询登录
+或自动登录。由于账号为单活会话，生产激活会让同账号的官方手机 App 退出。
 
 录音只保存在
 `data/room-voice/<session-uuid>/segments/segment-%06d.mp3`。每个会话的
-`session.json` 只记录脱敏后的主机、协议、端口、流指纹、分段统计和状态，
-不保存原始流 URL、查询参数或上麦参与者标识。默认每 60 秒加最多 5 秒随机
-抖动查询一次，MP3 使用 192 kbps、每 5 分钟滚动分段，单次最长 4 小时，
+`session.json` 只记录安全 monitor ID、配置的目标成员名、房间 ID、脱敏后的
+主机/协议/端口、流指纹、分段统计和状态，不保存原始流 URL、查询参数或上麦
+参与者标识。每个任务默认每 60 秒加最多 5 秒随机抖动查询一次，MP3 使用
+192 kbps、每 5 分钟滚动分段，单次最长 4 小时，
 单次会话达到 2 GiB 时终止并保留已完成分段。历史录音总量达到
 20 GiB，或磁盘无法在预留 5 GiB 后容纳一场最长录音时，监控会进入
 `storage_limit`，不删除已有录音，也不会继续写满系统盘。

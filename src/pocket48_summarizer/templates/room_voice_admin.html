@@ -42,28 +42,26 @@
       <span>监控凭证</span>
       <strong>{{ "已就绪（0600）" if credentials_file.private else ("权限或所有者不安全" if credentials_file.exists else "尚未创建") }}</strong>
     </article>
-    <article class="admin-stat">
-      <span>监控阶段</span>
-      <strong>{{ monitor.phase if monitor else "unavailable" }}</strong>
-    </article>
-    <article class="admin-stat">
-      <span>状态更新时间</span>
-      <strong>{{ monitor.updated_at if monitor and monitor.updated_at else "—" }}</strong>
-    </article>
   </section>
 
   <section class="panel">
-    <p class="eyebrow">Configured target</p>
-    <h2>固定监控目标</h2>
-    <div class="admin-stat-grid room-voice-target-grid">
-      <article class="admin-stat"><span>成员</span><strong>{{ target.name or "—" }}</strong></article>
-      <article class="admin-stat"><span>Member ID</span><strong>{{ target.member_id or "—" }}</strong></article>
-      <article class="admin-stat"><span>Channel ID</span><strong>{{ target.channel_id or "—" }}</strong></article>
-      <article class="admin-stat"><span>Server ID</span><strong>{{ target.server_id or "—" }}</strong></article>
+    <p class="eyebrow">Configured targets</p>
+    <h2>独立运行的监控目标</h2>
+    <div class="admin-form-grid room-voice-form-grid">
+      {% for item in monitors %}
+        <article class="admin-stat">
+          <span>{{ item.monitor_id }}</span>
+          <h3>{{ item.name or "—" }}</h3>
+          <p>阶段：<strong>{{ item.monitor.phase if item.monitor else "unavailable" }}</strong></p>
+          <p>更新时间：{{ item.monitor.updated_at if item.monitor and item.monitor.updated_at else "—" }}</p>
+          <p>Member ID：{{ item.member_id or "—" }}</p>
+          <p>Channel ID：{{ item.channel_id or "待动态解析" }}</p>
+          <p>Server ID：{{ item.server_id or "待动态解析" }}</p>
+          <p>错误代码：{{ item.monitor.error_code if item.monitor and item.monitor.error_code else "—" }}</p>
+          <p>当前会话：{{ item.monitor.session_id if item.monitor and item.monitor.session_id else "—" }}</p>
+        </article>
+      {% endfor %}
     </div>
-    {% if monitor %}
-      <p class="muted">错误代码：{{ monitor.error_code or "—" }} · 当前会话：{{ monitor.session_id or "—" }}</p>
-    {% endif %}
   </section>
 
   {% if challenge %}
@@ -119,6 +117,7 @@
         <thead>
           <tr>
             <th>会话</th>
+            <th>监控目标</th>
             <th>状态</th>
             <th>开始 / 结束</th>
             <th>分段 / 字节</th>
@@ -130,6 +129,7 @@
           {% for session in sessions %}
             <tr>
               <td>{{ session.session_id }}</td>
+              <td>{{ session.member_name or "—" }}<small>{{ session.monitor_id }}</small></td>
               <td>{{ session.status }}</td>
               <td>{{ session.started_at or "—" }}<small>{{ session.ended_at or "—" }}</small></td>
               <td>{{ session.segment_count }}<small>{{ session.total_bytes }}</small></td>
@@ -143,7 +143,7 @@
               <td>{{ session.error_codes | join(", ") if session.error_codes else "—" }}</td>
             </tr>
           {% else %}
-            <tr><td colspan="6">还没有可安全显示的采集会话。</td></tr>
+            <tr><td colspan="7">还没有可安全显示的采集会话。</td></tr>
           {% endfor %}
         </tbody>
       </table>

@@ -40,8 +40,11 @@ AI 封面，再填写 Ark 的 `ARK_API_KEY` 和控制台显示的实际
 和浏览器读取短期签名 URL。剪辑上传到独立的
 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
 
-房间上麦监控使用独立的 `pocket48-voice-monitor.service`，固定每
-60 秒检查杨晔房间并在检测到流后写入 5 分钟 MP3 分段。目标 ID 和
+房间上麦监控使用一个独立的 `pocket48-voice-monitor.service`，在同一
+进程内并发运行杨晔 primary 任务和王睿琦命名任务；任一目标的长时间录音
+不会阻塞另一目标继续每 60 秒轮询。王睿琦只提交 member ID，服务会使用
+生产凭证动态解析当前 channel/server，不猜测 server ID。两人都空闲时
+总 API 负载约为每分钟 2 次请求。目标 ID 和
 单次 4 小时/2 GiB、历史总量 20 GiB 和磁盘预留 5 GiB 的安全上限
 来自仓库内不含秘密且由 release 管理的
 `deploy/room-voice-target.env`；token 和动态 `pa` 种子只写入
@@ -50,6 +53,11 @@ AI 封面，再填写 Ark 的 `ARK_API_KEY` 和控制台显示的实际
 `/admin/room-voice`，明确发送一次短信并提交验证码；成功后 monitor
 会热加载凭证，无需 SSH 或重启服务。该登录会让同一账号的官方手机 App
 退出，手机 App 再登录也会使 monitor 凭证失效。
+
+发布仍只切换一个 systemd 服务，但 readiness gate 会检查 primary 和
+仓库 target 文件声明的 `wang-ruiqi` 两个独立状态文件；任一状态报告
+`configuration_error` 都会失败。回滚到未声明额外目标的旧 release 时只
+要求 primary readiness。
 
 首个真实上麦流出现前无法预先知道 CDN 主机，因此生产 target 文件显式
 允许仅解析到全局公网地址、且端口为 1935/443 的 RTMP/RTMPS 主机；
