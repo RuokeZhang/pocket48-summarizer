@@ -49,10 +49,13 @@ AI 封面，再填写 Ark 的 `ARK_API_KEY` 和控制台显示的实际
 来自仓库内不含秘密且由 release 管理的
 `deploy/room-voice-target.env`；token 和动态 `pa` 种子只写入
 `/var/lib/pocket48-summarizer/private/` 的 `0600` 文件。首次部署后
-服务会以 `waiting_credentials` 保持就绪。管理员登录网站后打开
-`/admin/room-voice`，明确发送一次短信并提交验证码；成功后 monitor
-会热加载凭证，无需 SSH 或重启服务。该登录会让同一账号的官方手机 App
-退出，手机 App 再登录也会使 monitor 凭证失效。
+服务会以 `waiting_credentials` 保持就绪。`/room-voice` 对所有访客公开，
+展示两个目标的脱敏状态和最近安全完成的本地 MP3 分段，并允许浏览器播放或
+下载；旧 `/admin/room-voice` 地址只重定向到该页面。只有站点用户名大小写
+折叠后精确等于 `ruoke` 的已登录用户可看到并提交短信/验证码维护表单，其他
+用户（包括其他管理员）由服务端拒绝。成功后 monitor 会热加载凭证，无需
+SSH 或重启服务。该登录会让同一账号的官方手机 App 退出，手机 App 再登录
+也会使 monitor 凭证失效。
 
 发布仍只切换一个 systemd 服务，但 readiness gate 会检查 primary 和
 仓库 target 文件声明的 `wang-ruiqi` 两个独立状态文件；任一状态报告

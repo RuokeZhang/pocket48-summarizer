@@ -44,7 +44,6 @@ LOGIN_PENDING_MAX_AGE = timedelta(minutes=10)
 SMS_COOLDOWN = timedelta(seconds=60)
 SAFE_CODE_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 SAFE_MONITOR_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
 SAFE_PHASES = {
     "active_without_stream",
     "auth_paused",
@@ -72,6 +71,10 @@ SAFE_SESSION_STATES = {
     "recording",
     "starting",
 }
+ACTIVE_SESSION_STATES = {"recording", "starting"}
+SEGMENT_NAME_RE = re.compile(r"^segment-[0-9]{6}\.mp3$")
+PUBLIC_SESSION_LIMIT = 20
+PUBLIC_SEGMENT_LIMIT = 100
 AREA_RE = re.compile(r"^[0-9]{1,4}$")
 MOBILE_RE = re.compile(r"^[0-9]{6,20}$")
 CODE_RE = re.compile(r"^[0-9]{4,8}$")
@@ -96,6 +99,12 @@ class SafeMonitorStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class SafeCaptureSegment:
+    name: str
+    size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class SafeCaptureSession:
     session_id: str
     monitor_id: str
@@ -105,10 +114,7 @@ class SafeCaptureSession:
     ended_at: str | None
     segment_count: int
     total_bytes: int
-    stream_scheme: str | None
-    stream_host: str | None
-    stream_port: int | None
-    error_codes: tuple[str, ...]
+    segments: tuple[SafeCaptureSegment, ...]
 
 
 class PendingChallenge(BaseModel):
@@ -414,17 +420,22 @@ def read_safe_monitor_status(path: Path) -> SafeMonitorStatus | None:
 
 
 def list_safe_capture_sessions(
-    root: Path, *, limit: int = 20
+    root: Path,
+    *,
+    limit: int = PUBLIC_SESSION_LIMIT,
+    segment_limit: int = PUBLIC_SEGMENT_LIMIT,
 ) -> list[SafeCaptureSession]:
     if limit <= 0 or not root.is_dir():
         return []
+    limit = min(limit, PUBLIC_SESSION_LIMIT)
+    segment_limit = max(0, min(segment_limit, PUBLIC_SEGMENT_LIMIT))
     candidates: list[tuple[int, Path, str]] = []
     try:
         children = list(root.iterdir())
     except OSError:
         return []
     for child in children:
-        session_id = _safe_uuid(child.name)
+        session_id = _strict_uuid(child.name)
         if session_id is None or not _private_directory(child):
             continue
         state_path = child / "session.json"
@@ -436,51 +447,142 @@ def list_safe_capture_sessions(
         candidates.append((modified, state_path, session_id))
     candidates.sort(reverse=True)
     summaries: list[SafeCaptureSession] = []
-    for _, state_path, session_id in candidates[:limit]:
-        summary = _safe_capture_session(state_path, session_id)
+    for _, state_path, session_id in candidates:
+        summary = _safe_capture_session(
+            state_path,
+            session_id,
+            segment_limit=segment_limit,
+        )
         if summary is not None:
             summaries.append(summary)
+        if len(summaries) >= limit:
+            break
     return summaries
 
 
 def _safe_capture_session(
-    path: Path, session_id: str
+    path: Path,
+    session_id: str,
+    *,
+    segment_limit: int = PUBLIC_SEGMENT_LIMIT,
 ) -> SafeCaptureSession | None:
     try:
         payload = _read_small_json_object(path)
     except (OSError, UnicodeError, ValueError, ConfigurationError):
         return None
-    stream = payload.get("stream")
-    stream = stream if isinstance(stream, dict) else {}
+    stored_session_id = payload.get("session_id")
+    if (
+        stored_session_id is not None
+        and _strict_uuid(stored_session_id) != session_id
+    ):
+        return None
     status = payload.get("status")
-    raw_errors = payload.get("errors")
-    error_codes: list[str] = []
-    if isinstance(raw_errors, list):
-        for error in raw_errors[:10]:
-            if isinstance(error, dict):
-                code = _safe_code(error.get("code"))
-                if code is not None:
-                    error_codes.append(code)
+    if status not in SAFE_SESSION_STATES:
+        return None
+    segments = _list_safe_segments(
+        path.parent,
+        status=status,
+        limit=segment_limit,
+    )
     return SafeCaptureSession(
         session_id=session_id,
         monitor_id=(
             _safe_monitor_id(payload.get("monitor_id")) or "primary"
         ),
         member_name=_safe_display_name(payload.get("member_name")),
-        status=status if status in SAFE_SESSION_STATES else "unknown",
+        status=status,
         started_at=_safe_datetime(payload.get("started_at")),
         ended_at=_safe_datetime(payload.get("ended_at")),
         segment_count=_safe_nonnegative_int(payload.get("segment_count")),
         total_bytes=_safe_nonnegative_int(payload.get("total_bytes")),
-        stream_scheme=(
-            stream.get("scheme")
-            if stream.get("scheme") in {"rtmp", "rtmps"}
-            else None
-        ),
-        stream_host=_safe_host(stream.get("host")),
-        stream_port=_safe_port(stream.get("port")),
-        error_codes=tuple(error_codes),
+        segments=segments,
     )
+
+
+def safe_capture_segment_path(
+    root: Path, session_id: str, segment_name: str
+) -> Path | None:
+    session_id = _strict_uuid(session_id)
+    if session_id is None or not SEGMENT_NAME_RE.fullmatch(segment_name):
+        return None
+    session_path = root / session_id
+    if not _private_directory(session_path):
+        return None
+    state_path = session_path / "session.json"
+    try:
+        _require_private_file(state_path, "房间上麦录音会话状态")
+    except ConfigurationError:
+        return None
+    summary = _safe_capture_session(state_path, session_id, segment_limit=0)
+    if summary is None:
+        return None
+    segments_path = session_path / "segments"
+    if not _private_directory(segments_path):
+        return None
+    segment_path = segments_path / segment_name
+    metadata = _private_regular_file_metadata(segment_path)
+    if metadata is None or metadata.st_size <= 0:
+        return None
+    if summary.status in ACTIVE_SESSION_STATES:
+        if segment_name == _latest_segment_name(segments_path):
+            return None
+    return segment_path
+
+
+def _list_safe_segments(
+    session_path: Path, *, status: str, limit: int
+) -> tuple[SafeCaptureSegment, ...]:
+    segments_path = session_path / "segments"
+    if limit <= 0 or not _private_directory(segments_path):
+        return ()
+    segment_files = sorted(
+        _safe_segment_files(segments_path),
+        key=lambda item: item[0].name,
+    )
+    if status in ACTIVE_SESSION_STATES:
+        latest_name = _latest_segment_name(segments_path)
+        segment_files = [
+            item for item in segment_files if item[0].name != latest_name
+        ]
+    return tuple(
+        SafeCaptureSegment(name=path.name, size_bytes=metadata.st_size)
+        for path, metadata in segment_files[:limit]
+    )
+
+
+def _safe_segment_files(
+    segments_path: Path,
+) -> list[tuple[Path, os.stat_result]]:
+    try:
+        children = list(segments_path.iterdir())
+    except OSError:
+        return []
+    safe_files: list[tuple[Path, os.stat_result]] = []
+    for path in children:
+        if not SEGMENT_NAME_RE.fullmatch(path.name):
+            continue
+        metadata = _private_regular_file_metadata(path)
+        if metadata is not None and metadata.st_size > 0:
+            safe_files.append((path, metadata))
+    return safe_files
+
+
+def _latest_segment_name(segments_path: Path) -> str | None:
+    try:
+        children = list(segments_path.iterdir())
+    except OSError:
+        return None
+    names: list[str] = []
+    for path in children:
+        if not SEGMENT_NAME_RE.fullmatch(path.name):
+            continue
+        try:
+            metadata = path.lstat()
+        except OSError:
+            continue
+        if stat.S_ISREG(metadata.st_mode):
+            names.append(path.name)
+    return max(names, default=None)
 
 
 def _load_pending_if_present(path: Path) -> PendingRoomVoiceLogin | None:
@@ -574,6 +676,11 @@ def _safe_uuid(value: object) -> str | None:
         return None
 
 
+def _strict_uuid(value: object) -> str | None:
+    parsed = _safe_uuid(value)
+    return parsed if parsed == value else None
+
+
 def _safe_code(value: object) -> str | None:
     if not isinstance(value, str) or not SAFE_CODE_RE.fullmatch(value):
         return None
@@ -616,24 +723,6 @@ def _safe_positive_id(value: object) -> str | None:
     return str(parsed) if parsed > 0 else None
 
 
-def _safe_host(value: object) -> str | None:
-    if not isinstance(value, str) or not SAFE_HOST_RE.fullmatch(value):
-        return None
-    return value.lower()
-
-
-def _safe_port(value: object) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        port = int(value)
-    except (TypeError, ValueError):
-        return None
-    return port if 1 <= port <= 65535 else None
-
-
 def _safe_nonnegative_int(value: object) -> int:
     if isinstance(value, bool):
         return 0
@@ -654,6 +743,25 @@ def _private_directory(path: Path) -> bool:
         and stat.S_IMODE(metadata.st_mode) & 0o077 == 0
         and (not hasattr(os, "getuid") or metadata.st_uid == os.getuid())
     )
+
+
+def _private_regular_file_metadata(
+    path: Path,
+) -> os.stat_result | None:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return None
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or (
+            hasattr(os, "getuid")
+            and metadata.st_uid != os.getuid()
+        )
+    ):
+        return None
+    return metadata
 
 
 def _require_private_file(path: Path, label: str) -> None:

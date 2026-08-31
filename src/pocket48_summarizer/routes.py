@@ -62,6 +62,7 @@ from .room_voice_admin import (
     list_safe_capture_sessions,
     load_pending_login,
     read_safe_monitor_status,
+    safe_capture_segment_path,
 )
 from .runtime_lock import shared_runtime_lock
 from .security import parse_share_url
@@ -221,6 +222,17 @@ def require_admin(request: Request) -> AuthContext:
     context = require_auth(request)
     if not context.user.is_admin:
         raise AppError("admin_required", "仅管理员可以执行此操作", False)
+    return context
+
+
+def require_room_voice_operator(request: Request) -> AuthContext:
+    context = require_auth(request)
+    if context.user.username.casefold() != "ruoke":
+        raise AppError(
+            "room_voice_operator_required",
+            "仅指定的房间上麦监控账号维护人员可以执行此操作",
+            False,
+        )
     return context
 
 
@@ -741,21 +753,23 @@ async def glossary_admin_redirect(request: Request) -> Response:
 
 @router.get("/admin/room-voice", response_class=HTMLResponse)
 async def room_voice_admin_page(request: Request) -> Response:
-    context = require_admin(request)
+    notice = request.query_params.get("notice")
+    suffix = (
+        f"?notice={notice}"
+        if notice in {"sms-sent", "challenge", "login-success"}
+        else ""
+    )
+    return RedirectResponse(f"/room-voice{suffix}", status_code=307)
+
+
+@router.get("/room-voice", response_class=HTMLResponse)
+async def room_voice_page(request: Request) -> Response:
+    context = optional_auth(request)
+    can_operate = (
+        context is not None
+        and context.user.username.casefold() == "ruoke"
+    )
     settings = request.app.state.settings
-    challenge = None
-    try:
-        pending = load_pending_login(
-            settings.room_voice_login_pending_path
-        )
-        age = datetime.now(UTC) - pending.created_at
-        if (
-            timedelta(0) <= age < LOGIN_PENDING_MAX_AGE
-            and pending.challenge is not None
-        ):
-            challenge = pending.challenge
-    except AppError:
-        pass
     monitor_targets = []
     for monitor_settings in settings.room_voice_monitor_settings():
         monitor_status = read_safe_monitor_status(
@@ -775,6 +789,26 @@ async def room_voice_admin_page(request: Request) -> Response:
                 "monitor_id": monitor_id,
                 "name": monitor_settings.pocket48_voice_member_name,
                 "member_id": monitor_settings.pocket48_voice_member_id,
+                "phase": (
+                    "unavailable"
+                    if monitor_status is not None
+                    and monitor_status.phase
+                    in {
+                        "auth_paused",
+                        "waiting_configuration",
+                        "waiting_credentials",
+                    }
+                    else (
+                        monitor_status.phase
+                        if monitor_status is not None
+                        else "unavailable"
+                    )
+                ),
+                "updated_at": (
+                    monitor_status.updated_at
+                    if monitor_status is not None
+                    else None
+                ),
                 "channel_id": (
                     monitor_status.channel_id
                     if monitor_status is not None
@@ -787,42 +821,74 @@ async def room_voice_admin_page(request: Request) -> Response:
                     and monitor_status.server_id is not None
                     else monitor_settings.pocket48_voice_server_id
                 ),
-                "monitor": monitor_status,
             }
         )
-    primary_target = monitor_targets[0]
+    sessions = list_safe_capture_sessions(settings.room_voice_path)
+    history_groups = [
+        {
+            "monitor_id": target["monitor_id"],
+            "name": target["name"],
+            "sessions": [],
+        }
+        for target in monitor_targets
+    ]
+    groups_by_id = {
+        group["monitor_id"]: group for group in history_groups
+    }
+    for session in sessions:
+        group = groups_by_id.get(session.monitor_id)
+        if group is None:
+            group = {
+                "monitor_id": session.monitor_id,
+                "name": session.member_name or "未知监控目标",
+                "sessions": [],
+            }
+            history_groups.append(group)
+            groups_by_id[session.monitor_id] = group
+        group["sessions"].append(session)
+    template_context = {
+        "current_user": context.user if context else None,
+        "csrf_token": context.csrf_token if context else "",
+        "can_operate": can_operate,
+        "monitors": monitor_targets,
+        "history_groups": history_groups,
+    }
+    if can_operate:
+        challenge = None
+        try:
+            pending = load_pending_login(
+                settings.room_voice_login_pending_path
+            )
+            age = datetime.now(UTC) - pending.created_at
+            if (
+                timedelta(0) <= age < LOGIN_PENDING_MAX_AGE
+                and pending.challenge is not None
+            ):
+                challenge = pending.challenge
+        except AppError:
+            pass
+        template_context.update(
+            {
+                "notice": request.query_params.get("notice"),
+                "challenge": challenge,
+                "pa_file": inspect_private_file(
+                    settings.pocket48_pa_signing_seed_path
+                ),
+                "credentials_file": inspect_private_file(
+                    settings.pocket48_voice_credentials_path
+                ),
+            }
+        )
     return request.app.state.templates.TemplateResponse(
         request=request,
-        name="room_voice_admin.html",
-        context={
-            "current_user": context.user,
-            "csrf_token": context.csrf_token,
-            "notice": request.query_params.get("notice"),
-            "challenge": challenge,
-            "pa_file": inspect_private_file(
-                settings.pocket48_pa_signing_seed_path
-            ),
-            "credentials_file": inspect_private_file(
-                settings.pocket48_voice_credentials_path
-            ),
-            "monitor": primary_target["monitor"],
-            "monitors": monitor_targets,
-            "sessions": list_safe_capture_sessions(
-                settings.room_voice_path, limit=20
-            ),
-            "target": {
-                "name": primary_target["name"],
-                "member_id": primary_target["member_id"],
-                "channel_id": primary_target["channel_id"],
-                "server_id": primary_target["server_id"],
-            },
-        },
+        name="room_voice.html",
+        context=template_context,
     )
 
 
 @router.post("/admin/room-voice/sms")
 async def room_voice_send_sms(request: Request) -> Response:
-    context = require_admin(request)
+    context = require_room_voice_operator(request)
     form = await parse_form(request)
     request.app.state.auth.require_csrf(
         request, context, form.get("_csrf")
@@ -834,13 +900,13 @@ async def room_voice_send_sms(request: Request) -> Response:
     )
     notice = "sms-sent" if result.sent else "challenge"
     return RedirectResponse(
-        f"/admin/room-voice?notice={notice}", status_code=303
+        f"/room-voice?notice={notice}", status_code=303
     )
 
 
 @router.post("/admin/room-voice/login")
 async def room_voice_complete_login(request: Request) -> Response:
-    context = require_admin(request)
+    context = require_room_voice_operator(request)
     form = await parse_form(request)
     request.app.state.auth.require_csrf(
         request, context, form.get("_csrf")
@@ -851,7 +917,33 @@ async def room_voice_complete_login(request: Request) -> Response:
         code=form.get("code", ""),
     )
     return RedirectResponse(
-        "/admin/room-voice?notice=login-success", status_code=303
+        "/room-voice?notice=login-success", status_code=303
+    )
+
+
+@router.get(
+    "/room-voice/{session_id}/segments/{segment_name}",
+    response_class=FileResponse,
+)
+async def room_voice_segment(
+    request: Request, session_id: str, segment_name: str
+) -> Response:
+    path = safe_capture_segment_path(
+        request.app.state.settings.room_voice_path,
+        session_id,
+        segment_name,
+    )
+    if path is None:
+        raise AppError(
+            "room_voice_segment_not_found",
+            "录音分段不存在或当前不可公开读取",
+            False,
+        )
+    return FileResponse(
+        path,
+        media_type="audio/mpeg",
+        filename=segment_name,
+        content_disposition_type="inline",
     )
 
 

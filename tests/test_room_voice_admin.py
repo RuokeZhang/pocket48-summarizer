@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import stat
 from datetime import UTC, datetime, timedelta
 
@@ -34,6 +35,7 @@ from pocket48_summarizer.room_voice_admin import (
     list_safe_capture_sessions,
     load_pending_login,
     read_safe_monitor_status,
+    safe_capture_segment_path,
     save_pending_login,
 )
 from pocket48_summarizer.services import ApplicationServices
@@ -137,6 +139,12 @@ def make_admin_app(settings, repository):
     )
     auth_repository = AuthRepository(repository.database)
     auth_repository.create_user(
+        "ruoke",
+        "ruoke",
+        hash_password("ruoke has a secure password"),
+        is_admin=False,
+    )
+    auth_repository.create_user(
         "alice",
         "alice",
         hash_password("alice has a secure password"),
@@ -155,6 +163,62 @@ def make_admin_app(settings, repository):
             worker=DummyWorker(),
         ),
     )
+
+
+class FakeRoomVoiceAdmin:
+    def __init__(self):
+        self.sms_calls = []
+        self.login_calls = []
+
+    async def send_sms(self, **kwargs):
+        self.sms_calls.append(kwargs)
+        return SmsSendResult(sent=True)
+
+    async def complete_login(self, **kwargs):
+        self.login_calls.append(kwargs)
+
+
+def write_capture_session(
+    settings,
+    session_id,
+    *,
+    status="completed",
+    monitor_id="primary",
+    member_name="杨晔",
+    segment_names=("segment-000000.mp3",),
+    extra_state=None,
+):
+    session_dir = settings.room_voice_path / session_id
+    session_dir.mkdir(mode=0o700)
+    segments_dir = session_dir / "segments"
+    segments_dir.mkdir(mode=0o700)
+    total_bytes = 0
+    for index, name in enumerate(segment_names):
+        content = f"mp3-{index}".encode()
+        segment = segments_dir / name
+        segment.write_bytes(content)
+        segment.chmod(0o600)
+        total_bytes += len(content)
+    state = {
+        "session_id": session_id,
+        "monitor_id": monitor_id,
+        "member_name": member_name,
+        "status": status,
+        "started_at": "2026-08-31T19:00:00+00:00",
+        "ended_at": (
+            None
+            if status in {"starting", "recording"}
+            else "2026-08-31T19:05:00+00:00"
+        ),
+        "segment_count": len(segment_names),
+        "total_bytes": total_bytes,
+    }
+    if extra_state:
+        state.update(extra_state)
+    state_path = session_dir / "session.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    state_path.chmod(0o600)
+    return session_dir
 
 
 def login(client: TestClient, username: str, password: str) -> None:
@@ -486,11 +550,10 @@ def test_safe_status_and_session_readers_redact_unsafe_fields(settings):
     assert monitor.server_id == "6227955"
     assert sessions[0].monitor_id == "primary"
     assert sessions[0].member_name == "杨晔"
-    assert sessions[0].stream_host == "voice.example.test"
-    assert sessions[0].error_codes == ("room_voice_ffmpeg_partial",)
     serialized = repr((monitor, sessions))
     for secret in (
         "private-status-token",
+        "voice.example.test",
         "live?token=secret",
         "407126",
         "private-participant",
@@ -525,120 +588,381 @@ def test_safe_session_reader_limits_results_to_twenty(settings):
     assert len(list_safe_capture_sessions(settings.room_voice_path)) == 20
 
 
-def test_room_voice_routes_require_admin_and_csrf(settings, repository):
-    app = make_admin_app(settings, repository)
-    with TestClient(app) as anonymous:
-        response = anonymous.get(
-            "/admin/room-voice", follow_redirects=False
-        )
-        assert response.status_code == 303
-        assert response.headers["location"] == "/login"
-
-    with TestClient(app) as bob:
-        login(bob, "bob", "bob also has secure password")
-        assert bob.get("/admin/room-voice").status_code == 403
-        assert (
-            bob.post(
-                "/admin/room-voice/sms",
-                data={"area": "86", "mobile": "13800138000"},
-            ).status_code
-            == 403
-        )
-
-    with TestClient(app) as alice:
-        login(alice, "alice", "alice has a secure password")
-        assert (
-            alice.post(
-                "/admin/room-voice/sms",
-                data={"area": "86", "mobile": "13800138000"},
-            ).status_code
-            == 403
-        )
-        assert (
-            alice.post(
-                "/admin/room-voice/login",
-                data={
-                    "area": "86",
-                    "mobile": "13800138000",
-                    "code": "123456",
-                },
-            ).status_code
-            == 403
-        )
-        page = alice.get("/admin/room-voice")
-        assert page.status_code == 200
-        assert "杨晔" in page.text
-        assert "407126" in page.text
-        assert "7587624" in page.text
-        assert "6227955" in page.text
-        assert "王睿琦" in page.text
-        assert "530390" in page.text
-        assert "wang-ruiqi" in page.text
-        assert "待动态解析" in page.text
-        assert "账号只能保持一个活跃会话" in page.text
-
-
-def test_admin_shows_independent_status_and_safe_session_attribution(
-    settings, repository
-):
+def test_public_room_voice_page_redacts_private_state(settings, repository):
     app = make_admin_app(settings, repository)
     configured = app.state.settings
     configured.prepare_directories()
+    primary = configured.room_voice_monitor_settings()[0]
+    primary.room_voice_monitor_status_path.write_text(
+        json.dumps(
+            {
+                "monitor_id": "primary",
+                "phase": "recording",
+                "updated_at": "2026-08-31T20:00:00+00:00",
+                "channel_id": "7587624",
+                "server_id": "6227955",
+                "stream_host": "private-stream.example",
+                "stream_sha256": "f" * 64,
+                "guest_id": "private-guest",
+            }
+        ),
+        encoding="utf-8",
+    )
+    primary.room_voice_monitor_status_path.chmod(0o600)
     wang = configured.room_voice_monitor_settings()[1]
     wang.room_voice_monitor_status_path.write_text(
         json.dumps(
             {
                 "monitor_id": "wang-ruiqi",
-                "phase": "inactive",
-                "updated_at": "2026-08-31T20:00:00+00:00",
-                "channel_id": "1279498",
-                "server_id": "7654321",
-                "session_id": None,
-                "error_code": None,
-                "stream_url": "rtmps://private.example/live?token=secret",
+                "phase": "waiting_credentials",
+                "updated_at": "2026-08-31T20:01:00+00:00",
             }
         ),
         encoding="utf-8",
     )
     wang.room_voice_monitor_status_path.chmod(0o600)
     session_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-    session_dir = configured.room_voice_path / session_id
-    session_dir.mkdir(mode=0o700)
-    state_path = session_dir / "session.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "session_id": session_id,
-                "monitor_id": "wang-ruiqi",
-                "member_name": "王睿琦",
-                "status": "completed",
-                "segment_count": 1,
-                "total_bytes": 42,
-                "participants": [
-                    {
-                        "name": "private guest",
-                        "token": "private participant token",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
+    write_capture_session(
+        configured,
+        session_id,
+        extra_state={
+            "stream": {
+                "host": "history-stream.example",
+                "url": "rtmps://history-stream.example/live?token=secret",
+            },
+            "stream_sha256": "e" * 64,
+            "participants": [{"user_id": "private-guest"}],
+        },
     )
-    state_path.chmod(0o600)
+    save_pa_signing_seed(
+        configured.pocket48_pa_signing_seed_path,
+        SecretStr("private-pa-seed"),
+    )
+    save_pending_login(
+        configured.room_voice_login_pending_path,
+        PendingRoomVoiceLogin(
+            app_info={"deviceId": "PRIVATE-DEVICE"},
+            user_agent="private-agent",
+            created_at=datetime.now(UTC),
+            challenge=PendingChallenge(
+                question="private challenge", options=("secret option",)
+            ),
+        ),
+    )
 
-    with TestClient(app) as alice:
-        login(alice, "alice", "alice has a secure password")
-        page = alice.get("/admin/room-voice")
+    with TestClient(app) as visitor:
+        page = visitor.get("/room-voice")
 
     assert page.status_code == 200
-    assert page.text.count("杨晔") >= 1
-    assert page.text.count("王睿琦") >= 2
-    assert "1279498" in page.text
-    assert "7654321" in page.text
-    assert "wang-ruiqi" in page.text
-    assert "private guest" not in page.text
-    assert "private participant token" not in page.text
-    assert "private.example" not in page.text
+    assert "本页公开展示" in page.text
+    assert "杨晔" in page.text
+    assert "王睿琦" in page.text
+    assert "recording" in page.text
+    assert "407126" in page.text
+    assert "530390" in page.text
+    assert "7587624" in page.text
+    assert "6227955" in page.text
+    segment_url = (
+        f"/room-voice/{session_id}/segments/segment-000000.mp3"
+    )
+    assert f'<audio controls preload="none" src="{segment_url}">' in page.text
+    assert f'href="{segment_url}"' in page.text
+    assert 'action="/admin/room-voice/sms"' not in page.text
+    assert 'action="/admin/room-voice/login"' not in page.text
+    assert "监控账号维护" not in page.text
+    for secret in (
+        "PA 签名种子",
+        "监控凭证",
+        "private challenge",
+        "secret option",
+        "private-stream.example",
+        "history-stream.example",
+        "private-guest",
+        "PRIVATE-DEVICE",
+        "private-agent",
+        "private-pa-seed",
+        "waiting_credentials",
+        "live?token=secret",
+        "f" * 64,
+        "e" * 64,
+    ):
+        assert secret not in page.text
+
+
+def test_admin_room_voice_redirect_is_public(settings, repository):
+    app = make_admin_app(settings, repository)
+    with TestClient(app) as visitor:
+        response = visitor.get(
+            "/admin/room-voice?notice=sms-sent",
+            follow_redirects=False,
+        )
+        assert response.status_code == 307
+        assert response.headers["location"] == (
+            "/room-voice?notice=sms-sent"
+        )
+
+
+@pytest.mark.parametrize(
+    ("username", "password", "expected"),
+    [
+        (None, None, 303),
+        ("bob", "bob also has secure password", 403),
+        ("alice", "alice has a secure password", 403),
+    ],
+)
+def test_only_ruoke_can_invoke_room_voice_activation(
+    settings, repository, username, password, expected
+):
+    app = make_admin_app(settings, repository)
+    service = FakeRoomVoiceAdmin()
+    app.state.room_voice_admin = service
+    with TestClient(app) as client:
+        if username:
+            login(client, username, password)
+        page = client.get("/room-voice")
+        assert page.status_code == 200
+        assert "监控账号维护" not in page.text
+        for path, data in (
+            (
+                "/admin/room-voice/sms",
+                {"area": "86", "mobile": "13800138000"},
+            ),
+            (
+                "/admin/room-voice/login",
+                {
+                    "area": "86",
+                    "mobile": "13800138000",
+                    "code": "123456",
+                },
+            ),
+        ):
+            response = client.post(path, data=data, follow_redirects=False)
+            assert response.status_code == expected
+    assert service.sms_calls == []
+    assert service.login_calls == []
+
+
+def test_ruoke_sees_controls_and_posts_with_csrf(
+    settings, repository
+):
+    app = make_admin_app(settings, repository)
+    service = FakeRoomVoiceAdmin()
+    app.state.room_voice_admin = service
+
+    with TestClient(app) as ruoke:
+        login(ruoke, "ruoke", "ruoke has a secure password")
+        page = ruoke.get("/room-voice")
+        assert page.status_code == 200
+        assert "监控账号维护" in page.text
+        assert 'action="/admin/room-voice/sms"' in page.text
+        assert 'action="/admin/room-voice/login"' in page.text
+        assert 'value="13800138000"' not in page.text
+        assert 'value="123456"' not in page.text
+        csrf = ruoke.cookies["p48_csrf"]
+        sent = ruoke.post(
+            "/admin/room-voice/sms",
+            data={
+                "_csrf": csrf,
+                "area": "86",
+                "mobile": "13800138000",
+            },
+            follow_redirects=False,
+        )
+        completed = ruoke.post(
+            "/admin/room-voice/login",
+            data={
+                "_csrf": csrf,
+                "area": "86",
+                "mobile": "13800138000",
+                "code": "123456",
+            },
+            follow_redirects=False,
+        )
+    assert sent.status_code == 303
+    assert sent.headers["location"] == "/room-voice?notice=sms-sent"
+    assert completed.status_code == 303
+    assert completed.headers["location"] == (
+        "/room-voice?notice=login-success"
+    )
+    assert service.sms_calls == [
+        {
+            "area": "86",
+            "mobile": "13800138000",
+            "challenge_answer": None,
+        }
+    ]
+    assert service.login_calls == [
+        {"area": "86", "mobile": "13800138000", "code": "123456"}
+    ]
+
+
+def test_public_segment_serves_finalized_mp3_and_range(
+    settings, repository
+):
+    app = make_admin_app(settings, repository)
+    configured = app.state.settings
+    session_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    write_capture_session(configured, session_id)
+    url = f"/room-voice/{session_id}/segments/segment-000000.mp3"
+
+    with TestClient(app) as visitor:
+        response = visitor.get(url)
+        ranged = visitor.get(url, headers={"Range": "bytes=1-3"})
+
+    assert response.status_code == 200
+    assert response.content == b"mp3-0"
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.headers["content-disposition"].startswith("inline;")
+    assert ranged.status_code == 206
+    assert ranged.content == b"p3-"
+    assert ranged.headers["content-range"] == "bytes 1-3/5"
+
+
+def test_public_segment_rejects_invalid_or_unsafe_paths(
+    settings, repository, monkeypatch
+):
+    app = make_admin_app(settings, repository)
+    configured = app.state.settings
+    session_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    session_dir = write_capture_session(configured, session_id)
+    valid_url = (
+        f"/room-voice/{session_id}/segments/segment-000000.mp3"
+    )
+
+    assert safe_capture_segment_path(
+        configured.room_voice_path, session_id, "../session.json"
+    ) is None
+    with TestClient(app) as visitor:
+        assert visitor.get(
+            "/room-voice/not-a-uuid/segments/segment-000000.mp3"
+        ).status_code == 404
+        assert visitor.get(
+            "/room-voice/eeeeeeeeeeee4eee8eeeeeeeeeeeeeee/"
+            "segments/segment-000000.mp3"
+        ).status_code == 404
+        assert visitor.get(
+            f"/room-voice/{session_id}/segments/not-an-mp3.txt"
+        ).status_code == 404
+
+        segment = session_dir / "segments" / "segment-000000.mp3"
+        segments_dir = segment.parent
+        segments_dir.chmod(0o755)
+        assert visitor.get(valid_url).status_code == 404
+        segments_dir.chmod(0o700)
+
+        segment.chmod(0o644)
+        assert visitor.get(valid_url).status_code == 404
+        segment.chmod(0o600)
+        segment.write_bytes(b"")
+        assert visitor.get(valid_url).status_code == 404
+        segment.write_bytes(b"mp3-0")
+        segment.chmod(0o600)
+
+        state_path = session_dir / "session.json"
+        state_path.chmod(0o644)
+        assert visitor.get(valid_url).status_code == 404
+        state_path.chmod(0o600)
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["status"] = "unsafe"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        state_path.chmod(0o600)
+        assert visitor.get(valid_url).status_code == 404
+
+        state["status"] = "completed"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        state_path.chmod(0o600)
+        state_path.unlink()
+        assert visitor.get(valid_url).status_code == 404
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        state_path.chmod(0o600)
+
+        monkeypatch.setattr(os, "getuid", lambda: state_path.stat().st_uid + 1)
+        assert visitor.get(valid_url).status_code == 404
+
+
+def test_public_segment_rejects_symlinks_and_active_last_segment(
+    settings, repository
+):
+    app = make_admin_app(settings, repository)
+    configured = app.state.settings
+    active_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    active_dir = write_capture_session(
+        configured,
+        active_id,
+        status="recording",
+        segment_names=(
+            "segment-000000.mp3",
+            "segment-000001.mp3",
+        ),
+    )
+    earlier_url = (
+        f"/room-voice/{active_id}/segments/segment-000000.mp3"
+    )
+    current_url = (
+        f"/room-voice/{active_id}/segments/segment-000001.mp3"
+    )
+    symlink_name = "segment-000002.mp3"
+    (
+        active_dir / "segments" / symlink_name
+    ).symlink_to(active_dir / "segments" / "segment-000000.mp3")
+    (active_dir / "segments" / "segment-000001.mp3").chmod(0o644)
+
+    target_id = "11111111-1111-4111-8111-111111111111"
+    target_dir = write_capture_session(configured, target_id)
+    symlink_id = "22222222-2222-4222-8222-222222222222"
+    (configured.room_voice_path / symlink_id).symlink_to(
+        target_dir, target_is_directory=True
+    )
+
+    with TestClient(app) as visitor:
+        assert visitor.get(earlier_url).status_code == 200
+        assert visitor.get(current_url).status_code == 404
+        assert visitor.get(
+            f"/room-voice/{active_id}/segments/{symlink_name}"
+        ).status_code == 404
+        assert visitor.get(
+            f"/room-voice/{symlink_id}/segments/segment-000000.mp3"
+        ).status_code == 404
+    active_sessions = list_safe_capture_sessions(
+        configured.room_voice_path
+    )
+    active = next(
+        session
+        for session in active_sessions
+        if session.session_id == active_id
+    )
+    assert [segment.name for segment in active.segments] == [
+        "segment-000000.mp3"
+    ]
+
+
+def test_public_history_bounds_segments_and_supports_old_primary(
+    settings,
+):
+    settings.prepare_directories()
+    old_id = "33333333-3333-4333-8333-333333333333"
+    old_dir = write_capture_session(
+        settings,
+        old_id,
+        monitor_id=None,
+        member_name=None,
+        segment_names=tuple(
+            f"segment-{index:06d}.mp3" for index in range(101)
+        ),
+    )
+    state_path = old_dir / "session.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("monitor_id")
+    state.pop("member_name")
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    state_path.chmod(0o600)
+
+    sessions = list_safe_capture_sessions(settings.room_voice_path)
+    assert sessions[0].monitor_id == "primary"
+    assert sessions[0].member_name is None
+    assert len(sessions[0].segments) == 100
+    assert sessions[0].segments[-1].name == "segment-000099.mp3"
 
 
 def test_route_challenge_and_login_never_render_secrets(
@@ -667,10 +991,10 @@ def test_route_challenge_and_login_never_render_secrets(
     token = "private-route-token"
 
     with caplog.at_level(logging.DEBUG):
-        with TestClient(app) as alice:
-            login(alice, "alice", "alice has a secure password")
-            csrf = alice.cookies.get("p48_csrf")
-            challenge = alice.post(
+        with TestClient(app) as ruoke:
+            login(ruoke, "ruoke", "ruoke has a secure password")
+            csrf = ruoke.cookies.get("p48_csrf")
+            challenge = ruoke.post(
                 "/admin/room-voice/sms",
                 data={
                     "_csrf": csrf,
@@ -680,11 +1004,11 @@ def test_route_challenge_and_login_never_render_secrets(
                 follow_redirects=False,
             )
             assert challenge.status_code == 303
-            challenge_page = alice.get(challenge.headers["location"])
+            challenge_page = ruoke.get(challenge.headers["location"])
             assert "请选择 A 或 B" in challenge_page.text
             assert phone not in challenge_page.text
 
-            cooldown = alice.post(
+            cooldown = ruoke.post(
                 "/admin/room-voice/sms",
                 data={
                     "_csrf": csrf,
@@ -697,7 +1021,7 @@ def test_route_challenge_and_login_never_render_secrets(
 
             now += timedelta(seconds=61)
             FakeAuthClient.sms_result = SmsSendResult(sent=True)
-            sent = alice.post(
+            sent = ruoke.post(
                 "/admin/room-voice/sms",
                 data={
                     "_csrf": csrf,
@@ -709,7 +1033,7 @@ def test_route_challenge_and_login_never_render_secrets(
             )
             assert sent.status_code == 303
 
-            logged_in = alice.post(
+            logged_in = ruoke.post(
                 "/admin/room-voice/login",
                 data={
                     "_csrf": csrf,
@@ -720,9 +1044,9 @@ def test_route_challenge_and_login_never_render_secrets(
                 follow_redirects=False,
             )
             assert logged_in.status_code == 303
-            page = alice.get(logged_in.headers["location"])
+            page = ruoke.get(logged_in.headers["location"])
             assert "监控进程会热加载凭证" in page.text
-            assert "/admin/room-voice" in alice.get("/").text
+            assert "/room-voice" in ruoke.get("/").text
 
     combined = "\n".join(record.getMessage() for record in caplog.records)
     for secret in (phone, code, token, "reviewed-seed"):

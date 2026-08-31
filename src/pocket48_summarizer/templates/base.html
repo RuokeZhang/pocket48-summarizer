@@ -23,9 +23,7 @@
         <div class="account-actions">
           <span class="local-pill">{{ current_user.username }}</span>
           <a class="header-pill" href="/glossary" data-i18n="glossaryNav">词库</a>
-          {% if current_user.is_admin %}
-            <a class="header-pill" href="/admin/room-voice">房间上麦监控</a>
-          {% endif %}
+          <a class="header-pill" href="/room-voice">上麦记录</a>
           {% if csrf_token %}
             <form action="/logout" method="post">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -42,6 +40,7 @@
       {% else %}
         <div class="account-actions">
           <a class="header-pill" href="/glossary" data-i18n="glossaryNav">词库</a>
+          <a class="header-pill" href="/room-voice">上麦记录</a>
           <a class="header-pill" href="/login" data-i18n="login">登录</a>
           <button
             id="language-toggle"

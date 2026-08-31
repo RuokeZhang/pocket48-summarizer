@@ -116,6 +116,10 @@ def create_app(
             status = 403
         if exc.code == "admin_required":
             status = 403
+        if exc.code == "room_voice_operator_required":
+            status = 403
+        if exc.code == "room_voice_segment_not_found":
+            status = 404
         if exc.code == "daily_quota_exceeded":
             status = 429
         if exc.code == "room_voice_sms_cooldown":
