@@ -52,6 +52,7 @@ if [[ ! -L "$target_link" ]]; then
 fi
 target_release="$(readlink -f "$target_link")"
 target_commit="$(basename "$target_release")"
+install_release_units "$target_release"
 
 activate_clip_maintenance
 wait_for_status_zero video_clips "$clip_drain_seconds"
@@ -105,9 +106,24 @@ else
   fi
 fi
 
+if switch_voice_monitor_release "$target_release"; then
+  systemctl enable pocket48-voice-monitor.service >/dev/null
+  voice_monitor_result="updated"
+else
+  voice_monitor_status=$?
+  if [[ "$voice_monitor_status" -eq 3 ]]; then
+    voice_monitor_result="disabled (target release has no monitor)"
+  else
+    voice_monitor_result="failed (previous monitor restored when available)"
+    voice_monitor_failed=true
+  fi
+fi
+
 echo "Rollback complete"
 echo "  active slot: $target_slot"
 echo "  worker: $worker_result"
-if [[ "${worker_failed:-false}" == true ]]; then
+echo "  voice monitor: $voice_monitor_result"
+if [[ "${worker_failed:-false}" == true \
+  || "${voice_monitor_failed:-false}" == true ]]; then
   exit 1
 fi

@@ -11,9 +11,10 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
 ## 功能边界
 
 - 主站目前仅处理无需登录即可访问的已结束公开回放。
-- 房间上麦仍是默认关闭的实验性 POC：仓库只提供显式确认后的一次性
-  手动短信登录、私有账号查询和可选 60 秒本地录音探针，不会自动重发
-  短信、无人值守重新登录、常驻轮询或把私有录音发布到网站。
+- 房间上麦仍是默认关闭的实验性 POC：仓库提供显式确认后的一次性
+  手动短信登录、私有账号查询、可选 60 秒本地录音探针，以及独立运行的
+  capture-first 本地监控进程。监控不会自动重发短信、无人值守重新登录、
+  调用 ASR/LLM、上传录音或把私有录音发布到网站。
 - 不永久保存原始整场视频；通过 FFmpeg 从 HLS 直接提取临时音频。
 - 字幕由可配置的阿里云百炼 DashScope 非实时语音识别模型生成。
 - 总结通过可配置的 OpenAI-compatible `/chat/completions` API 生成。
@@ -55,8 +56,9 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
 
 - 应用严格限制输入主机和 Pocket48 返回的媒体主机，不能作为任意 URL 代理。
 - FFmpeg 通过参数数组调用，不使用 shell。
-- 房间上麦探针不会输出 token、`pa`、完整 `appInfo` 或带查询参数的
-  RTMP 地址；未知流主机必须先加入本地允许列表才能交给 FFmpeg。
+- 房间上麦探针和监控不会输出 token、`pa`、完整 `appInfo` 或带查询参数的
+  RTMP 地址。监控默认只接受精确主机允许列表；显式允许公网主机时也会要求
+  DNS 的全部解析结果均为全局可路由地址，并限制协议和端口。
 - 应用不会在运行时自动下载或安装 FFmpeg、插件、Hook 或 MCP 集成；Chrome HLS 播放使用仓库内固定版本的 `hls.js`。
 - 请仅使用经过审核的 Python 包和系统软件来源。
 - 阿里云请使用仅能访问指定私有 Bucket/前缀的 RAM 用户，不要使用主账号 AccessKey。
@@ -290,6 +292,66 @@ P48_RECORD_ROOM_VOICE_PROBE=I_UNDERSTAND_THIS_RECORDS_PRIVATE_AUDIO
 可以读取现成凭证，也可以通过一次明确确认的手动短信登录取得 token。
 仓库独立生成动态 `pa`，不包含或执行第三方 WASM、自动验证码输入、
 短信重发、无人值守登录或账号安全绕过代码。
+
+### Capture-first 房间上麦监控
+
+独立监控进程只轮询一个已经明确配置的房间。它启动后会立即写 readiness；
+如果下面两个本地 `0600` 文件或目标 ID 尚未准备好，则安静等待，不影响
+Web/Worker 启动：
+
+- `data/private/room-voice-pa-signing.json`
+- `data/private/room-voice-credentials.json`
+
+配置示例：
+
+```dotenv
+POCKET48_VOICE_MEMBER_ID=407126
+POCKET48_VOICE_MEMBER_NAME=杨晔
+POCKET48_VOICE_CHANNEL_ID=7587624
+POCKET48_VOICE_SERVER_ID=6227955
+POCKET48_VOICE_STREAM_HOSTS=已人工核验的精确流主机
+POCKET48_VOICE_POLL_SECONDS=60
+POCKET48_VOICE_POLL_JITTER_SECONDS=5
+POCKET48_VOICE_MAX_RECORDING_HOURS=4
+POCKET48_VOICE_SEGMENT_SECONDS=300
+POCKET48_VOICE_MAX_LOCAL_BYTES=2147483648
+POCKET48_VOICE_MAX_TOTAL_BYTES=21474836480
+POCKET48_VOICE_MIN_FREE_BYTES=5368709120
+POCKET48_VOICE_ALLOW_PUBLIC_STREAM_HOSTS=false
+```
+
+本地启动：
+
+```bash
+pocket48-voice-monitor
+```
+
+生产环境可以先启动独立监控进程；私有凭证尚未创建时，其状态会保持为
+`waiting_credentials`。管理员登录 Web 后访问 `/admin/room-voice`，明确
+提交一次手机号以发送短信，再在 10 分钟内明确提交手机号和验证码完成登录。
+首次发送前，服务只会下载仓库中固定的 HTTPS GitHub raw URL，禁止重定向，
+最多读取 128 KiB，并校验完整 SHA-256 后保存已审查的 PA 签名常量。它不会
+执行下载内容，也不会保存或回显手机号、验证码、人机验证答案、PA 或 token。
+
+成功登录只会原子替换 `data/private/room-voice-credentials.json`（`0600`）。
+监控进程会热加载该文件，并在下一轮自动开始查询，无需重启。管理页只显示
+私有文件权限状态、脱敏后的监控阶段和最近 20 个采集摘要。短信请求至少间隔
+60 秒，系统不会自动发送、重发、轮询登录或自动登录。由于账号为单活会话，
+生产激活会让同账号的官方手机 App 退出。
+
+录音只保存在
+`data/room-voice/<session-uuid>/segments/segment-%06d.mp3`。每个会话的
+`session.json` 只记录脱敏后的主机、协议、端口、流指纹、分段统计和状态，
+不保存原始流 URL、查询参数或上麦参与者标识。默认每 60 秒加最多 5 秒随机
+抖动查询一次，MP3 使用 192 kbps、每 5 分钟滚动分段，单次最长 4 小时，
+单次会话达到 2 GiB 时终止并保留已完成分段。历史录音总量达到
+20 GiB，或磁盘无法在预留 5 GiB 后容纳一场最长录音时，监控会进入
+`storage_limit`，不删除已有录音，也不会继续写满系统盘。
+
+token 返回 `401004` 或 HTTP 认证失败后，监控会停止发送请求，直到管理员
+人工替换凭证文件。进程重启会把遗留的 `recording` 会话标记为
+`interrupted`，不会删除音频；同一流仍活跃时也不会立即创建重复会话。
+此 capture-first 核心不构造数据库、DashScope、LLM、OSS 或剪辑服务。
 
 若目标房间当前无人上麦，可运行一次性账号范围扫描。它先用批量接口加载
 账号可见的成员/房间映射，再以每秒最多一次的速度检查，发现第一个可录制

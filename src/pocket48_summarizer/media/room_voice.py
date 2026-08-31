@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from ..config import Settings
 from ..errors import AppError, ConfigurationError
-from ..security import redact_url, validate_room_voice_stream_url
+from ..security import (
+    inspect_room_voice_stream_url,
+    redact_url,
+    validate_room_voice_stream_url,
+)
+
+ROOM_VOICE_PROTOCOL_WHITELIST = (
+    "tcp,tls,rtmp,rtmps"
+)
 
 
 class RoomVoiceProbeRecorder:
@@ -35,7 +45,7 @@ class RoomVoiceProbeRecorder:
             "-loglevel",
             "error",
             "-protocol_whitelist",
-            "file,http,https,tcp,tls,crypto,rtmp,rtmps",
+            ROOM_VOICE_PROTOCOL_WHITELIST,
             "-rw_timeout",
             "15000000",
             "-i",
@@ -130,3 +140,117 @@ class RoomVoiceProbeRecorder:
         temporary_path.chmod(0o600)
         temporary_path.replace(output_path)
         return output_path
+
+
+class RollingProcess(Protocol):
+    returncode: int | None
+
+    async def wait(self) -> int: ...
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
+
+
+@dataclass(slots=True)
+class RoomVoiceRollingProcess:
+    process: asyncio.subprocess.Process
+
+    @property
+    def returncode(self) -> int | None:
+        return self.process.returncode
+
+    async def wait(self) -> int:
+        return await self.process.wait()
+
+    def terminate(self) -> None:
+        self.process.terminate()
+
+    def kill(self) -> None:
+        self.process.kill()
+
+
+class RoomVoiceRollingRecorder:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def build_command(
+        self,
+        stream_url: str,
+        session_path: Path,
+        *,
+        duration_seconds: int,
+        segment_seconds: int,
+    ) -> list[str]:
+        inspect_room_voice_stream_url(stream_url)
+        if duration_seconds <= 0 or segment_seconds <= 0:
+            raise AppError(
+                "invalid_room_voice_recording_limits",
+                "房间上麦录音时长和分段时长必须为正数",
+                False,
+            )
+        session_path = session_path.resolve()
+        segment_path = (session_path / "segments").resolve()
+        if segment_path.parent != session_path:
+            raise ConfigurationError("房间上麦录音目录无效")
+        executable = self.settings.ffmpeg_executable()
+        if not executable:
+            raise ConfigurationError(
+                "FFmpeg 未安装或 FFMPEG_PATH 无效，无法录制房间上麦音频"
+            )
+        return [
+            executable,
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            ROOM_VOICE_PROTOCOL_WHITELIST,
+            "-rw_timeout",
+            "15000000",
+            "-i",
+            stream_url,
+            "-t",
+            str(duration_seconds),
+            "-vn",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            "-f",
+            "segment",
+            "-segment_time",
+            str(segment_seconds),
+            "-segment_format",
+            "mp3",
+            "-reset_timestamps",
+            "1",
+            "-y",
+            str(segment_path / "segment-%06d.mp3"),
+        ]
+
+    async def start(
+        self,
+        stream_url: str,
+        session_path: Path,
+        *,
+        duration_seconds: int,
+        segment_seconds: int,
+    ) -> RollingProcess:
+        session_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        session_path.chmod(0o700)
+        segment_path = session_path / "segments"
+        segment_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        segment_path.chmod(0o700)
+        command = self.build_command(
+            stream_url,
+            session_path,
+            duration_seconds=duration_seconds,
+            segment_seconds=segment_seconds,
+        )
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        return RoomVoiceRollingProcess(process)

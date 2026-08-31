@@ -6,6 +6,7 @@ REPOSITORY_DIR="/opt/pocket48-summarizer"
 RELEASES_DIR="/opt/pocket48-summarizer-releases"
 SLOTS_DIR="/opt/pocket48-summarizer-slots"
 WORKER_LINK="/opt/pocket48-summarizer-worker"
+VOICE_MONITOR_LINK="/opt/pocket48-summarizer-voice-monitor"
 DATA_DIR="/var/lib/pocket48-summarizer"
 DATABASE="$DATA_DIR/pocket48.sqlite3"
 DEPLOY_STATE_DIR="$DATA_DIR/deploy"
@@ -15,6 +16,8 @@ PREVIOUS_SLOT_FILE="$DEPLOY_STATE_DIR/previous-slot"
 CLIP_MAINTENANCE_FILE="$RUNTIME_DIR/clip-maintenance"
 WORKER_MAINTENANCE_FILE="$RUNTIME_DIR/worker-maintenance"
 WORKER_READY_FILE="$RUNTIME_DIR/worker-ready"
+VOICE_MONITOR_READY_FILE="$RUNTIME_DIR/room-voice-monitor-ready"
+VOICE_MONITOR_STATUS_FILE="$RUNTIME_DIR/room-voice-monitor-status.json"
 CLIP_OPERATION_LOCK="$RUNTIME_DIR/clip-operation.lock"
 WORKER_OPERATION_LOCK="$RUNTIME_DIR/worker-operation.lock"
 UPSTREAM_FILE="/etc/caddy/pocket48-upstream.caddy"
@@ -198,6 +201,33 @@ atomic_symlink() {
   fi
 }
 
+install_release_units() {
+  local release_dir="$1"
+  local source
+  local destination
+  for source in \
+    deploy/systemd/pocket48-web@.service \
+    deploy/systemd/pocket48-worker.service; do
+    if [[ -f "$release_dir/$source" ]]; then
+      destination="/etc/systemd/system/${source##*/}"
+      install -m 0644 "$release_dir/$source" "$destination"
+    fi
+  done
+  systemctl daemon-reload
+}
+
+restore_voice_monitor_unit() {
+  local backup="$1"
+  local had_previous="$2"
+  if [[ "$had_previous" == true ]]; then
+    install -m 0644 "$backup" \
+      /etc/systemd/system/pocket48-voice-monitor.service
+  else
+    rm -f /etc/systemd/system/pocket48-voice-monitor.service
+  fi
+  systemctl daemon-reload
+}
+
 wait_for_status_zero() {
   local table="$1"
   local timeout_seconds="$2"
@@ -375,4 +405,121 @@ switch_worker_release() {
     return 1
   fi
   rm -f "$WORKER_MAINTENANCE_FILE"
+}
+
+switch_voice_monitor_release() {
+  local release_dir
+  release_dir="$(readlink -f "$1")"
+  local previous=""
+  local had_previous=false
+  local monitor_ready=false
+  local unit_backup=""
+  local had_previous_unit=false
+  local candidate_unit="$release_dir/deploy/systemd/pocket48-voice-monitor.service"
+
+  if [[ ! -x "$release_dir/.venv/bin/pocket48-voice-monitor" \
+    || ! -f "$candidate_unit" ]]; then
+    systemctl disable --now pocket48-voice-monitor.service || true
+    rm -f "$VOICE_MONITOR_READY_FILE"
+    rm -f "$VOICE_MONITOR_LINK"
+    return 3
+  fi
+  if [[ -L "$VOICE_MONITOR_LINK" ]]; then
+    if ! previous="$(readlink -f "$VOICE_MONITOR_LINK")"; then
+      return 1
+    fi
+    if [[ -x "$previous/.venv/bin/pocket48-voice-monitor" ]]; then
+      had_previous=true
+    else
+      rm -f "$VOICE_MONITOR_LINK"
+    fi
+  fi
+  unit_backup="$(mktemp)"
+  if [[ -f /etc/systemd/system/pocket48-voice-monitor.service ]]; then
+    if ! cp /etc/systemd/system/pocket48-voice-monitor.service \
+      "$unit_backup"; then
+      rm -f "$unit_backup"
+      return 1
+    fi
+    had_previous_unit=true
+  fi
+  if ! rm -f "$VOICE_MONITOR_READY_FILE"; then
+    rm -f "$unit_backup"
+    return 1
+  fi
+  if [[ "$had_previous_unit" == true ]]; then
+    if ! systemctl stop pocket48-voice-monitor.service \
+      || systemctl is-active --quiet \
+        pocket48-voice-monitor.service; then
+      rm -f "$unit_backup"
+      return 1
+    fi
+  fi
+  if ! install -m 0644 "$candidate_unit" \
+    /etc/systemd/system/pocket48-voice-monitor.service \
+    || ! systemctl daemon-reload; then
+    restore_voice_monitor_unit "$unit_backup" "$had_previous_unit" || true
+    if [[ "$had_previous" == true ]]; then
+      systemctl start pocket48-voice-monitor.service || true
+    fi
+    rm -f "$unit_backup"
+    return 1
+  fi
+  if ! atomic_symlink "$release_dir" "$VOICE_MONITOR_LINK"; then
+    restore_voice_monitor_unit "$unit_backup" "$had_previous_unit" || true
+    systemctl start pocket48-voice-monitor.service || true
+    rm -f "$unit_backup"
+    return 1
+  fi
+  if ! systemctl start pocket48-voice-monitor.service; then
+    restore_voice_monitor_unit "$unit_backup" "$had_previous_unit" || true
+    if [[ "$had_previous" == true ]] \
+      && atomic_symlink "$previous" "$VOICE_MONITOR_LINK"; then
+      systemctl start pocket48-voice-monitor.service || true
+    else
+      rm -f "$VOICE_MONITOR_LINK"
+    fi
+    rm -f "$unit_backup"
+    return 1
+  fi
+  for _ in $(seq 1 30); do
+    if systemctl is-active --quiet pocket48-voice-monitor.service \
+      && [[ -f "$VOICE_MONITOR_READY_FILE" ]] \
+      && [[ "$(< "$VOICE_MONITOR_READY_FILE")" == "$release_dir" ]] \
+      && ! grep -Eq \
+        '"error_code":[[:space:]]*"configuration_error"' \
+        "$VOICE_MONITOR_STATUS_FILE" 2>/dev/null; then
+      monitor_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$monitor_ready" == true ]]; then
+    for _ in $(seq 1 5); do
+      sleep 2
+      if ! systemctl is-active --quiet pocket48-voice-monitor.service \
+        || [[ ! -f "$VOICE_MONITOR_READY_FILE" ]] \
+        || [[ "$(< "$VOICE_MONITOR_READY_FILE")" != "$release_dir" ]] \
+        || grep -Eq \
+          '"error_code":[[:space:]]*"configuration_error"' \
+          "$VOICE_MONITOR_STATUS_FILE" 2>/dev/null; then
+        monitor_ready=false
+        break
+      fi
+    done
+  fi
+  if [[ "$monitor_ready" != true ]]; then
+    systemctl stop pocket48-voice-monitor.service || true
+    restore_voice_monitor_unit "$unit_backup" "$had_previous_unit" || true
+    if [[ "$had_previous" == true ]] \
+      && atomic_symlink "$previous" "$VOICE_MONITOR_LINK"; then
+      systemctl start pocket48-voice-monitor.service || true
+    else
+      rm -f "$VOICE_MONITOR_LINK"
+    fi
+    rm -f "$unit_backup"
+    return 1
+  fi
+  rm -f "$unit_backup"
+  return 0
 }

@@ -30,6 +30,7 @@ test = [
 [project.scripts]
 pocket48-summarizer = "pocket48_summarizer.cli:main"
 pocket48-worker = "pocket48_summarizer.worker_cli:main"
+pocket48-voice-monitor = "pocket48_summarizer.voice_monitor_cli:main"
 pocket48-users = "pocket48_summarizer.manage:main"
 
 [tool.setuptools.packages.find]

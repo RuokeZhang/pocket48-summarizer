@@ -40,6 +40,23 @@ AI 封面，再填写 Ark 的 `ARK_API_KEY` 和控制台显示的实际
 和浏览器读取短期签名 URL。剪辑上传到独立的
 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
 
+房间上麦监控使用独立的 `pocket48-voice-monitor.service`，固定每
+60 秒检查杨晔房间并在检测到流后写入 5 分钟 MP3 分段。目标 ID 和
+单次 4 小时/2 GiB、历史总量 20 GiB 和磁盘预留 5 GiB 的安全上限
+来自仓库内不含秘密且由 release 管理的
+`deploy/room-voice-target.env`；token 和动态 `pa` 种子只写入
+`/var/lib/pocket48-summarizer/private/` 的 `0600` 文件。首次部署后
+服务会以 `waiting_credentials` 保持就绪。管理员登录网站后打开
+`/admin/room-voice`，明确发送一次短信并提交验证码；成功后 monitor
+会热加载凭证，无需 SSH 或重启服务。该登录会让同一账号的官方手机 App
+退出，手机 App 再登录也会使 monitor 凭证失效。
+
+首个真实上麦流出现前无法预先知道 CDN 主机，因此生产 target 文件显式
+允许仅解析到全局公网地址、且端口为 1935/443 的 RTMP/RTMPS 主机；
+FFmpeg 同时只启用 `tcp,tls,rtmp,rtmps` 协议。首次采集后应把脱敏状态
+中显示的主机加入 `POCKET48_VOICE_STREAM_HOSTS`，再在后续 release 中
+关闭公网主机回退。
+
 AI 封面会把 MARK 原始帧临时写入该私有前缀，并向 Ark 提供短期签名
 HTTPS URL；生成结束后应用删除临时帧，长期保留两种比例的无文字背景和
 最终叠字 PNG。Ark Key、签名 URL 和 OSS 对象 Key 不会发送到浏览器。
@@ -120,7 +137,7 @@ curl --fail https://p48.ruokezhang.com/healthz
 
 ## 6. 蓝绿发布与回滚
 
-发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑、边界分析和 AI 封面写操作会短暂返回维护提示。脚本先取得剪辑操作锁，再同时排空旧 `video_clips`、新 `video_clip_exports` 的运行任务，以及 `ai_cover_generations` 的排队/运行任务，避免在 FFmpeg、静音分析、付费 Seedream 请求或本地叠字期间切槽。独立 Worker 会在当前直播任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务和翻译任务并重新排队；任务已持久化的 DashScope ID、总结分块和英文字幕片段会继续复用，不会从头重复提交。
+发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑、边界分析和 AI 封面写操作会短暂返回维护提示。脚本先取得剪辑操作锁，再同时排空旧 `video_clips`、新 `video_clip_exports` 的运行任务，以及 `ai_cover_generations` 的排队/运行任务，避免在 FFmpeg、静音分析、付费 Seedream 请求或本地叠字期间切槽。独立 Worker 会在当前直播任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务和翻译任务并重新排队；任务已持久化的 DashScope ID、总结分块和英文字幕片段会继续复用，不会从头重复提交。独立房间上麦 monitor 也会切换到同一 release；若发布时正在录音，SIGINT 会先保留已完成分段，新进程随后可以继续采集仍在进行的同一条流。
 
 推荐使用手动触发的 GitHub Actions 工作流。一次性初始化会生成独立部署密钥；该密钥在服务器端绑定强制命令，只能部署已经进入 `origin/main` 的完整提交 SHA，不能打开任意 root shell，也不会把现有管理员 SSH 私钥上传到 GitHub：
 
@@ -160,8 +177,10 @@ Migration 必须采用 expand/contract：发布时只新增兼容字段或表，
 ## 7. 运维
 
 ```bash
-sudo systemctl status 'pocket48-web@*' pocket48-worker caddy
+sudo systemctl status 'pocket48-web@*' pocket48-worker \
+  pocket48-voice-monitor caddy
 sudo journalctl -u pocket48-worker -n 200 --no-pager
+sudo journalctl -u pocket48-voice-monitor -n 200 --no-pager
 sudo systemctl list-timers pocket48-summarizer-backup.timer
 sudo ls -lh /var/backups/pocket48-summarizer
 ```

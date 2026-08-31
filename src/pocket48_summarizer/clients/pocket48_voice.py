@@ -169,7 +169,13 @@ class RoomVoiceContent(BaseModel):
     @field_validator("stream_url", mode="before")
     @classmethod
     def normalize_stream_url(cls, value: Any) -> str | None:
-        normalized = str(value or "").strip()
+        raw = str(value or "")
+        if len(raw) > 4096 or any(
+            ord(character) < 32 or ord(character) == 127
+            for character in raw
+        ):
+            raise ValueError("invalid room voice stream URL")
+        normalized = raw.strip()
         return normalized or None
 
     @field_validator("voice_users", mode="before")
@@ -380,10 +386,7 @@ class Pocket48VoiceClient:
     def _response_error(
         response: httpx.Response, envelope_status: int | None
     ) -> ExternalServiceError:
-        if (
-            response.status_code in {401, 403}
-            or envelope_status == 401004
-        ):
+        if response.status_code == 401 or envelope_status == 401004:
             return ExternalServiceError(
                 "room_voice_auth_required",
                 "口袋48账号 token 已失效；已停止，请人工重新登录",

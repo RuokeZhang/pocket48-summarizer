@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
@@ -56,6 +56,13 @@ from .models import (
     VideoClipExportRecord,
 )
 from .parsing.transcript import transcript_to_srt
+from .room_voice_admin import (
+    LOGIN_PENDING_MAX_AGE,
+    inspect_private_file,
+    list_safe_capture_sessions,
+    load_pending_login,
+    read_safe_monitor_status,
+)
 from .runtime_lock import shared_runtime_lock
 from .security import parse_share_url
 from .summarization.chunking import format_clock
@@ -730,6 +737,88 @@ async def glossary_admin_redirect(request: Request) -> Response:
     saved = request.query_params.get("saved")
     target = "/glossary" + (f"?saved={saved}" if saved else "")
     return RedirectResponse(target, status_code=307)
+
+
+@router.get("/admin/room-voice", response_class=HTMLResponse)
+async def room_voice_admin_page(request: Request) -> Response:
+    context = require_admin(request)
+    settings = request.app.state.settings
+    challenge = None
+    try:
+        pending = load_pending_login(
+            settings.room_voice_login_pending_path
+        )
+        age = datetime.now(UTC) - pending.created_at
+        if (
+            timedelta(0) <= age < LOGIN_PENDING_MAX_AGE
+            and pending.challenge is not None
+        ):
+            challenge = pending.challenge
+    except AppError:
+        pass
+    return request.app.state.templates.TemplateResponse(
+        request=request,
+        name="room_voice_admin.html",
+        context={
+            "current_user": context.user,
+            "csrf_token": context.csrf_token,
+            "notice": request.query_params.get("notice"),
+            "challenge": challenge,
+            "pa_file": inspect_private_file(
+                settings.pocket48_pa_signing_seed_path
+            ),
+            "credentials_file": inspect_private_file(
+                settings.pocket48_voice_credentials_path
+            ),
+            "monitor": read_safe_monitor_status(
+                settings.room_voice_monitor_status_path
+            ),
+            "sessions": list_safe_capture_sessions(
+                settings.room_voice_path, limit=20
+            ),
+            "target": {
+                "name": settings.pocket48_voice_member_name,
+                "member_id": settings.pocket48_voice_member_id,
+                "channel_id": settings.pocket48_voice_channel_id,
+                "server_id": settings.pocket48_voice_server_id,
+            },
+        },
+    )
+
+
+@router.post("/admin/room-voice/sms")
+async def room_voice_send_sms(request: Request) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    result = await request.app.state.room_voice_admin.send_sms(
+        area=form.get("area", ""),
+        mobile=form.get("mobile", ""),
+        challenge_answer=form.get("challenge_answer"),
+    )
+    notice = "sms-sent" if result.sent else "challenge"
+    return RedirectResponse(
+        f"/admin/room-voice?notice={notice}", status_code=303
+    )
+
+
+@router.post("/admin/room-voice/login")
+async def room_voice_complete_login(request: Request) -> Response:
+    context = require_admin(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    await request.app.state.room_voice_admin.complete_login(
+        area=form.get("area", ""),
+        mobile=form.get("mobile", ""),
+        code=form.get("code", ""),
+    )
+    return RedirectResponse(
+        "/admin/room-voice?notice=login-success", status_code=303
+    )
 
 
 @router.get("/glossary", response_class=HTMLResponse)

@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     pocket48_voice_pa: SecretStr | None = None
     pocket48_voice_app_info: SecretStr | None = None
     pocket48_voice_user_agent: str | None = None
+    pocket48_voice_member_name: str = "杨晔"
     pocket48_voice_member_id: str | None = None
     pocket48_voice_channel_id: str | None = None
     pocket48_voice_server_id: str | None = None
@@ -57,6 +58,34 @@ class Settings(BaseSettings):
         ge=1024,
         le=200 * 1024 * 1024,
     )
+    pocket48_voice_poll_seconds: int = Field(
+        default=60, ge=30, le=3600
+    )
+    pocket48_voice_poll_jitter_seconds: int = Field(
+        default=5, ge=0, le=60
+    )
+    pocket48_voice_max_recording_hours: float = Field(
+        default=4.0, gt=0, le=24
+    )
+    pocket48_voice_segment_seconds: int = Field(
+        default=300, ge=30, le=1800
+    )
+    pocket48_voice_max_local_bytes: int = Field(
+        default=2 * 1024 * 1024 * 1024,
+        ge=1024 * 1024,
+        le=20 * 1024 * 1024 * 1024,
+    )
+    pocket48_voice_max_total_bytes: int = Field(
+        default=20 * 1024 * 1024 * 1024,
+        ge=1024 * 1024,
+        le=1024 * 1024 * 1024 * 1024,
+    )
+    pocket48_voice_min_free_bytes: int = Field(
+        default=5 * 1024 * 1024 * 1024,
+        ge=1024 * 1024,
+        le=1024 * 1024 * 1024 * 1024,
+    )
+    pocket48_voice_allow_public_stream_hosts: bool = False
     member_catalog_url: str = (
         "https://h5.48.cn/resource/jsonp/"
         "allmembers_simple.php?gid=00"
@@ -189,6 +218,22 @@ class Settings(BaseSettings):
                 "or equal to LLM_MAX_OUTPUT_TOKENS"
             )
         if (
+            self.pocket48_voice_poll_jitter_seconds
+            > self.pocket48_voice_poll_seconds
+        ):
+            raise ValueError(
+                "POCKET48_VOICE_POLL_JITTER_SECONDS must not exceed "
+                "POCKET48_VOICE_POLL_SECONDS"
+            )
+        if (
+            self.pocket48_voice_max_local_bytes
+            > self.pocket48_voice_max_total_bytes
+        ):
+            raise ValueError(
+                "POCKET48_VOICE_MAX_LOCAL_BYTES must not exceed "
+                "POCKET48_VOICE_MAX_TOTAL_BYTES"
+            )
+        if (
             self.ai_cover_landscape_width * 9
             != self.ai_cover_landscape_height * 16
         ):
@@ -295,6 +340,26 @@ class Settings(BaseSettings):
         return self.data_dir / "private" / "room-voice-pa-signing.json"
 
     @property
+    def room_voice_login_pending_path(self) -> Path:
+        return self.data_dir / "private" / "room-voice-login-pending.json"
+
+    @property
+    def room_voice_path(self) -> Path:
+        return self.data_dir / "room-voice"
+
+    @property
+    def room_voice_monitor_status_path(self) -> Path:
+        return (
+            self.maintenance_dir or self.data_dir
+        ) / "room-voice-monitor-status.json"
+
+    @property
+    def room_voice_monitor_ready_path(self) -> Path:
+        return (
+            self.maintenance_dir or self.data_dir
+        ) / "room-voice-monitor-ready"
+
+    @property
     def unlimited_job_username_set(self) -> set[str]:
         return {
             username.strip().casefold()
@@ -329,6 +394,7 @@ class Settings(BaseSettings):
     def prepare_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.room_voice_path.mkdir(parents=True, exist_ok=True)
         if self.maintenance_dir:
             self.maintenance_dir.mkdir(parents=True, exist_ok=True)
 

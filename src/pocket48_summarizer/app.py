@@ -20,6 +20,7 @@ from .glossary import MemberCatalogService
 from .media.clips import VideoClipService
 from .media.ai_covers import AICoverService
 from .repository import JobRepository
+from .room_voice_admin import RoomVoiceAdminService
 from .routes import router
 from .services import ApplicationServices, build_services
 
@@ -97,6 +98,7 @@ def create_app(
     app.state.settings = settings
     app.state.services = services
     app.state.auth = services.auth
+    app.state.room_voice_admin = RoomVoiceAdminService(settings)
     app.state.templates = Jinja2Templates(directory=f"{package_dir}/templates")
     app.mount(
         "/static",
@@ -115,6 +117,8 @@ def create_app(
         if exc.code == "admin_required":
             status = 403
         if exc.code == "daily_quota_exceeded":
+            status = 429
+        if exc.code == "room_voice_sms_cooldown":
             status = 429
         if exc.retryable and exc.code.endswith("_not_ready"):
             status = 409

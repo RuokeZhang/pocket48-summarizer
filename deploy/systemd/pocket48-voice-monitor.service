@@ -1,5 +1,5 @@
 [Unit]
-Description=Pocket48 Replay Summarizer web slot %i
+Description=Pocket48 room voice capture monitor
 After=network-online.target
 Wants=network-online.target
 
@@ -7,17 +7,16 @@ Wants=network-online.target
 Type=simple
 User=pocket48
 Group=pocket48
-WorkingDirectory=/opt/pocket48-summarizer-slots/%i
+WorkingDirectory=/opt/pocket48-summarizer-voice-monitor
 EnvironmentFile=/etc/pocket48-summarizer/app.env
-EnvironmentFile=/opt/pocket48-summarizer-slots/%i/deploy/room-voice-target.env
-EnvironmentFile=/etc/pocket48-summarizer/web-%i.env
+EnvironmentFile=/opt/pocket48-summarizer-voice-monitor/deploy/room-voice-target.env
 Environment=ENABLE_WORKER=false
-Environment=ENABLE_CLIPPER=true
+Environment=ENABLE_CLIPPER=false
 Environment=MAINTENANCE_DIR=/run/pocket48-summarizer
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/pocket48-summarizer-slots/%i/.venv/bin/pocket48-summarizer
+ExecStart=/opt/pocket48-summarizer-voice-monitor/.venv/bin/pocket48-voice-monitor
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 TimeoutStopSec=30
 KillSignal=SIGINT
 UMask=0077

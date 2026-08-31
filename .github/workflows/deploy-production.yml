@@ -61,6 +61,8 @@ jobs:
             scripts/rollback-release.sh \
             scripts/bootstrap-github-actions-deploy.sh \
             scripts/github-actions-deploy-command.sh
+          test -f deploy/systemd/pocket48-voice-monitor.service
+          test -f deploy/room-voice-target.env
 
   deploy:
     name: Deploy production

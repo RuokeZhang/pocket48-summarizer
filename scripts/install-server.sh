@@ -98,6 +98,9 @@ install -m 0644 "$install_dir/deploy/systemd/pocket48-web@.service" \
 install -m 0644 "$install_dir/deploy/systemd/pocket48-worker.service" \
   /etc/systemd/system/pocket48-worker.service
 install -m 0644 \
+  "$install_dir/deploy/systemd/pocket48-voice-monitor.service" \
+  /etc/systemd/system/pocket48-voice-monitor.service
+install -m 0644 \
   "$install_dir/deploy/systemd/pocket48-summarizer-backup.service" \
   /etc/systemd/system/pocket48-summarizer-backup.service
 install -m 0644 \

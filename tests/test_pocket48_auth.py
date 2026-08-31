@@ -118,25 +118,35 @@ async def test_parses_sms_verification_challenge(settings):
 
 @pytest.mark.asyncio
 async def test_logs_in_and_keeps_token_secret(settings):
-    http = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200,
-                json={
-                    "status": 200,
-                    "success": True,
-                    "content": {
-                        "token": "private-token",
-                        "userInfo": {"nickname": "member"},
-                    },
+    seen_payload = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_payload
+        seen_payload = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "status": 200,
+                "success": True,
+                "content": {
+                    "token": "private-token",
+                    "userInfo": {"nickname": "member"},
                 },
-            )
+            },
         )
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
     )
     client = Pocket48AuthClient(settings, identity(), client=http)
     credentials = await client.login_by_code(
         mobile="13800138000", code="123456"
     )
+    assert seen_payload == {
+        "mobile": "13800138000",
+        "code": "123456",
+        "area": "86",
+    }
     assert credentials.token.get_secret_value() == "private-token"
     assert "private-token" not in repr(credentials)
     await http.aclose()

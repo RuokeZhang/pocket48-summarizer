@@ -106,6 +106,8 @@ fi
 chown root:pocket48 "$release_dir"
 chmod 0750 "$release_dir"
 
+install_release_units "$release_dir"
+
 if [[ -f /etc/pocket48-summarizer/app.env ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -192,10 +194,25 @@ else
   fi
 fi
 
+if switch_voice_monitor_release "$release_dir"; then
+  systemctl enable pocket48-voice-monitor.service >/dev/null
+  voice_monitor_result="updated"
+else
+  voice_monitor_status=$?
+  if [[ "$voice_monitor_status" -eq 3 ]]; then
+    voice_monitor_result="disabled (release has no monitor)"
+  else
+    voice_monitor_result="failed (previous monitor restored when available)"
+    voice_monitor_failed=true
+  fi
+fi
+
 echo "Deployment complete"
 echo "  release: $short_commit"
 echo "  active slot: $standby_slot"
 echo "  worker: $worker_result"
-if [[ "${worker_failed:-false}" == true ]]; then
+echo "  voice monitor: $voice_monitor_result"
+if [[ "${worker_failed:-false}" == true \
+  || "${voice_monitor_failed:-false}" == true ]]; then
   exit 1
 fi

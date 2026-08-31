@@ -179,10 +179,11 @@ class Pocket48AuthClient:
         raise self._response_error(response, status, "发送验证码")
 
     async def login_by_code(
-        self, *, mobile: str, code: str
+        self, *, mobile: str, code: str, area: str = "86"
     ) -> Pocket48VoiceCredentials:
         response = await self._post(
-            SMS_LOGIN_PATH, {"mobile": mobile, "code": code}
+            SMS_LOGIN_PATH,
+            {"mobile": mobile, "code": code, "area": area},
         )
         body = self._json_object(response)
         try:
@@ -448,14 +449,14 @@ def load_room_voice_credentials(
 
 def _require_private_file(path: Path, label: str) -> None:
     try:
-        metadata = path.stat()
+        metadata = path.lstat()
     except OSError as exc:
         raise ConfigurationError(f"无法读取本地{label}文件") from exc
     if not stat.S_ISREG(metadata.st_mode):
         raise ConfigurationError(f"本地{label}路径不是普通文件")
-    if stat.S_IMODE(metadata.st_mode) & 0o077:
+    if stat.S_IMODE(metadata.st_mode) != 0o600:
         raise ConfigurationError(
-            f"本地{label}文件权限过宽，必须设置为 0600"
+            f"本地{label}文件权限不正确，必须设置为 0600"
         )
     if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
         raise ConfigurationError(f"本地{label}文件所有者不正确")

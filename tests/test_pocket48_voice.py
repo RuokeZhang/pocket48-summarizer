@@ -13,7 +13,11 @@ from pocket48_summarizer.clients.pocket48_voice import (
     Pocket48VoiceCredentials,
 )
 from pocket48_summarizer.errors import AppError, ConfigurationError
-from pocket48_summarizer.media.room_voice import RoomVoiceProbeRecorder
+from pocket48_summarizer.media.room_voice import (
+    ROOM_VOICE_PROTOCOL_WHITELIST,
+    RoomVoiceProbeRecorder,
+    RoomVoiceRollingRecorder,
+)
 from pocket48_summarizer.security import (
     inspect_room_voice_stream_url,
     validate_room_voice_stream_url,
@@ -193,6 +197,38 @@ async def test_fetches_redacted_active_voice_status(settings):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stream_url",
+    [
+        "rtmps://voice.example.test/live\n-injected",
+        "rtmps://voice.example.test/live\tstream",
+        "rtmps://voice.example.test/" + ("x" * 4096),
+    ],
+)
+async def test_rejects_control_or_oversized_stream_url(
+    settings, stream_url
+):
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "content": {
+                        "streamUrl": stream_url,
+                        "voiceUserList": [],
+                    },
+                },
+            )
+        )
+    )
+    client = Pocket48VoiceClient(settings, credentials(), http)
+    with pytest.raises(AppError):
+        await client.fetch_status(1001, 2002)
+    await http.aclose()
+
+
+@pytest.mark.asyncio
 async def test_tolerates_null_voice_user_list(settings):
     http = httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -216,7 +252,7 @@ async def test_tolerates_null_voice_user_list(settings):
 
 
 @pytest.mark.asyncio
-async def test_rejects_auth_failure_without_echoing_response(settings):
+async def test_retries_http_403_without_echoing_response(settings):
     http = httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda _: httpx.Response(
@@ -231,7 +267,7 @@ async def test_rejects_auth_failure_without_echoing_response(settings):
     client = Pocket48VoiceClient(settings, credentials(), http)
     with pytest.raises(AppError) as captured:
         await client.fetch_status(1001, 2002)
-    assert captured.value.code == "room_voice_auth_required"
+    assert captured.value.code == "room_voice_lookup_failed"
     assert "test-token" not in str(captured.value)
     await http.aclose()
 
@@ -312,3 +348,29 @@ def test_builds_bounded_ffmpeg_probe_command(settings, tmp_path):
     assert command[command.index("-t") + 1] == "60"
     assert command[command.index("-i") + 1].startswith("rtmps://")
     assert command[-1] == str(output_path)
+
+
+def test_builds_bounded_rolling_segment_command(settings, tmp_path):
+    settings.ffmpeg_path = sys.executable
+    recorder = RoomVoiceRollingRecorder(settings)
+    session_path = tmp_path / "session"
+    command = recorder.build_command(
+        "rtmps://voice.example.test/live/stream?token=secret",
+        session_path,
+        duration_seconds=4 * 60 * 60,
+        segment_seconds=300,
+    )
+
+    assert command[0] == sys.executable
+    assert "-nostdin" in command
+    assert command[command.index("-protocol_whitelist") + 1] == (
+        ROOM_VOICE_PROTOCOL_WHITELIST
+    )
+    assert command[command.index("-rw_timeout") + 1] == "15000000"
+    assert command[command.index("-t") + 1] == "14400"
+    assert command[command.index("-segment_time") + 1] == "300"
+    assert command[command.index("-c:a") + 1] == "libmp3lame"
+    assert command[command.index("-b:a") + 1] == "192k"
+    assert command[-1].endswith(
+        "/segments/segment-%06d.mp3"
+    )
