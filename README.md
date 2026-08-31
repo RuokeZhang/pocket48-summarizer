@@ -10,8 +10,10 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
 
 ## 功能边界
 
-- 仅处理无需登录即可访问的已结束公开回放。
-- 不支持实时直播、私有内容、口袋48登录、`pa` 签名或网易云信 QChat。
+- 主站目前仅处理无需登录即可访问的已结束公开回放。
+- 房间上麦仍是默认关闭的实验性 POC：仓库只提供显式确认后的一次性
+  私有账号查询和可选 60 秒本地录音探针，不会自动登录、生成 `pa`、
+  后台轮询或把私有录音发布到网站。
 - 不永久保存原始整场视频；通过 FFmpeg 从 HLS 直接提取临时音频。
 - 字幕由可配置的阿里云百炼 DashScope 非实时语音识别模型生成。
 - 总结通过可配置的 OpenAI-compatible `/chat/completions` API 生成。
@@ -53,6 +55,8 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
 
 - 应用严格限制输入主机和 Pocket48 返回的媒体主机，不能作为任意 URL 代理。
 - FFmpeg 通过参数数组调用，不使用 shell。
+- 房间上麦探针不会输出 token、`pa`、完整 `appInfo` 或带查询参数的
+  RTMP 地址；未知流主机必须先加入本地允许列表才能交给 FFmpeg。
 - 应用不会在运行时自动下载或安装 FFmpeg、插件、Hook 或 MCP 集成；Chrome HLS 播放使用仓库内固定版本的 `hls.js`。
 - 请仅使用经过审核的 Python 包和系统软件来源。
 - 阿里云请使用仅能访问指定私有 Bucket/前缀的 RAM 用户，不要使用主账号 AccessKey。
@@ -232,6 +236,28 @@ P48_RUN_NETWORK_SMOKE=1 \
   .venv/bin/python scripts/metadata_smoke.py \
   'https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432'
 ```
+
+实验性房间上麦探针分两次执行，每次只发送一个有界请求。真实
+`POCKET48_VOICE_TOKEN`、`POCKET48_VOICE_PA`、`POCKET48_VOICE_APP_INFO`
+和设备 `POCKET48_VOICE_USER_AGENT` 只能保存在未提交的 `.env` 或当前
+终端环境中。第一次不设置 `POCKET48_VOICE_SERVER_ID`，只解析房间：
+
+```bash
+P48_RUN_ROOM_VOICE_PROBE=I_UNDERSTAND_THIS_USES_MY_PRIVATE_ACCOUNT \
+  .venv/bin/python scripts/room_voice_probe.py
+```
+
+确认输出的 `server_id` 后写入本地环境并再次运行，脚本只会打印脱敏后的
+协议、主机和参与人数。若要额外录制最多 60 秒，必须把输出的流主机加入
+`POCKET48_VOICE_STREAM_HOSTS`，并单独设置：
+
+```bash
+P48_RECORD_ROOM_VOICE_PROBE=I_UNDERSTAND_THIS_RECORDS_PRIVATE_AUDIO
+```
+
+音频只写入被 Git 忽略的 `data/room-voice-probe/`，不会上传。当前 POC
+要求调用者从已登录的官方客户端环境中安全取得现成的 `token`、`pa` 和
+`appInfo`；仓库不包含第三方 WASM、自动登录、短信登录或签名绕过代码。
 
 完整流水线会下载回放、上传音频并产生 ASR/LLM 费用，必须提供明确确认：
 

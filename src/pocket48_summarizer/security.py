@@ -16,6 +16,7 @@ POCKET_API_HOSTS = {"pocketapi.48.cn"}
 MEDIA_HOSTS = {"idol-vod.48.cn"}
 SOURCE_HOSTS = {"source.48.cn", "source3.48.cn"}
 MEMBER_CATALOG_HOSTS = {"h5.48.cn"}
+ROOM_VOICE_STREAM_SCHEMES = {"rtmp", "rtmps"}
 LIVE_ID_RE = re.compile(r"^[0-9]{6,30}$")
 CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -81,6 +82,46 @@ def validate_https_url(
         or parsed.fragment
     ):
         raise AppError(code, f"{label}地址不在允许的主机范围内", False)
+    return value
+
+
+def inspect_room_voice_stream_url(value: str) -> tuple[str, str, int | None]:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise AppError(
+            "invalid_room_voice_stream_url",
+            "房间上麦流地址格式无效",
+            False,
+        ) from exc
+    if (
+        parsed.scheme not in ROOM_VOICE_STREAM_SCHEMES
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or not parsed.path
+        or parsed.fragment
+    ):
+        raise AppError(
+            "invalid_room_voice_stream_url",
+            "房间上麦流地址不是受支持的 RTMP/RTMPS 地址",
+            False,
+        )
+    return parsed.scheme, parsed.hostname.lower(), port
+
+
+def validate_room_voice_stream_url(
+    value: str, allowed_hosts: set[str]
+) -> str:
+    _, hostname, _ = inspect_room_voice_stream_url(value)
+    normalized_hosts = {host.lower() for host in allowed_hosts}
+    if not normalized_hosts or hostname not in normalized_hosts:
+        raise AppError(
+            "unapproved_room_voice_stream_host",
+            "房间上麦流主机尚未加入本地允许列表",
+            False,
+        )
     return value
 
 

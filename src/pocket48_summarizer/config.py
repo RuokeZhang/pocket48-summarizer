@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
     external_retry_attempts: int = Field(default=3, ge=1, le=8)
     max_api_response_bytes: int = Field(default=2 * 1024 * 1024, ge=1024)
+    pocket48_voice_token: SecretStr | None = None
+    pocket48_voice_pa: SecretStr | None = None
+    pocket48_voice_app_info: SecretStr | None = None
+    pocket48_voice_user_agent: str | None = None
+    pocket48_voice_channel_id: str | None = None
+    pocket48_voice_server_id: str | None = None
+    pocket48_voice_stream_hosts: str = ""
+    pocket48_voice_probe_seconds: int = Field(default=60, ge=5, le=60)
+    pocket48_voice_probe_max_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        ge=1024,
+        le=200 * 1024 * 1024,
+    )
     member_catalog_url: str = (
         "https://h5.48.cn/resource/jsonp/"
         "allmembers_simple.php?gid=00"
@@ -263,6 +276,14 @@ class Settings(BaseSettings):
         if not hosts:
             raise ConfigurationError("TRUSTED_HOSTS 至少需要一个主机名")
         return hosts
+
+    @property
+    def pocket48_voice_stream_host_list(self) -> set[str]:
+        return {
+            host.strip().lower()
+            for host in self.pocket48_voice_stream_hosts.split(",")
+            if host.strip()
+        }
 
     @property
     def unlimited_job_username_set(self) -> set[str]:
