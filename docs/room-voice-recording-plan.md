@@ -4,6 +4,46 @@
 **Repository:** `RuokeZhang/pocket48-summarizer`  
 **Feature flag:** Off by default until the authenticated production probe passes
 
+**Execution note (2026-08-31):** The repository-owned Phase 0 client, redacted
+one-shot probe, bounded 60-second recorder, and manual one-SMS login helper are
+implemented on `roxzhang/room-voice-poc`. Offline tests pass. A real login
+attempt from the developer's current network was rejected before the API by
+Pocket48's CDN/WAF with an HTML HTTP 403 response while the request was
+unsigned, so no SMS was sent and no credential was created. The clean-room
+dynamic `pa` implementation uses a locally provisioned seed extracted only
+after verifying a pinned, reviewed source file's complete SHA-256; neither the
+seed nor a third-party binary is committed or executed. Phase 1 remains blocked
+until the signed login and authenticated audio probe pass.
+
+**Account-session finding (2026-08-31):** A signed SMS login succeeded and
+created a valid local token without storing the phone number or code. Logging
+back into the official iPhone App immediately invalidated that token with
+business status `401004`, confirming a single-active-session account model.
+The user selected the dedicated-monitor strategy for version one: this account
+will remain logged into the monitor rather than the official App. Any auth
+failure stops monitoring and requires a manual SMS login; the service never
+re-authenticates or sends SMS automatically.
+
+**Authenticated probe result (2026-08-31):** After the user explicitly logged
+the account back into the dedicated monitor, a fresh signed request resolved
+member `407126` to channel `7587624` and server `6227955`. A subsequent
+one-shot `team/voice/operate` request succeeded with `active=false`, zero
+participants, and no stream URL, which is the expected inactive-room shape.
+Authentication, dynamic `pa`, account token handling, member-room resolution,
+and the status endpoint are therefore confirmed. The remaining Phase 0 gate is
+one observed active session that returns an allowlisted RTMP/RTMPS URL and
+produces a playable 60-second recording without invalidating the monitor token.
+
+**Bounded account scan result (2026-08-31):** The batch room map returned 506
+member-to-server mappings. The batch last-message contract supplied a current
+primary channel for 447 of them; the primary-channel ordering matched
+`server/jump` exactly for the five user-selected rooms. A one-time,
+one-request-per-second scan then checked all 447 candidates without auth
+failure, rate limiting, or consecutive anomalies. No room returned voice
+participants or a stream URL during that snapshot. This confirms the bounded
+scanner and account stability, but it does not satisfy the active-audio gate
+and must not be converted into an unbounded poller before Phase 2.
+
 ## 1. Outcome
 
 Add authenticated monitoring for Pocket48 room voice sessions ("房间上麦" /
@@ -47,8 +87,9 @@ the existing replay worker or web slots.
 - Capturing Pocket48 room text messages alongside the audio.
 - Video clip export for audio-only sessions.
 - Reusing third-party Electron applications or their packaged binaries.
-- Automatically entering SMS codes, storing account passwords, or bypassing
-  account security controls.
+- Automatically entering or resending SMS codes, storing account passwords,
+  or bypassing account security controls. A one-time local helper may request
+  one SMS and prompt the user to enter its code manually.
 
 ## 4. Architecture
 
@@ -213,6 +254,9 @@ separate explicit probe and requires its own confirmation variable.
 ### 6.3 Production credentials
 
 - Do not store the phone number, password, or SMS code.
+- A repository-owned local login helper may perform one explicitly confirmed
+  SMS login, with no automatic resend or retry, and write only the returned
+  token plus generated device headers to a Git-ignored `0600` file.
 - Keep the Pocket48 token and device/app values in root-readable deployment
   secrets, not SQLite or browser storage.
 - Represent them with `SecretStr` settings and redact them from exceptions.

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -26,24 +27,38 @@ from ..security import (
 )
 
 ROOM_INFO_PATH = "/im/api/v1/im/team/room/info"
+MEMBER_ROOM_PATH = "/im/api/v1/im/server/jump"
 VOICE_OPERATE_PATH = "/im/api/v1/team/voice/operate"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class Pocket48VoiceCredentials:
     token: SecretStr
-    pa: SecretStr
     app_info: SecretStr
     user_agent: str
+    pa: SecretStr | None = None
+    pa_provider: Callable[[], SecretStr] | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def request_headers(self) -> dict[str, str]:
         token = self.token.get_secret_value().strip()
-        pa = self.pa.get_secret_value().strip()
+        generated_pa = (
+            self.pa_provider()
+            if self.pa is None and self.pa_provider is not None
+            else None
+        )
+        effective_pa = self.pa or generated_pa
+        pa = (
+            effective_pa.get_secret_value().strip()
+            if effective_pa is not None
+            else ""
+        )
         app_info_text = self.app_info.get_secret_value().strip()
         user_agent = strip_control_chars(self.user_agent)
-        if not token or not pa or not app_info_text or not user_agent:
+        if not token or not app_info_text or not user_agent:
             raise ConfigurationError(
-                "口袋48房间语音凭证缺少 token、pa、appInfo 或 User-Agent"
+                "口袋48房间语音凭证缺少 token、appInfo 或 User-Agent"
             )
         if len(app_info_text) > 4096 or len(user_agent) > 300:
             raise ConfigurationError(
@@ -59,18 +74,20 @@ class Pocket48VoiceCredentials:
             raise ConfigurationError(
                 "POCKET48_VOICE_APP_INFO 必须是非空 JSON 对象"
             )
-        return {
+        headers = {
             "Accept": "application/json",
             "Accept-Language": "zh-Hans-CN;q=1",
             "Content-Type": "application/json;charset=utf-8",
-            "P-Sign-Type": "V0",
             "User-Agent": user_agent,
             "appInfo": json.dumps(
                 app_info, separators=(",", ":"), ensure_ascii=False
             ),
-            "pa": pa,
             "token": token,
         }
+        if pa:
+            headers["pa"] = pa
+            headers["P-Sign-Type"] = "V0"
+        return headers
 
 
 class RoomInfoContent(BaseModel):
@@ -85,6 +102,37 @@ class RoomInfoEnvelope(BaseModel):
     status: int | None = None
     success: bool = False
     content: RoomInfoContent | None = None
+
+
+class MemberRoomServerInfo(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    server_id: int = Field(alias="serverId", gt=0)
+
+
+class MemberRoomContent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    channel_id: int = Field(alias="channelId", gt=0)
+    server_id: int | None = Field(default=None, alias="serverId", gt=0)
+    server: MemberRoomServerInfo | None = Field(
+        default=None, alias="jumpServerInfo"
+    )
+
+
+class MemberRoomEnvelope(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    status: int | None = None
+    success: bool = False
+    content: MemberRoomContent | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MemberRoom:
+    member_id: int
+    channel_id: int
+    server_id: int
 
 
 class RoomVoiceParticipant(BaseModel):
@@ -226,6 +274,35 @@ class Pocket48VoiceClient:
             raise self._response_error(response, envelope.status)
         return envelope.content.server_id
 
+    async def resolve_member_room(self, member_id: int) -> MemberRoom:
+        response = await self._post(
+            MEMBER_ROOM_PATH,
+            {"starId": member_id, "targetType": 1},
+        )
+        try:
+            envelope = MemberRoomEnvelope.model_validate(response.json())
+        except (ValueError, ValidationError) as exc:
+            raise self._schema_error() from exc
+        if (
+            response.status_code != 200
+            or not envelope.success
+            or envelope.status != 200
+            or envelope.content is None
+        ):
+            raise self._response_error(response, envelope.status)
+        server_id = envelope.content.server_id
+        if server_id is None and envelope.content.server is not None:
+            server_id = envelope.content.server.server_id
+        if server_id is None:
+            raise self._schema_error(
+                "口袋48成员房间响应缺少 serverId"
+            )
+        return MemberRoom(
+            member_id=member_id,
+            channel_id=envelope.content.channel_id,
+            server_id=server_id,
+        )
+
     async def fetch_status(
         self, channel_id: int, server_id: int
     ) -> RoomVoiceStatus:
@@ -303,10 +380,13 @@ class Pocket48VoiceClient:
     def _response_error(
         response: httpx.Response, envelope_status: int | None
     ) -> ExternalServiceError:
-        if response.status_code in {401, 403}:
+        if (
+            response.status_code in {401, 403}
+            or envelope_status == 401004
+        ):
             return ExternalServiceError(
                 "room_voice_auth_required",
-                "口袋48拒绝了账号凭证；已停止，请人工更新 token 或 pa",
+                "口袋48账号 token 已失效；已停止，请人工重新登录",
                 False,
             )
         retryable = response.status_code == 429 or response.status_code >= 500

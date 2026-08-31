@@ -23,9 +23,9 @@ from pocket48_summarizer.security import (
 def credentials() -> Pocket48VoiceCredentials:
     return Pocket48VoiceCredentials(
         token=SecretStr("test-token"),
-        pa=SecretStr("test-pa"),
         app_info=SecretStr('{"deviceId":"test-device"}'),
         user_agent="PocketFans201807/test",
+        pa=SecretStr("test-pa"),
     )
 
 
@@ -53,15 +53,90 @@ async def test_resolves_room_server_with_private_headers(settings):
     await http.aclose()
 
 
+@pytest.mark.asyncio
+async def test_resolves_member_room_with_fresh_pa(settings):
+    generated = iter(["first-pa"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/im/server/jump")
+        assert json.loads(request.content) == {
+            "starId": 407126,
+            "targetType": 1,
+        }
+        assert request.headers["pa"] == "first-pa"
+        return httpx.Response(
+            200,
+            json={
+                "status": 200,
+                "success": True,
+                "content": {
+                    "channelId": 1001,
+                    "jumpServerInfo": {"serverId": 2002},
+                },
+            },
+        )
+
+    dynamic = Pocket48VoiceCredentials(
+        token=SecretStr("test-token"),
+        app_info=SecretStr('{"deviceId":"test-device"}'),
+        user_agent="PocketFans201807/test",
+        pa_provider=lambda: SecretStr(next(generated)),
+    )
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = Pocket48VoiceClient(settings, dynamic, http)
+    room = await client.resolve_member_room(407126)
+    assert room.member_id == 407126
+    assert room.channel_id == 1001
+    assert room.server_id == 2002
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolves_member_room_with_top_level_server_id(settings):
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "success": True,
+                    "content": {
+                        "channelId": 1001,
+                        "serverId": 2002,
+                        "jumpServerInfo": None,
+                    },
+                },
+            )
+        )
+    )
+    client = Pocket48VoiceClient(settings, credentials(), http)
+    room = await client.resolve_member_room(407126)
+    assert room.channel_id == 1001
+    assert room.server_id == 2002
+    await http.aclose()
+
+
 def test_rejects_invalid_app_info_before_request():
     invalid = Pocket48VoiceCredentials(
         token=SecretStr("test-token"),
-        pa=SecretStr("test-pa"),
         app_info=SecretStr("not-json"),
         user_agent="PocketFans201807/test",
+        pa=SecretStr("test-pa"),
     )
     with pytest.raises(ConfigurationError, match="JSON 对象"):
         invalid.request_headers()
+
+
+def test_voice_credentials_generate_pa_per_request():
+    generated = iter(["first-pa", "second-pa"])
+    dynamic = Pocket48VoiceCredentials(
+        token=SecretStr("test-token"),
+        app_info=SecretStr('{"deviceId":"test-device"}'),
+        user_agent="PocketFans201807/test",
+        pa_provider=lambda: SecretStr(next(generated)),
+    )
+    assert dynamic.request_headers()["pa"] == "first-pa"
+    assert dynamic.request_headers()["pa"] == "second-pa"
 
 
 @pytest.mark.asyncio
@@ -158,6 +233,24 @@ async def test_rejects_auth_failure_without_echoing_response(settings):
         await client.fetch_status(1001, 2002)
     assert captured.value.code == "room_voice_auth_required"
     assert "test-token" not in str(captured.value)
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_treats_business_401004_as_expired_token(settings):
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={"status": 401004, "message": "token invalid"},
+            )
+        )
+    )
+    client = Pocket48VoiceClient(settings, credentials(), http)
+    with pytest.raises(AppError) as captured:
+        await client.resolve_member_room(407126)
+    assert captured.value.code == "room_voice_auth_required"
+    assert "重新登录" in str(captured.value)
     await http.aclose()
 
 

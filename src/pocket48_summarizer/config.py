@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     pocket48_voice_pa: SecretStr | None = None
     pocket48_voice_app_info: SecretStr | None = None
     pocket48_voice_user_agent: str | None = None
+    pocket48_voice_member_id: str | None = None
     pocket48_voice_channel_id: str | None = None
     pocket48_voice_server_id: str | None = None
     pocket48_voice_stream_hosts: str = ""
@@ -284,6 +285,14 @@ class Settings(BaseSettings):
             for host in self.pocket48_voice_stream_hosts.split(",")
             if host.strip()
         }
+
+    @property
+    def pocket48_voice_credentials_path(self) -> Path:
+        return self.data_dir / "private" / "room-voice-credentials.json"
+
+    @property
+    def pocket48_pa_signing_seed_path(self) -> Path:
+        return self.data_dir / "private" / "room-voice-pa-signing.json"
 
     @property
     def unlimited_job_username_set(self) -> set[str]:

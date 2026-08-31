@@ -11,6 +11,10 @@ from pocket48_summarizer.clients.pocket48_voice import (
     Pocket48VoiceClient,
     Pocket48VoiceCredentials,
 )
+from pocket48_summarizer.clients.pocket48_auth import (
+    load_pa_generator,
+    load_room_voice_credentials,
+)
 from pocket48_summarizer.config import Settings
 from pocket48_summarizer.errors import ConfigurationError
 from pocket48_summarizer.media.room_voice import RoomVoiceProbeRecorder
@@ -62,28 +66,68 @@ async def run() -> None:
         )
 
     settings = Settings(enable_worker=False)
-    channel_id = require_positive_int(
-        settings.pocket48_voice_channel_id,
-        "POCKET48_VOICE_CHANNEL_ID",
+    pa_generator = (
+        None
+        if settings.pocket48_voice_pa is not None
+        else load_pa_generator(settings.pocket48_pa_signing_seed_path)
     )
-    credentials = Pocket48VoiceCredentials(
-        token=require_secret(
-            settings.pocket48_voice_token, "POCKET48_VOICE_TOKEN"
-        ),
-        pa=require_secret(
-            settings.pocket48_voice_pa, "POCKET48_VOICE_PA"
-        ),
-        app_info=require_secret(
-            settings.pocket48_voice_app_info,
-            "POCKET48_VOICE_APP_INFO",
-        ),
-        user_agent=require_text(
-            settings.pocket48_voice_user_agent,
-            "POCKET48_VOICE_USER_AGENT",
-        ),
+    pa_provider = (
+        pa_generator.generate if pa_generator is not None else None
     )
+    if settings.pocket48_voice_token is not None:
+        credentials = Pocket48VoiceCredentials(
+            token=require_secret(
+                settings.pocket48_voice_token,
+                "POCKET48_VOICE_TOKEN",
+            ),
+            app_info=require_secret(
+                settings.pocket48_voice_app_info,
+                "POCKET48_VOICE_APP_INFO",
+            ),
+            user_agent=require_text(
+                settings.pocket48_voice_user_agent,
+                "POCKET48_VOICE_USER_AGENT",
+            ),
+            pa=settings.pocket48_voice_pa,
+            pa_provider=pa_provider,
+        )
+    else:
+        credentials = load_room_voice_credentials(
+            settings.pocket48_voice_credentials_path,
+            pa=settings.pocket48_voice_pa,
+            pa_provider=pa_provider,
+        )
     client = Pocket48VoiceClient(settings, credentials)
     try:
+        channel_id_setting = settings.pocket48_voice_channel_id
+        if not (channel_id_setting or "").strip():
+            member_id = require_positive_int(
+                settings.pocket48_voice_member_id,
+                "POCKET48_VOICE_MEMBER_ID",
+            )
+            room = await client.resolve_member_room(member_id)
+            print(
+                json.dumps(
+                    {
+                        "action": "member_room",
+                        "member_id": room.member_id,
+                        "channel_id": room.channel_id,
+                        "server_id": room.server_id,
+                        "next": (
+                            "Set POCKET48_VOICE_CHANNEL_ID and "
+                            "POCKET48_VOICE_SERVER_ID, then rerun for the "
+                            "one-shot voice status query."
+                        ),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return
+
+        channel_id = require_positive_int(
+            channel_id_setting, "POCKET48_VOICE_CHANNEL_ID"
+        )
         server_id_setting = settings.pocket48_voice_server_id
         if not (server_id_setting or "").strip():
             server_id = await client.resolve_server_id(channel_id)

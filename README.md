@@ -12,8 +12,8 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
 
 - 主站目前仅处理无需登录即可访问的已结束公开回放。
 - 房间上麦仍是默认关闭的实验性 POC：仓库只提供显式确认后的一次性
-  私有账号查询和可选 60 秒本地录音探针，不会自动登录、生成 `pa`、
-  后台轮询或把私有录音发布到网站。
+  手动短信登录、私有账号查询和可选 60 秒本地录音探针，不会自动重发
+  短信、无人值守重新登录、常驻轮询或把私有录音发布到网站。
 - 不永久保存原始整场视频；通过 FFmpeg 从 HLS 直接提取临时音频。
 - 字幕由可配置的阿里云百炼 DashScope 非实时语音识别模型生成。
 - 总结通过可配置的 OpenAI-compatible `/chat/completions` API 生成。
@@ -240,15 +240,46 @@ P48_RUN_NETWORK_SMOKE=1 \
 实验性房间上麦探针分两次执行，每次只发送一个有界请求。真实
 `POCKET48_VOICE_TOKEN`、`POCKET48_VOICE_PA`、`POCKET48_VOICE_APP_INFO`
 和设备 `POCKET48_VOICE_USER_AGENT` 只能保存在未提交的 `.env` 或当前
-终端环境中。第一次不设置 `POCKET48_VOICE_SERVER_ID`，只解析房间：
+终端环境中。如果没有现成 token，可先在本机交互式终端请求一次短信：
 
 ```bash
+P48_PROVISION_ROOM_VOICE_PA=I_UNDERSTAND_THIS_IMPORTS_A_REVIEWED_PROTOCOL_CONSTANT \
+  .venv/bin/python scripts/provision_room_voice_pa.py
+
+P48_RUN_ROOM_VOICE_LOGIN=I_UNDERSTAND_THIS_REQUESTS_ONE_SMS \
+  .venv/bin/python scripts/room_voice_login.py
+```
+
+第一条命令只下载一个固定 Git 提交中的公开协议参考文件，校验仓库内固定的
+完整 SHA-256 后提取签名种子；不会执行第三方代码。种子只写入
+`data/private/room-voice-pa-signing.json`，不会打印或提交。之后每个登录
+和房间查询请求都会在本地生成新的 `pa`。
+
+手机号、验证答案和短信验证码使用不回显输入，且不会保存。成功后仅把
+token 与本次生成的设备请求头写入 Git 忽略的
+`data/private/room-voice-credentials.json`，目录权限为 `0700`、文件权限
+为 `0600`。助手不会自动重发短信或循环登录。如果接口明确要求当前
+`pa`，它会安全失败，仍需通过本地环境提供签名后再试。
+如果 Pocket48 CDN/WAF 针对当前网络出口直接返回 HTML `403`，脚本会
+明确停止；这种情况下验证码请求尚未到达登录 API，不应反复重试。
+
+实测口袋48账号是单活会话：短信登录 CLI 后手机 App 会退出；手机 App
+重新登录后，CLI token 会立即返回业务状态 `401004`。因此一个账号只能
+在“专供后台监控”或“保持手机 App 登录”之间选择，不能承诺两端同时在线。
+当前 v1 采用专用监控账号策略，任何 token 失效都会停止监控并等待人工
+重新登录，绝不自动发送短信。
+
+取得 token 后，第一次不设置 `POCKET48_VOICE_SERVER_ID`，只解析房间：
+
+```bash
+POCKET48_VOICE_MEMBER_ID=407126 \
 P48_RUN_ROOM_VOICE_PROBE=I_UNDERSTAND_THIS_USES_MY_PRIVATE_ACCOUNT \
   .venv/bin/python scripts/room_voice_probe.py
 ```
 
-确认输出的 `server_id` 后写入本地环境并再次运行，脚本只会打印脱敏后的
-协议、主机和参与人数。若要额外录制最多 60 秒，必须把输出的流主机加入
+如果只提供成员 ID，第一次请求会返回该成员的 `channel_id` 和
+`server_id`。把两者写入本地环境并再次运行，脚本只会打印脱敏后的协议、
+主机和参与人数。若要额外录制最多 60 秒，必须把输出的流主机加入
 `POCKET48_VOICE_STREAM_HOSTS`，并单独设置：
 
 ```bash
@@ -256,8 +287,18 @@ P48_RECORD_ROOM_VOICE_PROBE=I_UNDERSTAND_THIS_RECORDS_PRIVATE_AUDIO
 ```
 
 音频只写入被 Git 忽略的 `data/room-voice-probe/`，不会上传。当前 POC
-要求调用者从已登录的官方客户端环境中安全取得现成的 `token`、`pa` 和
-`appInfo`；仓库不包含第三方 WASM、自动登录、短信登录或签名绕过代码。
+可以读取现成凭证，也可以通过一次明确确认的手动短信登录取得 token。
+仓库独立生成动态 `pa`，不包含或执行第三方 WASM、自动验证码输入、
+短信重发、无人值守登录或账号安全绕过代码。
+
+若目标房间当前无人上麦，可运行一次性账号范围扫描。它先用批量接口加载
+账号可见的成员/房间映射，再以每秒最多一次的速度检查，发现第一个可录制
+流即停止；默认最多 600 个房间，不会常驻或自动重复：
+
+```bash
+P48_RUN_ROOM_VOICE_SCAN=I_UNDERSTAND_THIS_SCANS_MY_PRIVATE_ACCOUNT_ONCE \
+  .venv/bin/python scripts/scan_room_voice.py
+```
 
 完整流水线会下载回放、上传音频并产生 ASR/LLM 费用，必须提供明确确认：
 
