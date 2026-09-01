@@ -1868,15 +1868,17 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="live-danmaku-panel"' in page.text
     assert 'class="live-danmaku-panel mobile-danmaku-overlay"' in page.text
     assert 'id="playback-layout"' in page.text
+    assert 'id="replay-fullscreen"' in page.text
+    assert 'controlslist="nofullscreen"' in page.text
     assert 'id="language-toggle"' in page.text
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
     assert '<p class="eyebrow">Replay player</p>' in page.text
     assert '<p class="eyebrow">Synchronized replay</p>' not in page.text
-    assert "i18n.js?v=20260901-22" in page.text
-    assert "styles.css?v=20260901-22" in page.text
-    assert "app.js?v=20260901-22" in page.text
+    assert "i18n.js?v=20260901-23" in page.text
+    assert "styles.css?v=20260901-23" in page.text
+    assert "app.js?v=20260901-23" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -1886,6 +1888,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert ".clip-boundary-handle" in styles.text
     assert ".clip-segment-block" in styles.text
     assert ".clip-cut-panel" in styles.text
+    assert ".playback-layout.is-pseudo-fullscreen" in styles.text
+    assert "requestFullscreen.call(playbackLayout)" in javascript.text
+    assert "webkitfullscreenchange" in javascript.text
     assert ".clip-lyric-preview" in styles.text
     assert ".clip-style-panel" in styles.text
     assert ".clip-output-layout" in styles.text

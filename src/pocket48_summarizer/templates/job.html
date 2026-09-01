@@ -106,10 +106,18 @@
         </details>
       </div>
       <div id="playback-layout" class="playback-layout">
+        <button
+          id="replay-fullscreen"
+          class="playback-fullscreen-button"
+          type="button"
+          aria-pressed="false"
+          data-i18n="enterReplayFullscreen"
+        >页面全屏</button>
         <div class="video-stage">
           <video
             id="replay-player"
             controls
+            controlslist="nofullscreen"
             playsinline
             preload="metadata"
             aria-keyshortcuts="Space"

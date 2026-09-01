@@ -3375,6 +3375,7 @@ const subtitleEn = document.querySelector("#subtitle-en");
 const danmakuEnabled = document.querySelector("#danmaku-enabled");
 const danmakuDensity = document.querySelector("#danmaku-density");
 const playbackLayout = document.querySelector("#playback-layout");
+const replayFullscreen = document.querySelector("#replay-fullscreen");
 const liveDanmakuPanel = document.querySelector("#live-danmaku-panel");
 const liveDanmakuStream = document.querySelector("#live-danmaku-stream");
 const liveDanmakuEmpty = document.querySelector("#live-danmaku-empty");
@@ -3386,6 +3387,108 @@ const translationState = document.querySelector("#translation-state");
 const translationRetry = document.querySelector("#translation-retry");
 const canRequestTranslation =
   replayPlayerPanel?.dataset.canRequestTranslation === "true";
+
+let replayFullscreenScrollY = 0;
+
+const documentFullscreenElement = () => (
+  document.fullscreenElement || document.webkitFullscreenElement || null
+);
+
+const replayIsFullscreen = () => Boolean(
+  playbackLayout
+  && (
+    documentFullscreenElement() === playbackLayout
+    || playbackLayout.classList.contains("is-pseudo-fullscreen")
+  )
+);
+
+const updateReplayFullscreenButton = () => {
+  if (!replayFullscreen) return;
+  const active = replayIsFullscreen();
+  const key = active
+    ? "exitReplayFullscreen"
+    : "enterReplayFullscreen";
+  replayFullscreen.dataset.i18n = key;
+  replayFullscreen.textContent = t(key);
+  replayFullscreen.setAttribute("aria-pressed", String(active));
+};
+
+const setReplayPseudoFullscreen = (active) => {
+  if (!playbackLayout) return;
+  if (active) {
+    replayFullscreenScrollY = window.scrollY;
+    playbackLayout.classList.add("is-pseudo-fullscreen");
+    document.body.classList.add("has-replay-pseudo-fullscreen");
+  } else {
+    playbackLayout.classList.remove("is-pseudo-fullscreen");
+    document.body.classList.remove("has-replay-pseudo-fullscreen");
+    window.scrollTo(0, replayFullscreenScrollY);
+  }
+  updateReplayFullscreenButton();
+};
+
+const enterReplayFullscreen = async () => {
+  if (!playbackLayout) return;
+  const isIOS = (
+    /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (
+      navigator.platform === "MacIntel"
+      && navigator.maxTouchPoints > 1
+    )
+  );
+  const requestFullscreen = (
+    playbackLayout.requestFullscreen
+    || playbackLayout.webkitRequestFullscreen
+  );
+  if (!isIOS && typeof requestFullscreen === "function") {
+    try {
+      await Promise.resolve(requestFullscreen.call(playbackLayout));
+      return;
+    } catch {
+      // Fall back to the same in-page fullscreen used by iOS Safari.
+    }
+  }
+  setReplayPseudoFullscreen(true);
+};
+
+const exitReplayFullscreen = async () => {
+  if (!playbackLayout) return;
+  if (playbackLayout.classList.contains("is-pseudo-fullscreen")) {
+    setReplayPseudoFullscreen(false);
+    return;
+  }
+  const exitFullscreen = (
+    document.exitFullscreen || document.webkitExitFullscreen
+  );
+  if (typeof exitFullscreen === "function") {
+    await Promise.resolve(exitFullscreen.call(document));
+  }
+};
+
+replayFullscreen?.addEventListener("click", () => {
+  if (replayIsFullscreen()) {
+    void exitReplayFullscreen();
+  } else {
+    void enterReplayFullscreen();
+  }
+});
+document.addEventListener(
+  "fullscreenchange",
+  updateReplayFullscreenButton
+);
+document.addEventListener(
+  "webkitfullscreenchange",
+  updateReplayFullscreenButton
+);
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "Escape"
+    && playbackLayout?.classList.contains("is-pseudo-fullscreen")
+  ) {
+    setReplayPseudoFullscreen(false);
+  }
+});
+updateReplayFullscreenButton();
 
 const densityProfiles = {
   low: { maxBubbles: 10, minGapMs: 700, contextMs: 5000 },
