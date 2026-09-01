@@ -464,6 +464,7 @@ def test_english_home_redirects_to_language_override(settings, repository):
     assert 'new URLSearchParams(' in i18n.text
     assert 'searchParams.delete("lang")' in i18n.text
     assert "translateRoomVoiceStatus" in i18n.text
+    assert 'inactive: "Polling"' in i18n.text
 
 
 def test_timeline_clip_can_be_created_and_downloaded(
@@ -1873,9 +1874,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="history-forward"' in page.text
     assert '<p class="eyebrow">Replay player</p>' in page.text
     assert '<p class="eyebrow">Synchronized replay</p>' not in page.text
-    assert "i18n.js?v=20260901-16" in page.text
-    assert "styles.css?v=20260901-16" in page.text
-    assert "app.js?v=20260901-16" in page.text
+    assert "i18n.js?v=20260901-17" in page.text
+    assert "styles.css?v=20260901-17" in page.text
+    assert "app.js?v=20260901-17" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

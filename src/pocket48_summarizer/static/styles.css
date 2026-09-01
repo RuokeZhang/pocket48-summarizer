@@ -46,6 +46,52 @@ button, input, select, textarea { font: inherit; }
   text-transform: uppercase;
   letter-spacing: .08em;
 }
+[data-room-voice-status] {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(116, 168, 255, .1);
+  color: #8eb8ff;
+}
+[data-room-voice-status]::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+  box-shadow: 0 0 9px currentColor;
+}
+[data-room-voice-status="recording"],
+[data-room-voice-status="starting"] {
+  border-color: rgba(75, 222, 154, .46);
+  background: rgba(75, 222, 154, .12);
+  color: #62e6a8;
+}
+[data-room-voice-status="active_without_stream"],
+[data-room-voice-status="recording_cooldown"],
+[data-room-voice-status="storage_limit"],
+[data-room-voice-status="partial"],
+[data-room-voice-status="interrupted"],
+[data-room-voice-status="max_duration"],
+[data-room-voice-status="max_bytes"] {
+  border-color: rgba(242, 196, 111, .44);
+  background: rgba(242, 196, 111, .11);
+  color: #f2c46f;
+}
+[data-room-voice-status="error"],
+[data-room-voice-status="failed"],
+[data-room-voice-status="unavailable"] {
+  border-color: rgba(255, 112, 143, .46);
+  background: rgba(255, 112, 143, .11);
+  color: #ff8aaa;
+}
+[data-room-voice-status="completed"],
+[data-room-voice-status="ended"] {
+  border-color: rgba(118, 212, 196, .4);
+  background: rgba(118, 212, 196, .1);
+  color: #8ce0d2;
+}
 .account-actions { display: flex; align-items: center; gap: 10px; }
 .account-actions form { margin: 0; }
 /* The glossary link sits between the sign-out and language controls, so it

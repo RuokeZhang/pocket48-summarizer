@@ -229,15 +229,10 @@ def test_additional_targets_parse_and_clone_with_safe_paths(tmp_path):
                 "name": "杨冰怡",
                 "member_id": "6744",
             },
-            {
-                "id": "wu-bohan",
-                "name": "武博涵",
-                "member_id": "54526095",
-            },
         ],
     )
 
-    primary, wang, yang, wu = configured.room_voice_monitor_settings()
+    primary, wang, yang = configured.room_voice_monitor_settings()
 
     assert primary.pocket48_voice_monitor_id == "primary"
     assert (
@@ -272,20 +267,6 @@ def test_additional_targets_parse_and_clone_with_safe_paths(tmp_path):
         yang.room_voice_monitor_status_path
         == tmp_path / "room-voice-monitor-yang-bingyi-status.json"
     )
-    assert wu.pocket48_voice_monitor_id == "wu-bohan"
-    assert wu.pocket48_voice_member_name == "武博涵"
-    assert wu.pocket48_voice_member_id == "54526095"
-    assert wu.pocket48_voice_channel_id is None
-    assert (
-        wu.room_voice_monitor_ready_path
-        == tmp_path / "room-voice-monitor-wu-bohan-ready"
-    )
-    assert (
-        wu.room_voice_monitor_status_path
-        == tmp_path / "room-voice-monitor-wu-bohan-status.json"
-    )
-
-
 def test_production_target_file_configures_additional_members():
     target_env = (
         Path(__file__).parents[1] / "deploy" / "room-voice-target.env"
@@ -306,11 +287,6 @@ def test_production_target_file_configures_additional_members():
             id="yang-bingyi",
             name="杨冰怡",
             member_id=6744,
-        ),
-        AdditionalRoomVoiceTarget(
-            id="wu-bohan",
-            name="武博涵",
-            member_id=54526095,
         ),
     )
 

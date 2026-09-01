@@ -784,7 +784,7 @@
     zh: {
       waiting: "等待下一轮查询",
       polling: "查询中",
-      inactive: "暂无上麦",
+      inactive: "监控中",
       recording: "正在录音",
       active_without_stream: "已上麦但暂无可用音频流",
       awaiting_inactive: "等待本次上麦结束",
@@ -804,8 +804,8 @@
     },
     en: {
       waiting: "Waiting for the next poll",
-      polling: "Polling",
-      inactive: "No active room audio",
+      polling: "Checking now",
+      inactive: "Polling",
       recording: "Recording",
       active_without_stream: "Active without an available audio stream",
       awaiting_inactive: "Waiting for the current room session to end",
