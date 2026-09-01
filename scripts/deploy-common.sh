@@ -419,6 +419,8 @@ switch_worker_release() {
   fi
   if ! wait_for_status_zero jobs "$drain_seconds" \
     || ! wait_for_status_zero \
+      room_voice_processing_jobs "$drain_seconds" \
+    || ! wait_for_status_zero \
       subtitle_translation_requests "$drain_seconds"; then
     rm -f "$WORKER_MAINTENANCE_FILE"
     return 2

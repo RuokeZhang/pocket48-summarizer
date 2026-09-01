@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import parse_qs
@@ -13,7 +14,13 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .auth import AuthContext
 from .datetimes import format_china_datetime as format_china_time
@@ -62,6 +69,7 @@ from .room_voice_admin import (
     list_safe_capture_sessions,
     load_pending_login,
     read_safe_monitor_status,
+    safe_capture_session,
     safe_capture_segment_path,
 )
 from .runtime_lock import shared_runtime_lock
@@ -823,7 +831,16 @@ async def room_voice_page(request: Request) -> Response:
                 ),
             }
         )
-    sessions = list_safe_capture_sessions(settings.room_voice_path)
+    repository = request.app.state.services.repository
+    sessions = [
+        {
+            **asdict(session),
+            "processing": repository.get_room_voice_processing(
+                session.session_id
+            ),
+        }
+        for session in list_safe_capture_sessions(settings.room_voice_path)
+    ]
     history_groups = [
         {
             "monitor_id": target["monitor_id"],
@@ -836,15 +853,15 @@ async def room_voice_page(request: Request) -> Response:
         group["monitor_id"]: group for group in history_groups
     }
     for session in sessions:
-        group = groups_by_id.get(session.monitor_id)
+        group = groups_by_id.get(session["monitor_id"])
         if group is None:
             group = {
-                "monitor_id": session.monitor_id,
-                "name": session.member_name or "未知监控目标",
+                "monitor_id": session["monitor_id"],
+                "name": session["member_name"] or "未知监控目标",
                 "sessions": [],
             }
             history_groups.append(group)
-            groups_by_id[session.monitor_id] = group
+            groups_by_id[session["monitor_id"]] = group
         group["sessions"].append(session)
     template_context = {
         "current_user": context.user if context else None,
@@ -883,6 +900,131 @@ async def room_voice_page(request: Request) -> Response:
         request=request,
         name="room_voice.html",
         context=template_context,
+    )
+
+
+@router.get(
+    "/room-voice/{session_id}/analysis",
+    response_class=HTMLResponse,
+)
+async def room_voice_analysis_page(
+    request: Request,
+    session_id: str,
+    offset: int = 0,
+) -> Response:
+    settings = request.app.state.settings
+    session = safe_capture_session(settings.room_voice_path, session_id)
+    if session is None:
+        raise AppError(
+            "room_voice_session_not_found",
+            "上麦录音会话不存在或不可公开读取",
+            False,
+        )
+    repository = request.app.state.services.repository
+    processing = repository.get_room_voice_processing(session_id)
+    if processing is None:
+        raise AppError(
+            "room_voice_processing_not_found",
+            "这段上麦录音尚未进入字幕与总结队列",
+            False,
+        )
+    offset = max(0, offset)
+    transcript = repository.get_room_voice_transcript(
+        session_id,
+        limit=500,
+        offset=offset,
+    )
+    transcript_count = repository.count_room_voice_transcript(session_id)
+    summary = None
+    if processing.summary_json:
+        try:
+            summary = FinalSummary.model_validate_json(
+                processing.summary_json
+            )
+        except ValidationError:
+            summary = None
+    context = optional_auth(request)
+    can_operate = (
+        context is not None
+        and context.user.username.casefold() == "ruoke"
+    )
+    return request.app.state.templates.TemplateResponse(
+        request=request,
+        name="room_voice_analysis.html",
+        context={
+            "current_user": context.user if context else None,
+            "csrf_token": context.csrf_token if context else "",
+            "can_operate": can_operate,
+            "session": session,
+            "processing": processing,
+            "summary": summary,
+            "transcript": transcript,
+            "transcript_count": transcript_count,
+            "offset": offset,
+            "next_offset": (
+                offset + len(transcript)
+                if offset + len(transcript) < transcript_count
+                else None
+            ),
+            "previous_offset": max(0, offset - 500) if offset else None,
+            "format_clock": format_clock,
+        },
+    )
+
+
+@router.post("/admin/room-voice/{session_id}/analysis/retry")
+async def room_voice_analysis_retry(
+    request: Request, session_id: str
+) -> Response:
+    context = require_room_voice_operator(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    request.app.state.services.repository.retry_room_voice_processing(
+        session_id
+    )
+    worker = request.app.state.services.worker
+    if worker is not None:
+        worker.notify()
+    return RedirectResponse(
+        f"/room-voice/{session_id}/analysis",
+        status_code=303,
+    )
+
+
+@router.get("/room-voice/{session_id}/transcript.srt")
+async def room_voice_transcript_download(
+    request: Request, session_id: str
+) -> Response:
+    session = safe_capture_session(
+        request.app.state.settings.room_voice_path,
+        session_id,
+    )
+    if session is None:
+        raise AppError(
+            "room_voice_session_not_found",
+            "上麦录音会话不存在或不可公开读取",
+            False,
+        )
+    segments = (
+        request.app.state.services.repository
+        .get_all_room_voice_transcript(session_id)
+    )
+    if not segments:
+        raise AppError(
+            "room_voice_transcript_not_ready",
+            "上麦录音字幕尚未生成",
+            True,
+        )
+    return Response(
+        content=transcript_to_srt(segments),
+        media_type="application/x-subrip; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="room-voice-{session_id}.srt"'
+            )
+        },
     )
 
 

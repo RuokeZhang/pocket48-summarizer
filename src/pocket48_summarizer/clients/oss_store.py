@@ -39,6 +39,10 @@ class OSSStore:
         prefix = self.settings.aliyun_oss_prefix.strip("/")
         return f"{prefix}/{job_id}/audio.mp3"
 
+    def room_voice_object_key(self, session_id: str) -> str:
+        prefix = self.settings.aliyun_oss_prefix.strip("/")
+        return f"{prefix}/room-voice/{session_id}/audio.mp3"
+
     def clip_object_key(self, job_id: str, filename: str) -> str:
         prefix = self.settings.aliyun_oss_clip_prefix.strip("/")
         return f"{prefix}/{job_id}/{filename}"

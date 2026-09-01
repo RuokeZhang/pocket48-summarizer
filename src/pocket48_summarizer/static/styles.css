@@ -167,6 +167,36 @@ button, input, select, textarea { font: inherit; }
 .admin-stat strong { overflow-wrap: anywhere; font-size: 19px; }
 .room-voice-monitor-technical { display: contents; }
 .room-voice-monitor-details { display: none; }
+
+.room-voice-transcript {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.room-voice-transcript li {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: var(--surface-soft);
+}
+
+.room-voice-transcript li p {
+  margin: 0.45rem 0 0;
+}
+
+.room-voice-transcript li small {
+  margin-left: 0.5rem;
+}
+
+.room-voice-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
 .admin-section-heading {
   display: flex;
   align-items: center;

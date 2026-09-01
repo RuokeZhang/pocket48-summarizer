@@ -762,6 +762,36 @@ class FFmpegRunner:
             str(output_path),
         ]
 
+    def build_concat_audio_command(
+        self,
+        manifest_path: Path,
+        output_path: Path,
+    ) -> list[str]:
+        return [
+            self.require_executable(),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(manifest_path),
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-b:a",
+            "64k",
+            "-y",
+            str(output_path),
+        ]
+
     def build_probe_command(self, manifest_url: str) -> list[str]:
         validate_https_url(
             manifest_url,
@@ -1245,6 +1275,73 @@ class FFmpegRunner:
                 raise AppError(
                     "clip_concat_output_missing",
                     "FFmpeg 未生成拼接视频",
+                    True,
+                )
+            temporary_path.replace(output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        finally:
+            manifest_path.unlink(missing_ok=True)
+        return output_path
+
+    async def concat_audio_segments(
+        self,
+        input_paths: list[Path],
+        output_path: Path,
+    ) -> Path:
+        if not input_paths:
+            raise AppError(
+                "room_voice_audio_missing",
+                "上麦录音没有可处理的音频分段",
+                False,
+            )
+        if any(not path.is_file() for path in input_paths):
+            raise AppError(
+                "room_voice_audio_segment_missing",
+                "上麦录音分段不存在",
+                True,
+            )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path = output_path.with_suffix(".concat.txt")
+        temporary_path = output_path.with_suffix(".part.mp3")
+        manifest_path.unlink(missing_ok=True)
+        temporary_path.unlink(missing_ok=True)
+        try:
+            lines: list[str] = []
+            for path in input_paths:
+                resolved = str(path.resolve())
+                if "\n" in resolved or "\r" in resolved:
+                    raise AppError(
+                        "room_voice_audio_path_invalid",
+                        "上麦录音分段路径无效",
+                        False,
+                    )
+                lines.append(
+                    "file '" + resolved.replace("'", "'\\''") + "'"
+                )
+            manifest_path.write_text(
+                "\n".join(lines) + "\n",
+                encoding="utf-8",
+            )
+            await self._run_command(
+                self.build_concat_audio_command(
+                    manifest_path,
+                    temporary_path,
+                ),
+                timeout_seconds=30 * 60,
+                heartbeat=None,
+                error_code="room_voice_audio_concat_failed",
+                error_message="合并上麦录音分段失败",
+                redact_value=None,
+            )
+            if (
+                not temporary_path.is_file()
+                or temporary_path.stat().st_size == 0
+            ):
+                raise AppError(
+                    "room_voice_audio_concat_missing",
+                    "FFmpeg 未生成上麦识别音频",
                     True,
                 )
             temporary_path.replace(output_path)

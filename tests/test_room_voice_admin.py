@@ -25,6 +25,7 @@ from pocket48_summarizer.clients.pocket48_voice import (
 )
 from pocket48_summarizer.config import AdditionalRoomVoiceTarget
 from pocket48_summarizer.errors import AppError
+from pocket48_summarizer.models import TranscriptSegment
 from pocket48_summarizer.room_voice_admin import (
     PA_REFERENCE_MAX_BYTES,
     PendingChallenge,
@@ -720,6 +721,58 @@ def test_admin_room_voice_redirect_is_public(settings, repository):
         assert response.headers["location"] == (
             "/room-voice?notice=sms-sent"
         )
+
+
+def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
+    settings, repository
+):
+    app = make_admin_app(settings, repository)
+    configured = app.state.settings
+    configured.prepare_directories()
+    session_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    write_capture_session(configured, session_id)
+    repository.enqueue_room_voice_processing(
+        session_id=session_id,
+        monitor_id="primary",
+        member_name="杨晔",
+        segment_count=1,
+        total_bytes=5,
+    )
+    claimed = repository.claim_next_room_voice_processing("worker", 120)
+    assert claimed
+    repository.replace_room_voice_transcript(
+        session_id,
+        [
+            TranscriptSegment(
+                sequence=1,
+                start_ms=0,
+                end_ms=1000,
+                text="公开字幕",
+            )
+        ],
+    )
+    repository.mark_room_voice_processing_failed(
+        session_id,
+        "temporary_failure",
+        "可以重试",
+        True,
+    )
+
+    with TestClient(app) as visitor:
+        history = visitor.get("/room-voice")
+        analysis = visitor.get(f"/room-voice/{session_id}/analysis")
+        denied = visitor.post(
+            f"/admin/room-voice/{session_id}/analysis/retry",
+            follow_redirects=False,
+        )
+
+    assert history.status_code == 200
+    assert f"/room-voice/{session_id}/analysis" in history.text
+    assert analysis.status_code == 200
+    assert "公开字幕" in analysis.text
+    assert "可以重试" in analysis.text
+    assert denied.status_code == 303
+    assert denied.headers["location"] == "/login"
 
 
 @pytest.mark.parametrize(

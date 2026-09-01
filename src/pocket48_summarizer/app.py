@@ -118,7 +118,11 @@ def create_app(
             status = 403
         if exc.code == "room_voice_operator_required":
             status = 403
-        if exc.code == "room_voice_segment_not_found":
+        if exc.code in {
+            "room_voice_processing_not_found",
+            "room_voice_segment_not_found",
+            "room_voice_session_not_found",
+        }:
             status = 404
         if exc.code == "daily_quota_exceeded":
             status = 429

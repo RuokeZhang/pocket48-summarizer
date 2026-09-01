@@ -57,6 +57,7 @@
                 <th data-i18n="roomVoiceStartEnd">开始 / 结束</th>
                 <th data-i18n="roomVoiceSegmentsSize">分段 / 总大小</th>
                 <th data-i18n="roomVoicePlayableSegments">可播放的已完成分段</th>
+                <th data-i18n="roomVoiceAnalysis">字幕与总结</th>
               </tr>
             </thead>
             <tbody>
@@ -77,9 +78,28 @@
                       <span class="muted" data-i18n="roomVoiceNoPlayableSegments">当前没有可安全播放的已完成分段。</span>
                     {% endfor %}
                   </td>
+                  <td>
+                    {% if session.processing %}
+                      <a href="/room-voice/{{ session.session_id }}/analysis">
+                        {% if session.processing.status == "completed" %}
+                          <span data-i18n="roomVoiceAnalysisReady">查看字幕与总结</span>
+                        {% elif session.processing.status == "failed" %}
+                          <span data-i18n="roomVoiceAnalysisFailed">处理失败，查看详情</span>
+                        {% else %}
+                          <span data-i18n="roomVoiceAnalysisProcessing">正在生成字幕与总结</span>
+                        {% endif %}
+                      </a>
+                      <small>
+                        {{ session.processing.progress_percent }}% ·
+                        <span data-operational-message="{{ session.processing.progress_message }}">{{ session.processing.progress_message }}</span>
+                      </small>
+                    {% else %}
+                      <span class="muted" data-i18n="roomVoiceAnalysisPending">等待后台发现</span>
+                    {% endif %}
+                  </td>
                 </tr>
               {% else %}
-                <tr><td colspan="5" data-i18n="roomVoiceNoSessions">还没有可安全显示的采集会话。</td></tr>
+                <tr><td colspan="6" data-i18n="roomVoiceNoSessions">还没有可安全显示的采集会话。</td></tr>
               {% endfor %}
             </tbody>
           </table>

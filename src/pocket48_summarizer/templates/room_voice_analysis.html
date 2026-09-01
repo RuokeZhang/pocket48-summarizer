@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}上麦字幕与总结{% endblock %}
+{% block content %}
+  <a class="back-link" href="/room-voice" data-i18n="roomVoiceBack">返回上麦记录</a>
+
+  <section class="hero compact-hero">
+    <div>
+      <p class="eyebrow">Room voice transcript</p>
+      <h1>{{ session.member_name or "未知成员" }}</h1>
+      <p class="lede">
+        {{ session.started_at or "—" }} · {{ session.segment_count }}
+        <span data-i18n="roomVoiceSegmentUnit">个录音分段</span>
+      </p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">Processing status</p>
+    <h2 data-i18n="roomVoiceAnalysisStatus">字幕与总结状态</h2>
+    <p>
+      <span class="status" data-job-status="{{ processing.status }}">{{ processing.status }}</span>
+      {{ processing.progress_percent }}% ·
+      <span data-operational-message="{{ processing.progress_message }}">{{ processing.progress_message }}</span>
+    </p>
+    {% if processing.error_message %}
+      <div class="notice error">
+        <strong data-server-message="{{ processing.error_message }}">{{ processing.error_message }}</strong>
+        {% if can_operate and processing.error_retryable %}
+          <form action="/admin/room-voice/{{ session.session_id }}/analysis/retry" method="post">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit" data-i18n="roomVoiceRetryAnalysis">重试字幕与总结</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+  </section>
+
+  {% if summary %}
+    <section class="panel summary-panel">
+      <p class="eyebrow">AI summary</p>
+      <h2 data-i18n="overview">摘要</h2>
+      <p class="summary-overview">{{ summary.overview }}</p>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Chapter guide</p>
+      <h2 data-i18n="timeline">时间线</h2>
+      <ol class="timeline">
+        {% for item in summary.timeline %}
+          <li>
+            <strong>{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }} · {{ item.title }}</strong>
+            <p>{{ item.detail }}</p>
+          </li>
+        {% endfor %}
+      </ol>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Key moments</p>
+      <h2 data-i18n="highlights">高光</h2>
+      <div class="highlight-grid">
+        {% for item in summary.highlights %}
+          <article>
+            <strong>{{ format_clock(item.start_ms) }}–{{ format_clock(item.end_ms) }}</strong>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.detail }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="panel">
+    <p class="eyebrow">Full captions</p>
+    <h2 data-i18n="transcript">字幕</h2>
+    {% if transcript %}
+      <p>
+        <a href="/room-voice/{{ session.session_id }}/transcript.srt" download data-i18n="roomVoiceDownloadSrt">下载 SRT 字幕</a>
+      </p>
+      <ol class="room-voice-transcript">
+        {% for segment in transcript %}
+          <li>
+            <strong>{{ format_clock(segment.start_ms) }}–{{ format_clock(segment.end_ms) }}</strong>
+            {% if segment.speaker_id %}<small>{{ segment.speaker_id }}</small>{% endif %}
+            <p>{{ segment.text }}</p>
+          </li>
+        {% endfor %}
+      </ol>
+      <nav class="room-voice-pagination">
+        {% if previous_offset is not none %}
+          <a href="?offset={{ previous_offset }}" data-i18n="previousPage">上一页</a>
+        {% endif %}
+        <span>{{ offset + 1 }}–{{ offset + transcript | length }} / {{ transcript_count }}</span>
+        {% if next_offset is not none %}
+          <a href="?offset={{ next_offset }}" data-i18n="nextPage">下一页</a>
+        {% endif %}
+      </nav>
+    {% else %}
+      <p class="muted" data-i18n="roomVoiceTranscriptPending">字幕尚未生成。</p>
+    {% endif %}
+  </section>
+{% endblock %}

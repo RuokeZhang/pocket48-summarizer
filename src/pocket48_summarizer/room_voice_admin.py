@@ -72,6 +72,14 @@ SAFE_SESSION_STATES = {
     "starting",
 }
 ACTIVE_SESSION_STATES = {"recording", "starting"}
+PROCESSABLE_SESSION_STATES = {
+    "completed",
+    "ended",
+    "interrupted",
+    "max_bytes",
+    "max_duration",
+    "partial",
+}
 SEGMENT_NAME_RE = re.compile(r"^segment-[0-9]{6}\.mp3$")
 PUBLIC_SESSION_LIMIT = 20
 PUBLIC_SEGMENT_LIMIT = 100
@@ -458,6 +466,61 @@ def list_safe_capture_sessions(
         if len(summaries) >= limit:
             break
     return summaries
+
+
+def list_processable_capture_sessions(
+    root: Path,
+) -> list[SafeCaptureSession]:
+    if not root.is_dir():
+        return []
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return []
+    sessions: list[SafeCaptureSession] = []
+    for child in children:
+        session_id = _strict_uuid(child.name)
+        if session_id is None or not _private_directory(child):
+            continue
+        state_path = child / "session.json"
+        try:
+            _require_private_file(
+                state_path, "房间上麦录音会话状态"
+            )
+        except ConfigurationError:
+            continue
+        summary = _safe_capture_session(
+            state_path,
+            session_id,
+            segment_limit=PUBLIC_SEGMENT_LIMIT,
+        )
+        if (
+            summary is not None
+            and summary.status in PROCESSABLE_SESSION_STATES
+            and summary.segments
+        ):
+            sessions.append(summary)
+    return sorted(
+        sessions,
+        key=lambda session: session.started_at or "",
+    )
+
+
+def safe_capture_session(
+    root: Path, session_id: str
+) -> SafeCaptureSession | None:
+    session_id = _strict_uuid(session_id)
+    if session_id is None:
+        return None
+    session_path = root / session_id
+    if not _private_directory(session_path):
+        return None
+    state_path = session_path / "session.json"
+    try:
+        _require_private_file(state_path, "房间上麦录音会话状态")
+    except ConfigurationError:
+        return None
+    return _safe_capture_session(state_path, session_id)
 
 
 def _safe_capture_session(

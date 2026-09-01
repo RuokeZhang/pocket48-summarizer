@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from typing import Protocol
 
 from pydantic import ValidationError
 
@@ -17,7 +18,6 @@ from ..models import (
     TimelineItem,
     TranscriptSegment,
 )
-from ..repository import JobRepository
 from .chunking import build_transcript_chunks
 from .prompts import (
     MAX_TIMELINE_EVENT_DURATION_MS,
@@ -31,11 +31,28 @@ from .renderer import render_summary_markdown
 ProgressCallback = Callable[[int, int], Awaitable[None]]
 
 
+class SummaryChunkRepository(Protocol):
+    def get_summary_chunks(
+        self, job_id: str, prompt_version: str
+    ) -> dict[int, tuple[str, str]]: ...
+
+    def save_summary_chunk(
+        self,
+        job_id: str,
+        chunk_index: int,
+        start_ms: int,
+        end_ms: int,
+        prompt_version: str,
+        input_hash: str,
+        response_json: str,
+    ) -> None: ...
+
+
 class SummarizationService:
     def __init__(
         self,
         settings: Settings,
-        repository: JobRepository,
+        repository: SummaryChunkRepository,
         client: OpenAICompatibleClient,
     ) -> None:
         self.settings = settings

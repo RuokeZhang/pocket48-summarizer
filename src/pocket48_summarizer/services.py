@@ -17,6 +17,10 @@ from .media.ffmpeg import FFmpegRunner
 from .media.hls import HLSInspector
 from .pipeline import ReplayPipeline
 from .repository import JobRepository
+from .room_voice_processing import (
+    RoomVoiceProcessingService,
+    RoomVoiceSummaryRepository,
+)
 from .summarization.service import SummarizationService
 from .translation import SubtitleTranslationService
 from .vocabulary import VocabularyManager
@@ -35,6 +39,7 @@ class ApplicationServices:
     dashscope: DashScopeClient | None = None
     llm: OpenAICompatibleClient | None = None
     translator: SubtitleTranslationService | None = None
+    room_voice_processor: RoomVoiceProcessingService | None = None
     member_catalog_client: MemberCatalogClient | None = None
     member_catalog: MemberCatalogService | None = None
     vocabulary: VocabularyManager | None = None
@@ -80,6 +85,19 @@ def build_services(
         llm,
         max_input_chars=settings.translation_max_input_chars,
     )
+    room_voice_processor = RoomVoiceProcessingService(
+        settings=settings,
+        repository=repository,
+        ffmpeg=FFmpegRunner(settings),
+        oss=oss,
+        dashscope=dashscope,
+        summarizer=SummarizationService(
+            settings,
+            RoomVoiceSummaryRepository(repository),
+            llm,
+        ),
+        vocabulary=vocabulary,
+    )
     pipeline = ReplayPipeline(
         settings=settings,
         repository=repository,
@@ -98,6 +116,7 @@ def build_services(
         translator,
         member_catalog,
         vocabulary,
+        room_voice_processor,
     )
     return ApplicationServices(
         repository=repository,
@@ -122,6 +141,7 @@ def build_services(
         dashscope=dashscope,
         llm=llm,
         translator=translator,
+        room_voice_processor=room_voice_processor,
         member_catalog_client=member_catalog_client,
         member_catalog=member_catalog,
         vocabulary=vocabulary,

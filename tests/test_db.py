@@ -47,6 +47,7 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "020_member_admin_disable.sql",
         "021_clip_landscape_theme.sql",
         "022_advance_danmaku_timestamps.sql",
+        "023_room_voice_processing.sql",
     ]
 
 

@@ -9,10 +9,15 @@ from time import monotonic
 from .config import Settings
 from .errors import AppError
 from .glossary import MemberCatalogService
-from .models import JobRecord, SubtitleTranslationRequestRecord
+from .models import (
+    JobRecord,
+    RoomVoiceProcessingRecord,
+    SubtitleTranslationRequestRecord,
+)
 from .pipeline import ReplayPipeline
 from .repository import JobRepository
 from .runtime_lock import shared_runtime_lock
+from .room_voice_processing import RoomVoiceProcessingService
 from .translation import SubtitleTranslationService
 from .vocabulary import VocabularyManager
 
@@ -26,6 +31,7 @@ class DurableWorker:
         translator: SubtitleTranslationService | None = None,
         member_catalog: MemberCatalogService | None = None,
         vocabulary: VocabularyManager | None = None,
+        room_voice_processor: RoomVoiceProcessingService | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
@@ -33,6 +39,7 @@ class DurableWorker:
         self.translator = translator
         self.member_catalog = member_catalog
         self.vocabulary = vocabulary
+        self.room_voice_processor = room_voice_processor
         self.worker_id = str(uuid.uuid4())
         self.logger = logging.getLogger(__name__)
         self._wake = asyncio.Event()
@@ -45,6 +52,10 @@ class DurableWorker:
         if self._task is not None:
             return
         await asyncio.to_thread(self.repository.recover_expired_jobs)
+        if self.room_voice_processor is not None:
+            await asyncio.to_thread(
+                self.repository.recover_expired_room_voice_processing
+            )
         if self.translator is not None:
             await asyncio.to_thread(
                 self.repository.recover_expired_subtitle_translations
@@ -78,8 +89,13 @@ class DurableWorker:
         while not self._stopping.is_set():
             await self._refresh_terminology_if_due()
             await self._cleanup_expired_artifacts_if_due()
+            if self.room_voice_processor is not None:
+                await asyncio.to_thread(
+                    self.room_voice_processor.discover_sessions
+                )
             maintenance_active = False
             translation = None
+            room_voice_job = None
             with shared_runtime_lock(
                 self.settings.worker_operation_lock_path
             ):
@@ -92,7 +108,17 @@ class DurableWorker:
                         self.worker_id,
                         self.settings.worker_lease_seconds,
                     )
-                    if job is None and self.translator is not None:
+                    if job is None and self.room_voice_processor is not None:
+                        room_voice_job = await asyncio.to_thread(
+                            self.repository.claim_next_room_voice_processing,
+                            self.worker_id,
+                            self.settings.worker_lease_seconds,
+                        )
+                    if (
+                        job is None
+                        and room_voice_job is None
+                        and self.translator is not None
+                    ):
                         translation = await asyncio.to_thread(
                             self.repository.claim_next_subtitle_translation,
                             self.worker_id,
@@ -110,6 +136,9 @@ class DurableWorker:
                 continue
             if job is not None:
                 await self._process_job(job)
+                continue
+            if room_voice_job is not None:
+                await self._process_room_voice(room_voice_job)
                 continue
             if translation is not None:
                 await self._process_translation(translation)
@@ -284,6 +313,51 @@ class DurableWorker:
             except asyncio.CancelledError:
                 pass
 
+    async def _process_room_voice(
+        self, job: RoomVoiceProcessingRecord
+    ) -> None:
+        if self.room_voice_processor is None:
+            return
+        heartbeat = asyncio.create_task(
+            self._room_voice_heartbeat(job.session_id),
+            name=f"pocket48-room-voice-heartbeat-{job.session_id}",
+        )
+        try:
+            await self.room_voice_processor.run(job.session_id)
+        except asyncio.CancelledError:
+            await asyncio.to_thread(
+                self.repository.release_owned_room_voice_processing,
+                job.session_id,
+                self.worker_id,
+            )
+            raise
+        except AppError as exc:
+            await asyncio.to_thread(
+                self.repository.mark_room_voice_processing_failed,
+                job.session_id,
+                exc.code,
+                exc.message,
+                exc.retryable,
+            )
+        except Exception:
+            self.logger.exception(
+                "Unexpected room voice processing failure",
+                extra={"session_id": job.session_id},
+            )
+            await asyncio.to_thread(
+                self.repository.mark_room_voice_processing_failed,
+                job.session_id,
+                "room_voice_processing_internal_error",
+                "处理上麦录音时发生未预期内部错误",
+                True,
+            )
+        finally:
+            heartbeat.cancel()
+            try:
+                await heartbeat
+            except asyncio.CancelledError:
+                pass
+
     async def _heartbeat(self, job_id: str) -> None:
         interval = max(10, self.settings.worker_lease_seconds // 3)
         while True:
@@ -323,6 +397,24 @@ class DurableWorker:
                 )
                 return
 
+    async def _room_voice_heartbeat(self, session_id: str) -> None:
+        interval = max(10, self.settings.worker_lease_seconds // 3)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await asyncio.to_thread(
+                    self.repository.touch_room_voice_processing_lease,
+                    session_id,
+                    self.worker_id,
+                    self.settings.worker_lease_seconds,
+                )
+            except AppError:
+                self.logger.warning(
+                    "Room voice processing heartbeat lost its lease",
+                    extra={"session_id": session_id},
+                )
+                return
+
     async def _cleanup_expired_artifacts_if_due(self) -> None:
         now = monotonic()
         if now - self._last_cleanup < 30 * 60:
@@ -342,4 +434,23 @@ class DurableWorker:
                 self.logger.warning(
                     "Failed artifact cleanup did not complete",
                     extra={"job_id": job.id, "error_code": exc.code},
+                )
+        if self.room_voice_processor is None:
+            return
+        room_voice_jobs = await asyncio.to_thread(
+            self.repository.list_failed_room_voice_artifact_jobs,
+            cutoff,
+        )
+        for job in room_voice_jobs:
+            try:
+                await self.room_voice_processor.cleanup_failed_artifacts(
+                    job.session_id
+                )
+            except AppError as exc:
+                self.logger.warning(
+                    "Failed room voice artifact cleanup did not complete",
+                    extra={
+                        "session_id": job.session_id,
+                        "error_code": exc.code,
+                    },
                 )

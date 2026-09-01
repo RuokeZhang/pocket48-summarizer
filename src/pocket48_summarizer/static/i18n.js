@@ -22,6 +22,17 @@
       roomVoiceStartEnd: "开始 / 结束",
       roomVoiceSegmentsSize: "分段 / 总大小",
       roomVoicePlayableSegments: "可播放的已完成分段",
+      roomVoiceAnalysis: "字幕与总结",
+      roomVoiceAnalysisReady: "查看字幕与总结",
+      roomVoiceAnalysisFailed: "处理失败，查看详情",
+      roomVoiceAnalysisProcessing: "正在生成字幕与总结",
+      roomVoiceAnalysisPending: "等待后台发现",
+      roomVoiceBack: "返回上麦记录",
+      roomVoiceSegmentUnit: "个录音分段",
+      roomVoiceAnalysisStatus: "字幕与总结状态",
+      roomVoiceRetryAnalysis: "重试字幕与总结",
+      roomVoiceTranscriptPending: "字幕尚未生成。",
+      roomVoiceDownloadSrt: "下载 SRT 字幕",
       roomVoiceBytes: "{count} 字节",
       roomVoiceDownloadSegment: "下载 {name}",
       roomVoiceNoPlayableSegments: "当前没有可安全播放的已完成分段。",
@@ -394,6 +405,17 @@
       roomVoiceStartEnd: "Start / end",
       roomVoiceSegmentsSize: "Segments / total size",
       roomVoicePlayableSegments: "Playable completed segments",
+      roomVoiceAnalysis: "Transcript and summary",
+      roomVoiceAnalysisReady: "View transcript and summary",
+      roomVoiceAnalysisFailed: "Processing failed — view details",
+      roomVoiceAnalysisProcessing: "Generating transcript and summary",
+      roomVoiceAnalysisPending: "Waiting for background discovery",
+      roomVoiceBack: "Back to room audio",
+      roomVoiceSegmentUnit: "recording segments",
+      roomVoiceAnalysisStatus: "Transcript and summary status",
+      roomVoiceRetryAnalysis: "Retry transcript and summary",
+      roomVoiceTranscriptPending: "The transcript is not available yet.",
+      roomVoiceDownloadSrt: "Download SRT captions",
       roomVoiceBytes: "{count} bytes",
       roomVoiceDownloadSegment: "Download {name}",
       roomVoiceNoPlayableSegments: "No completed segment is currently safe to play.",
@@ -764,7 +786,17 @@
     "等待重试": "Waiting to retry",
     "应用重启后等待恢复": "Waiting to recover after restart",
     "应用停止，任务已安全重新排队": "App stopped; job was safely requeued",
-    "Worker停止，任务已重新排队": "Worker stopped; job was requeued"
+    "Worker停止，任务已重新排队": "Worker stopped; job was requeued",
+    "等待生成字幕与总结": "Waiting to generate transcript and summary",
+    "正在合并上麦录音分段": "Combining room audio segments",
+    "正在上传临时识别音频": "Uploading temporary transcription audio",
+    "正在提交上麦录音语音识别": "Submitting room audio transcription",
+    "正在等待上麦录音语音识别": "Waiting for room audio transcription",
+    "正在生成上麦录音时间戳字幕": "Generating timestamped room audio captions",
+    "正在分段总结上麦字幕": "Summarizing room audio caption chunks",
+    "正在生成上麦录音结构化总结": "Generating the structured room audio summary",
+    "正在清理上麦识别临时音频": "Cleaning up temporary room transcription audio",
+    "字幕与总结已完成": "Transcript and summary completed"
   };
 
   const statusLabels = {
@@ -919,6 +951,12 @@
     const chunkMatch = compact.match(/^正在总结字幕分段(\d+)\/(\d+)$/);
     if (chunkMatch) {
       return `Summarizing caption chunks ${chunkMatch[1]}/${chunkMatch[2]}`;
+    }
+    const roomVoiceChunkMatch = compact.match(
+      /^正在总结上麦字幕分段(\d+)\/(\d+)$/
+    );
+    if (roomVoiceChunkMatch) {
+      return `Summarizing room audio caption chunks ${roomVoiceChunkMatch[1]}/${roomVoiceChunkMatch[2]}`;
     }
     return operationalMessages[compact] || message;
   };

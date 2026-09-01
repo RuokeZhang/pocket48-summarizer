@@ -31,6 +31,8 @@ from .models import (
     MemberCatalogRecord,
     MemberJobFilterRecord,
     ReplayMetadata,
+    RoomVoiceProcessingRecord,
+    RoomVoiceProcessingStage,
     SubtitleTranslationRequestRecord,
     SubtitleTranslationStatus,
     TranscriptSegment,
@@ -148,6 +150,14 @@ class JobRepository:
         if row is None:
             return None
         return SubtitleTranslationRequestRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _room_voice_processing(
+        row: sqlite3.Row | None,
+    ) -> RoomVoiceProcessingRecord | None:
+        if row is None:
+            return None
+        return RoomVoiceProcessingRecord.model_validate(dict(row))
 
     @staticmethod
     def _member_catalog(
@@ -2123,6 +2133,555 @@ class JobRepository:
         suggestion = self._clip_boundary_suggestion(row)
         assert suggestion is not None
         return suggestion
+
+    def enqueue_room_voice_processing(
+        self,
+        *,
+        session_id: str,
+        monitor_id: str,
+        member_name: str | None,
+        segment_count: int,
+        total_bytes: int,
+    ) -> RoomVoiceProcessingRecord:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO room_voice_processing_jobs (
+                    session_id, monitor_id, member_name, status, stage,
+                    progress_percent, progress_message, segment_count,
+                    total_bytes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    monitor_id,
+                    member_name,
+                    JobStatus.QUEUED,
+                    RoomVoiceProcessingStage.QUEUED,
+                    "等待生成字幕与总结",
+                    segment_count,
+                    total_bytes,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        record = self._room_voice_processing(row)
+        assert record is not None
+        return record
+
+    def get_room_voice_processing(
+        self, session_id: str
+    ) -> RoomVoiceProcessingRecord | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        return self._room_voice_processing(row)
+
+    def list_failed_room_voice_artifact_jobs(
+        self, updated_before: str
+    ) -> list[RoomVoiceProcessingRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE status = ? AND updated_at < ?
+                  AND (audio_path IS NOT NULL OR oss_object_key IS NOT NULL)
+                ORDER BY updated_at
+                """,
+                (JobStatus.FAILED, updated_before),
+            ).fetchall()
+        return [
+            record
+            for row in rows
+            if (record := self._room_voice_processing(row)) is not None
+        ]
+
+    def claim_next_room_voice_processing(
+        self, worker_id: str, lease_seconds: int
+    ) -> RoomVoiceProcessingRecord | None:
+        now = datetime.now(UTC)
+        now_text = now.isoformat()
+        lease = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE status = ?
+                ORDER BY created_at
+                LIMIT 1
+                """,
+                (JobStatus.QUEUED,),
+            ).fetchone()
+            if row is None:
+                return None
+            stage = (
+                RoomVoiceProcessingStage.PREPARING_AUDIO
+                if row["stage"] == RoomVoiceProcessingStage.QUEUED
+                else row["stage"]
+            )
+            updated = connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET status = ?, stage = ?, worker_id = ?,
+                    lease_expires_at = ?, started_at = COALESCE(started_at, ?),
+                    error_code = NULL, error_message = NULL,
+                    error_retryable = 0, updated_at = ?
+                WHERE session_id = ? AND status = ?
+                """,
+                (
+                    JobStatus.RUNNING,
+                    stage,
+                    worker_id,
+                    lease,
+                    now_text,
+                    now_text,
+                    row["session_id"],
+                    JobStatus.QUEUED,
+                ),
+            ).rowcount
+            if updated != 1:
+                return None
+            claimed = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE session_id = ?
+                """,
+                (row["session_id"],),
+            ).fetchone()
+        return self._room_voice_processing(claimed)
+
+    def recover_expired_room_voice_processing(self) -> int:
+        now = utcnow()
+        with self.database.connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET status = ?, worker_id = NULL, lease_expires_at = NULL,
+                    progress_message = ?, updated_at = ?
+                WHERE status = ? AND lease_expires_at IS NOT NULL
+                  AND lease_expires_at < ?
+                """,
+                (
+                    JobStatus.QUEUED,
+                    "应用重启后等待恢复",
+                    now,
+                    JobStatus.RUNNING,
+                    now,
+                ),
+            ).rowcount
+        return updated
+
+    def touch_room_voice_processing_lease(
+        self, session_id: str, worker_id: str, lease_seconds: int
+    ) -> None:
+        now = datetime.now(UTC)
+        lease = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self.database.connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET lease_expires_at = ?, updated_at = ?
+                WHERE session_id = ? AND status = ? AND worker_id = ?
+                """,
+                (
+                    lease,
+                    now.isoformat(),
+                    session_id,
+                    JobStatus.RUNNING,
+                    worker_id,
+                ),
+            ).rowcount
+        if updated != 1:
+            raise AppError(
+                "room_voice_processing_lease_lost",
+                "上麦录音处理租约已失效",
+                True,
+            )
+
+    def release_owned_room_voice_processing(
+        self, session_id: str, worker_id: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET status = ?, worker_id = NULL, lease_expires_at = NULL,
+                    progress_message = ?, updated_at = ?
+                WHERE session_id = ? AND status = ? AND worker_id = ?
+                """,
+                (
+                    JobStatus.QUEUED,
+                    "应用停止，任务已安全重新排队",
+                    utcnow(),
+                    session_id,
+                    JobStatus.RUNNING,
+                    worker_id,
+                ),
+            )
+
+    def set_room_voice_processing_stage(
+        self,
+        session_id: str,
+        stage: RoomVoiceProcessingStage,
+        progress_percent: int,
+        message: str,
+    ) -> None:
+        with self.database.connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET stage = ?, progress_percent = ?, progress_message = ?,
+                    updated_at = ?
+                WHERE session_id = ? AND status = ?
+                """,
+                (
+                    stage,
+                    max(0, min(100, progress_percent)),
+                    message,
+                    utcnow(),
+                    session_id,
+                    JobStatus.RUNNING,
+                ),
+            ).rowcount
+        if updated != 1:
+            raise AppError(
+                "invalid_room_voice_processing_transition",
+                "无法更新非运行中的上麦录音处理任务",
+                False,
+            )
+
+    def set_room_voice_audio_path(
+        self, session_id: str, path: str | None
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET audio_path = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (path, utcnow(), session_id),
+            )
+
+    def set_room_voice_oss_object(
+        self, session_id: str, key: str | None
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET oss_object_key = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (key, utcnow(), session_id),
+            )
+
+    def set_room_voice_dashscope_task(
+        self, session_id: str, task_id: str, task_status: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET dashscope_task_id = ?, dashscope_task_status = ?,
+                    updated_at = ?
+                WHERE session_id = ?
+                """,
+                (task_id, task_status, utcnow(), session_id),
+            )
+
+    def set_room_voice_dashscope_status(
+        self, session_id: str, task_status: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET dashscope_task_status = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (task_status, utcnow(), session_id),
+            )
+
+    def save_room_voice_asr_raw(
+        self, session_id: str, payload: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET asr_raw_json = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (payload, utcnow(), session_id),
+            )
+
+    def replace_room_voice_transcript(
+        self,
+        session_id: str,
+        segments: Iterable[TranscriptSegment],
+    ) -> None:
+        rows = list(segments)
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                DELETE FROM room_voice_transcript_segments
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            )
+            connection.executemany(
+                """
+                INSERT INTO room_voice_transcript_segments (
+                    session_id, sequence, start_ms, end_ms, speaker_id, text
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        session_id,
+                        segment.sequence,
+                        segment.start_ms,
+                        segment.end_ms,
+                        segment.speaker_id,
+                        segment.text,
+                    )
+                    for segment in rows
+                ],
+            )
+
+    def get_room_voice_transcript(
+        self,
+        session_id: str,
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[TranscriptSegment]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT sequence, start_ms, end_ms, speaker_id, text
+                FROM room_voice_transcript_segments
+                WHERE session_id = ?
+                ORDER BY sequence
+                LIMIT ? OFFSET ?
+                """,
+                (session_id, limit, offset),
+            ).fetchall()
+        return [
+            TranscriptSegment.model_validate(dict(row)) for row in rows
+        ]
+
+    def get_all_room_voice_transcript(
+        self, session_id: str
+    ) -> list[TranscriptSegment]:
+        return self.get_room_voice_transcript(
+            session_id, limit=100_000, offset=0
+        )
+
+    def count_room_voice_transcript(self, session_id: str) -> int:
+        with self.database.connect() as connection:
+            return int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM room_voice_transcript_segments
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()["count"]
+            )
+
+    def save_room_voice_summary_chunk(
+        self,
+        session_id: str,
+        chunk_index: int,
+        start_ms: int,
+        end_ms: int,
+        prompt_version: str,
+        input_hash: str,
+        response_json: str,
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO room_voice_summary_chunks (
+                    session_id, chunk_index, start_ms, end_ms,
+                    prompt_version, input_hash, response_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id, chunk_index, prompt_version)
+                DO UPDATE SET
+                    start_ms = excluded.start_ms,
+                    end_ms = excluded.end_ms,
+                    input_hash = excluded.input_hash,
+                    response_json = excluded.response_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    session_id,
+                    chunk_index,
+                    start_ms,
+                    end_ms,
+                    prompt_version,
+                    input_hash,
+                    response_json,
+                    utcnow(),
+                ),
+            )
+
+    def get_room_voice_summary_chunks(
+        self, session_id: str, prompt_version: str
+    ) -> dict[int, tuple[str, str]]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT chunk_index, input_hash, response_json
+                FROM room_voice_summary_chunks
+                WHERE session_id = ? AND prompt_version = ?
+                """,
+                (session_id, prompt_version),
+            ).fetchall()
+        return {
+            row["chunk_index"]: (row["input_hash"], row["response_json"])
+            for row in rows
+        }
+
+    def save_room_voice_summary(
+        self,
+        session_id: str,
+        summary_json: str,
+        summary_markdown: str,
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET summary_json = ?, summary_markdown = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (summary_json, summary_markdown, utcnow(), session_id),
+            )
+
+    def mark_room_voice_processing_completed(
+        self, session_id: str
+    ) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET status = ?, stage = ?, progress_percent = 100,
+                    progress_message = ?, completed_at = ?, updated_at = ?,
+                    worker_id = NULL, lease_expires_at = NULL,
+                    error_code = NULL, error_message = NULL,
+                    error_retryable = 0
+                WHERE session_id = ? AND status = ?
+                """,
+                (
+                    JobStatus.COMPLETED,
+                    RoomVoiceProcessingStage.COMPLETED,
+                    "字幕与总结已完成",
+                    now,
+                    now,
+                    session_id,
+                    JobStatus.RUNNING,
+                ),
+            )
+
+    def mark_room_voice_processing_failed(
+        self,
+        session_id: str,
+        code: str,
+        message: str,
+        retryable: bool,
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET status = ?, error_code = ?, error_message = ?,
+                    error_retryable = ?, progress_message = ?, updated_at = ?,
+                    worker_id = NULL, lease_expires_at = NULL
+                WHERE session_id = ?
+                """,
+                (
+                    JobStatus.FAILED,
+                    code,
+                    message,
+                    int(retryable),
+                    message,
+                    utcnow(),
+                    session_id,
+                ),
+            )
+
+    def retry_room_voice_processing(
+        self, session_id: str
+    ) -> RoomVoiceProcessingRecord:
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise AppError(
+                    "room_voice_processing_not_found",
+                    "上麦录音处理任务不存在",
+                    False,
+                )
+            if row["status"] != JobStatus.FAILED or not row[
+                "error_retryable"
+            ]:
+                raise AppError(
+                    "room_voice_processing_not_retryable",
+                    "当前上麦录音处理任务不可重试",
+                    False,
+                )
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET status = ?, retry_count = retry_count + 1,
+                    error_code = NULL, error_message = NULL,
+                    error_retryable = 0, progress_message = ?,
+                    worker_id = NULL, lease_expires_at = NULL,
+                    updated_at = ?
+                WHERE session_id = ?
+                """,
+                (
+                    JobStatus.QUEUED,
+                    "等待重试",
+                    utcnow(),
+                    session_id,
+                ),
+            )
+            updated = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        record = self._room_voice_processing(updated)
+        assert record is not None
+        return record
 
     def recover_expired_jobs(self) -> int:
         now = utcnow()

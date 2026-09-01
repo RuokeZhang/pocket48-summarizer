@@ -33,6 +33,18 @@ class JobStage(StrEnum):
     COMPLETED = "completed"
 
 
+class RoomVoiceProcessingStage(StrEnum):
+    QUEUED = "queued"
+    PREPARING_AUDIO = "preparing_audio"
+    UPLOADING_AUDIO = "uploading_audio"
+    TRANSCRIBING = "transcribing"
+    NORMALIZING_TRANSCRIPT = "normalizing_transcript"
+    SUMMARIZING_CHUNKS = "summarizing_chunks"
+    SUMMARIZING_FINAL = "summarizing_final"
+    CLEANING_UP = "cleaning_up"
+    COMPLETED = "completed"
+
+
 class SubtitleTranslationStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -283,6 +295,37 @@ class JobRecord(BaseModel):
     error_message: str | None = None
     error_retryable: bool = False
     cleanup_warning: str | None = None
+    retry_count: int = 0
+    worker_id: str | None = None
+    lease_expires_at: str | None = None
+    created_at: str
+    updated_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+
+
+class RoomVoiceProcessingRecord(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: str
+    monitor_id: str
+    member_name: str | None = None
+    status: JobStatus
+    stage: RoomVoiceProcessingStage
+    progress_percent: int
+    progress_message: str
+    segment_count: int
+    total_bytes: int
+    audio_path: str | None = None
+    oss_object_key: str | None = None
+    dashscope_task_id: str | None = None
+    dashscope_task_status: str | None = None
+    asr_raw_json: str | None = None
+    summary_json: str | None = None
+    summary_markdown: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    error_retryable: bool = False
     retry_count: int = 0
     worker_id: str | None = None
     lease_expires_at: str | None = None
