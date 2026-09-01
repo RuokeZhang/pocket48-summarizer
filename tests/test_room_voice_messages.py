@@ -77,7 +77,7 @@ async def test_fetches_and_persists_minimized_room_messages(
 
     completed = repository.get_room_voice_processing(session_id)
     assert completed and completed.messages_status == "completed"
-    assert completed.messages_version == "public-text-v1"
+    assert completed.messages_version == "public-text-v2"
     assert completed.room_id == "67333093"
     assert client.fetch_call == {
         "room_id": 67333093,

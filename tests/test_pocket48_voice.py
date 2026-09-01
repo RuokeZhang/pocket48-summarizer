@@ -361,7 +361,8 @@ async def test_fetches_only_deduplicated_public_fan_text_messages(
         assert request.url.path.endswith("/im/api/v1/chatroom/msg/list/all")
         assert json.loads(request.content) == {
             "roomId": "67333093",
-            "needTop1Msg": False,
+            "ownerId": "6744",
+            "needTop1Msg": "false",
             "nextTime": "0",
         }
         messages = [

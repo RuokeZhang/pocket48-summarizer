@@ -13,7 +13,7 @@ from .errors import AppError, ConfigurationError
 from .models import RoomVoiceProcessingRecord, RoomVoicePublicMessageRecord
 from .repository import JobRepository
 
-ROOM_VOICE_MESSAGES_VERSION = "public-text-v1"
+ROOM_VOICE_MESSAGES_VERSION = "public-text-v2"
 
 
 class RoomVoiceMessageService:

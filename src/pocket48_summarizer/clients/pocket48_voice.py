@@ -424,7 +424,8 @@ class Pocket48VoiceClient:
                 ROOM_MESSAGES_PATH,
                 {
                     "roomId": str(room_id),
-                    "needTop1Msg": False,
+                    "ownerId": str(member_id),
+                    "needTop1Msg": "false",
                     "nextTime": str(next_time),
                 },
             )
