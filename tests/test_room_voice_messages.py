@@ -174,3 +174,38 @@ def test_stale_worker_cannot_replace_reclaimed_room_messages(repository):
     )
     stored = repository.get_room_voice_public_messages(session_id)
     assert [item.message_id for item in stored] == ["message-b"]
+
+
+def test_metadata_backfill_requeues_configuration_failure(repository):
+    session_id = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+    repository.enqueue_room_voice_processing(
+        session_id=session_id,
+        monitor_id="wang-ruiqi",
+        member_name="王睿琦",
+        segment_count=1,
+        total_bytes=100,
+    )
+    claimed = repository.claim_next_room_voice_messages("worker", 120)
+    assert claimed
+    repository.mark_room_voice_messages_failed(
+        session_id,
+        "worker",
+        "configuration_error",
+        "上麦成员 ID 缺失或无效",
+        True,
+    )
+
+    updated = repository.enqueue_room_voice_processing(
+        session_id=session_id,
+        monitor_id="wang-ruiqi",
+        member_name="王睿琦",
+        member_id="530390",
+        capture_started_at="2026-09-01T15:00:00+00:00",
+        capture_ended_at="2026-09-01T15:05:00+00:00",
+        segment_count=1,
+        total_bytes=100,
+    )
+
+    assert updated.messages_status == "queued"
+    assert updated.messages_error_code is None
+    assert updated.member_id == "530390"

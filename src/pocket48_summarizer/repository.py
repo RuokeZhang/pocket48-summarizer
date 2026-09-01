@@ -2203,6 +2203,29 @@ class JobRepository:
                     session_id,
                 ),
             )
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_status = ?,
+                    messages_error_code = NULL,
+                    messages_error_message = NULL,
+                    messages_error_retryable = 0,
+                    messages_worker_id = NULL,
+                    messages_lease_expires_at = NULL,
+                    updated_at = ?
+                WHERE session_id = ? AND messages_status = ?
+                  AND messages_error_code = 'configuration_error'
+                  AND member_id IS NOT NULL
+                  AND capture_started_at IS NOT NULL
+                  AND capture_ended_at IS NOT NULL
+                """,
+                (
+                    JobStatus.QUEUED,
+                    now,
+                    session_id,
+                    JobStatus.FAILED,
+                ),
+            )
             row = connection.execute(
                 """
                 SELECT * FROM room_voice_processing_jobs

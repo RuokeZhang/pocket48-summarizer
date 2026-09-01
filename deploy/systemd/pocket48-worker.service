@@ -9,6 +9,7 @@ User=pocket48
 Group=pocket48
 WorkingDirectory=/opt/pocket48-summarizer-worker
 EnvironmentFile=/etc/pocket48-summarizer/app.env
+EnvironmentFile=/opt/pocket48-summarizer-worker/deploy/room-voice-target.env
 Environment=ENABLE_WORKER=true
 Environment=ENABLE_CLIPPER=false
 Environment=MAINTENANCE_DIR=/run/pocket48-summarizer
