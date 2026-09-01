@@ -58,7 +58,8 @@ def test_voice_monitor_readiness_matches_candidate_targets(tmp_path):
         'POCKET48_VOICE_ADDITIONAL_TARGETS_JSON='
         "'"
         '[{"id":"wang-ruiqi","name":"王睿琦","member_id":530390},'
-        '{"id":"yang-bingyi","name":"杨冰怡","member_id":6744}]'
+        '{"id":"yang-bingyi","name":"杨冰怡","member_id":6744},'
+        '{"id":"wu-bohan","name":"武博涵","member_id":54526095}]'
         "'\n",
         encoding="utf-8",
     )
@@ -74,9 +75,15 @@ def test_voice_monitor_readiness_matches_candidate_targets(tmp_path):
     yang_status = runtime / "room-voice-monitor-yang-bingyi-status.json"
     yang_ready.write_text(str(release), encoding="utf-8")
     write_status(yang_status)
+    assert run_helper(release, runtime).stdout == "not-ready\n"
+
+    wu_ready = runtime / "room-voice-monitor-wu-bohan-ready"
+    wu_status = runtime / "room-voice-monitor-wu-bohan-status.json"
+    wu_ready.write_text(str(release), encoding="utf-8")
+    write_status(wu_status)
     assert run_helper(release, runtime).stdout == "ready\n"
 
-    write_status(yang_status, "configuration_error")
+    write_status(wu_status, "configuration_error")
     assert run_helper(release, runtime).stdout == "not-ready\n"
 
 

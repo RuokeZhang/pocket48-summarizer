@@ -311,7 +311,7 @@ POCKET48_VOICE_MEMBER_ID=407126
 POCKET48_VOICE_MEMBER_NAME=杨晔
 POCKET48_VOICE_CHANNEL_ID=7587624
 POCKET48_VOICE_SERVER_ID=6227955
-POCKET48_VOICE_ADDITIONAL_TARGETS_JSON='[{"id":"wang-ruiqi","name":"王睿琦","member_id":530390},{"id":"yang-bingyi","name":"杨冰怡","member_id":6744}]'
+POCKET48_VOICE_ADDITIONAL_TARGETS_JSON='[{"id":"wang-ruiqi","name":"王睿琦","member_id":530390},{"id":"yang-bingyi","name":"杨冰怡","member_id":6744},{"id":"wu-bohan","name":"武博涵","member_id":54526095}]'
 POCKET48_VOICE_STREAM_HOSTS=已人工核验的精确流主机
 POCKET48_VOICE_POLL_SECONDS=60
 POCKET48_VOICE_POLL_JITTER_SECONDS=5
@@ -328,7 +328,7 @@ POCKET48_VOICE_ALLOW_PUBLIC_STREAM_HOSTS=false
 `member_id` 动态解析当前房间并缓存结果。`POCKET48_VOICE_MONITOR_ID` 由
 进程内部克隆配置时使用，普通部署保持默认 `primary`。primary 继续使用
 `room-voice-monitor-ready`/`room-voice-monitor-status.json`，命名目标使用
-带安全 ID 的独立文件。三个目标都空闲时总 API 负载约为每分钟 3 次请求。
+带安全 ID 的独立文件。四个目标都空闲时总 API 负载约为每分钟 4 次请求。
 
 本地启动：
 
@@ -338,7 +338,7 @@ pocket48-voice-monitor
 
 生产环境可以先启动独立监控进程；私有凭证尚未创建时，其状态会保持为
 `waiting_credentials`。公开页面 `/room-voice` 无需登录即可查看杨晔、
-王睿琦和杨冰怡的脱敏状态、最近 20 个采集会话，并播放或下载每个会话最多 100 个
+王睿琦、杨冰怡和武博涵的脱敏状态、最近 20 个采集会话，并播放或下载每个会话最多 100 个
 安全完成的 MP3 分段。旧地址 `/admin/room-voice` 会重定向到该公开页面。
 只有站点用户名大小写折叠后精确等于 `ruoke` 的已登录用户会看到账号维护区，
 并可明确提交一次手机号发送短信，再在 10 分钟内提交手机号和验证码完成登录；

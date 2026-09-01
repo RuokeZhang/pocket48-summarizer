@@ -41,16 +41,16 @@ AI 封面，再填写 Ark 的 `ARK_API_KEY` 和控制台显示的实际
 `ALIYUN_OSS_CLIP_PREFIX`，不要为该前缀配置自动过期。
 
 房间上麦监控使用一个独立的 `pocket48-voice-monitor.service`，在同一
-进程内并发运行杨晔 primary 任务以及王睿琦、杨冰怡命名任务；任一目标的
+进程内并发运行杨晔 primary 任务以及王睿琦、杨冰怡、武博涵命名任务；任一目标的
 长时间录音不会阻塞其他目标继续每 60 秒轮询。附加目标只提交 member ID，
-服务会使用生产凭证动态解析当前 channel/server，不猜测 server ID。三个
-目标都空闲时总 API 负载约为每分钟 3 次请求。目标 ID 和
+服务会使用生产凭证动态解析当前 channel/server，不猜测 server ID。四个
+目标都空闲时总 API 负载约为每分钟 4 次请求。目标 ID 和
 单次 4 小时/2 GiB、历史总量 20 GiB 和磁盘预留 5 GiB 的安全上限
 来自仓库内不含秘密且由 release 管理的
 `deploy/room-voice-target.env`；token 和动态 `pa` 种子只写入
 `/var/lib/pocket48-summarizer/private/` 的 `0600` 文件。首次部署后
 服务会以 `waiting_credentials` 保持就绪。`/room-voice` 对所有访客公开，
-展示三个目标的脱敏状态和最近安全完成的本地 MP3 分段，并允许浏览器播放或
+展示四个目标的脱敏状态和最近安全完成的本地 MP3 分段，并允许浏览器播放或
 下载；旧 `/admin/room-voice` 地址只重定向到该页面。只有站点用户名大小写
 折叠后精确等于 `ruoke` 的已登录用户可看到并提交短信/验证码维护表单，其他
 用户（包括其他管理员）由服务端拒绝。成功后 monitor 会热加载凭证，无需
