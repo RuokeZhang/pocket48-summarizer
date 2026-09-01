@@ -269,7 +269,7 @@ button, input, select, textarea { font: inherit; }
 
 .room-voice-replay-layout {
   display: grid;
-  grid-template-columns: minmax(19rem, 30rem) minmax(18rem, 1fr);
+  grid-template-columns: minmax(0, 1.85fr) minmax(18rem, 1fr);
   gap: 1.25rem;
   align-items: stretch;
   margin-top: 1rem;
@@ -278,7 +278,7 @@ button, input, select, textarea { font: inherit; }
 .room-voice-portrait-player {
   display: flex;
   flex-direction: column;
-  width: min(100%, 30rem);
+  width: 100%;
   height: min(76vh, 46rem);
   min-height: 34rem;
   margin: 0;
