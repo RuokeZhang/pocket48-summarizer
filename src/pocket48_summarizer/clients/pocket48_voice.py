@@ -33,7 +33,7 @@ ROOM_INFO_PATH = "/im/api/v1/im/team/room/info"
 MEMBER_ROOM_PATH = "/im/api/v1/im/server/jump"
 VOICE_OPERATE_PATH = "/im/api/v1/team/voice/operate"
 CONVERSATION_PATH = "/im/api/v1/conversation/page"
-ROOM_MESSAGES_PATH = "/im/api/v1/chatroom/msg/list/all"
+TEAM_ROOM_MESSAGES_PATH = "/im/api/v1/team/message/list/all"
 ROOM_MESSAGE_MAX_PAGES = 100
 ROOM_MESSAGE_MAX_ITEMS = 5000
 
@@ -409,7 +409,8 @@ class Pocket48VoiceClient:
     async def fetch_public_room_messages(
         self,
         *,
-        room_id: int,
+        channel_id: int,
+        server_id: int,
         member_id: int,
         started_at_ms: int,
         ended_at_ms: int,
@@ -421,12 +422,12 @@ class Pocket48VoiceClient:
         messages: dict[str, PublicRoomMessage] = {}
         for _ in range(ROOM_MESSAGE_MAX_PAGES):
             response = await self._post(
-                ROOM_MESSAGES_PATH,
+                TEAM_ROOM_MESSAGES_PATH,
                 {
-                    "roomId": str(room_id),
-                    "ownerId": str(member_id),
-                    "needTop1Msg": "false",
-                    "nextTime": str(next_time),
+                    "channelId": channel_id,
+                    "serverId": server_id,
+                    "nextTime": next_time,
+                    "limit": 700,
                 },
             )
             payload = self._response_payload(response)

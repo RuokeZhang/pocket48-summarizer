@@ -358,12 +358,12 @@ async def test_fetches_only_deduplicated_public_fan_text_messages(
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path.endswith("/im/api/v1/chatroom/msg/list/all")
+        assert request.url.path.endswith("/im/api/v1/team/message/list/all")
         assert json.loads(request.content) == {
-            "roomId": "67333093",
-            "ownerId": "6744",
-            "needTop1Msg": "false",
-            "nextTime": "0",
+            "channelId": 1230624,
+            "serverId": 6227955,
+            "nextTime": 0,
+            "limit": 700,
         }
         messages = [
             {
@@ -409,7 +409,8 @@ async def test_fetches_only_deduplicated_public_fan_text_messages(
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = Pocket48VoiceClient(settings, credentials(), http)
     messages = await client.fetch_public_room_messages(
-        room_id=67333093,
+        channel_id=1230624,
+        server_id=6227955,
         member_id=6744,
         started_at_ms=started_at_ms,
         ended_at_ms=ended_at_ms,

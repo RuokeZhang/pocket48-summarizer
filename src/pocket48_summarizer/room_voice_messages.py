@@ -13,7 +13,7 @@ from .errors import AppError, ConfigurationError
 from .models import RoomVoiceProcessingRecord, RoomVoicePublicMessageRecord
 from .repository import JobRepository
 
-ROOM_VOICE_MESSAGES_VERSION = "public-text-v2"
+ROOM_VOICE_MESSAGES_VERSION = "public-text-v3"
 
 
 class RoomVoiceMessageService:
@@ -46,16 +46,23 @@ class RoomVoiceMessageService:
         )
         client = self.client_factory(self.settings, credentials)
         try:
-            room_id = (
-                self._positive_id(job.room_id, "房间")
-                if job.room_id
-                else await client.resolve_chatroom_id(member_id)
+            channel_id = (
+                self._positive_id(job.channel_id, "频道")
+                if job.channel_id
+                else None
             )
-            self.repository.set_room_voice_room_id(
-                session_id, str(room_id), worker_id
+            server_id = (
+                self._positive_id(job.server_id, "服务器")
+                if job.server_id
+                else None
             )
+            if channel_id is None or server_id is None:
+                room = await client.resolve_member_room(member_id)
+                channel_id = room.channel_id
+                server_id = room.server_id
             messages = await client.fetch_public_room_messages(
-                room_id=room_id,
+                channel_id=channel_id,
+                server_id=server_id,
                 member_id=member_id,
                 started_at_ms=started_at_ms,
                 ended_at_ms=ended_at_ms,

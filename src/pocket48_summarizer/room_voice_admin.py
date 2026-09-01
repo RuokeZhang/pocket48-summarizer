@@ -118,6 +118,8 @@ class SafeCaptureSession:
     monitor_id: str
     member_name: str | None
     member_id: str | None = field(repr=False)
+    channel_id: str | None = field(repr=False)
+    server_id: str | None = field(repr=False)
     status: str
     started_at: str | None
     ended_at: str | None
@@ -555,6 +557,8 @@ def _safe_capture_session(
         ),
         member_name=_safe_display_name(payload.get("member_name")),
         member_id=_safe_positive_id(payload.get("member_id")),
+        channel_id=_safe_positive_id(payload.get("channel_id")),
+        server_id=_safe_positive_id(payload.get("server_id")),
         status=status,
         started_at=_safe_datetime(payload.get("started_at")),
         ended_at=_safe_datetime(payload.get("ended_at")),

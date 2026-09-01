@@ -50,6 +50,7 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "023_room_voice_processing.sql",
         "024_room_voice_public_messages.sql",
         "025_room_voice_messages_version.sql",
+        "026_room_voice_message_channel.sql",
     ]
 
 

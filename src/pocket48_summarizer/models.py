@@ -312,6 +312,8 @@ class RoomVoiceProcessingRecord(BaseModel):
     member_name: str | None = None
     member_id: str | None = None
     room_id: str | None = None
+    channel_id: str | None = None
+    server_id: str | None = None
     capture_started_at: str | None = None
     capture_ended_at: str | None = None
     status: JobStatus

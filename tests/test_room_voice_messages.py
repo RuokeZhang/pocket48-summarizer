@@ -20,10 +20,6 @@ class FakeMessageClient:
         self.closed = False
         self.fetch_call = None
 
-    async def resolve_chatroom_id(self, member_id):
-        assert member_id == 6744
-        return 67333093
-
     async def fetch_public_room_messages(self, **kwargs):
         self.fetch_call = kwargs
         return (
@@ -52,6 +48,8 @@ async def test_fetches_and_persists_minimized_room_messages(
         member_id="6744",
         capture_started_at="2026-09-01T15:00:00+00:00",
         capture_ended_at="2026-09-01T15:05:00+00:00",
+        channel_id="1230624",
+        server_id="6227955",
         segment_count=1,
         total_bytes=100,
     )
@@ -77,10 +75,10 @@ async def test_fetches_and_persists_minimized_room_messages(
 
     completed = repository.get_room_voice_processing(session_id)
     assert completed and completed.messages_status == "completed"
-    assert completed.messages_version == "public-text-v2"
-    assert completed.room_id == "67333093"
+    assert completed.messages_version == "public-text-v3"
     assert client.fetch_call == {
-        "room_id": 67333093,
+        "channel_id": 1230624,
+        "server_id": 6227955,
         "member_id": 6744,
         "started_at_ms": int(
             datetime(

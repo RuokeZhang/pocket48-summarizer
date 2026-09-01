@@ -2152,6 +2152,8 @@ class JobRepository:
         member_id: str | None = None,
         capture_started_at: str | None = None,
         capture_ended_at: str | None = None,
+        channel_id: str | None = None,
+        server_id: str | None = None,
         messages_version: str | None = None,
     ) -> RoomVoiceProcessingRecord:
         now = utcnow()
@@ -2162,8 +2164,9 @@ class JobRepository:
                     session_id, monitor_id, member_name, status, stage,
                     progress_percent, progress_message, segment_count,
                     total_bytes, member_id, capture_started_at,
-                    capture_ended_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                    capture_ended_at, channel_id, server_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -2177,6 +2180,8 @@ class JobRepository:
                     member_id,
                     capture_started_at,
                     capture_ended_at,
+                    channel_id,
+                    server_id,
                     now,
                     now,
                 ),
@@ -2187,10 +2192,14 @@ class JobRepository:
                 SET member_id = COALESCE(member_id, ?),
                     capture_started_at = COALESCE(capture_started_at, ?),
                     capture_ended_at = COALESCE(capture_ended_at, ?),
+                    channel_id = COALESCE(channel_id, ?),
+                    server_id = COALESCE(server_id, ?),
                     updated_at = CASE
                         WHEN member_id IS NULL
                           OR capture_started_at IS NULL
                           OR capture_ended_at IS NULL
+                          OR channel_id IS NULL
+                          OR server_id IS NULL
                         THEN ?
                         ELSE updated_at
                     END
@@ -2200,6 +2209,8 @@ class JobRepository:
                     member_id,
                     capture_started_at,
                     capture_ended_at,
+                    channel_id,
+                    server_id,
                     now,
                     session_id,
                 ),

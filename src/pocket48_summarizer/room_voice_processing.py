@@ -104,6 +104,8 @@ class RoomVoiceProcessingService:
                 ),
                 capture_started_at=session.started_at,
                 capture_ended_at=session.ended_at,
+                channel_id=session.channel_id,
+                server_id=session.server_id,
                 messages_version=ROOM_VOICE_MESSAGES_VERSION,
             )
             if existing is None:
