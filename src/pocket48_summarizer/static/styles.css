@@ -3125,6 +3125,23 @@ code { color: #d4c8ff; }
     position: relative;
     grid-template-columns: minmax(0, 1fr);
   }
+  .playback-layout:fullscreen,
+  .playback-layout.is-pseudo-fullscreen {
+    padding: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .playback-layout:fullscreen .video-stage,
+  .playback-layout.is-pseudo-fullscreen .video-stage {
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+  .playback-layout:fullscreen .playback-fullscreen-button,
+  .playback-layout.is-pseudo-fullscreen .playback-fullscreen-button {
+    top: calc(8px + env(safe-area-inset-top, 0px));
+    left: calc(8px + env(safe-area-inset-left, 0px));
+  }
   .subtitle-overlay {
     right: 12px;
     bottom: var(--mobile-overlay-content-bottom);
