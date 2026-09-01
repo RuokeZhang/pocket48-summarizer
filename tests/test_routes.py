@@ -411,6 +411,22 @@ def test_job_page_shows_peak_summary_and_clickable_author(
 
     assert page.status_code == 200
     assert "主播讲述近况，弹幕样本显示观众很开心。" in page.text
+    for eyebrow in (
+        "AI summary",
+        "Chapter guide",
+        "Key moments",
+        "Full captions",
+        "Audience chat",
+    ):
+        assert f'<p class="eyebrow">{eyebrow}</p>' in page.text
+    for repeated in (
+        "Overview",
+        "Timeline",
+        "Highlights",
+        "Transcript",
+        "Danmaku",
+    ):
+        assert f'<p class="eyebrow">{repeated}</p>' not in page.text
     assert 'class="danmaku-author"' in page.text
     assert 'data-danmaku-author="fan-42"' in page.text
     assert page.text.count('name="clip-landscape-theme"') == 6
@@ -1855,6 +1871,8 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
+    assert '<p class="eyebrow">Replay player</p>' in page.text
+    assert '<p class="eyebrow">Synchronized replay</p>' not in page.text
     assert "i18n.js?v=20260901-16" in page.text
     assert "styles.css?v=20260901-16" in page.text
     assert "app.js?v=20260901-16" in page.text

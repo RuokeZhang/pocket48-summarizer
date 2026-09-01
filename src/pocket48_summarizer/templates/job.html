@@ -63,7 +63,7 @@
     >
       <div class="replay-heading">
         <div>
-          <p class="eyebrow">Synchronized replay</p>
+          <p class="eyebrow">Replay player</p>
           <h2 data-i18n="synchronizedReplay">同步回放</h2>
         </div>
         <span id="playback-sync-state" class="sync-state" data-i18n="loadingPlaybackData">正在载入字幕与弹幕</span>
@@ -152,13 +152,13 @@
 
   {% if summary %}
     <section class="panel summary-panel">
-      <p class="eyebrow">Overview</p>
+      <p class="eyebrow">AI summary</p>
       <h2 data-i18n="overview">摘要</h2>
       <p class="summary-overview">{{ summary.overview }}</p>
     </section>
 
     <section class="panel">
-      <p class="eyebrow">Timeline</p>
+      <p class="eyebrow">Chapter guide</p>
       <h2 data-i18n="timeline">时间线</h2>
       <ol class="timeline">
         {% for item in summary.timeline %}
@@ -195,7 +195,7 @@
     </section>
 
     <section class="panel">
-      <p class="eyebrow">Highlights</p>
+      <p class="eyebrow">Key moments</p>
       <h2 data-i18n="highlights">高光</h2>
       <div class="highlight-grid">
         {% for item in summary.highlights %}
@@ -821,7 +821,7 @@
 
   <section class="two-column">
     <div class="panel">
-      <p class="eyebrow">Transcript</p>
+      <p class="eyebrow">Full captions</p>
       <h2>
         <span data-i18n="transcript">字幕</span>
         <span id="transcript-count" class="load-state">
@@ -852,7 +852,7 @@
       </div>
     </div>
     <div class="panel">
-      <p class="eyebrow">Danmaku</p>
+      <p class="eyebrow">Audience chat</p>
       <h2>
         <span data-i18n="danmaku">弹幕</span>
         <span id="danmaku-count" class="load-state">
@@ -889,7 +889,7 @@
 
   {% if can_manage_job %}
     <section class="panel">
-      <p class="eyebrow">Job events</p>
+      <p class="eyebrow">Processing audit</p>
       <h2 data-i18n="jobEvents">处理记录</h2>
       <ol class="event-list">
         {% for event in events %}
