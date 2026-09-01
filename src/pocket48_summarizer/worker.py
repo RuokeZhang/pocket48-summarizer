@@ -395,7 +395,9 @@ class DurableWorker:
             ),
         )
         try:
-            await self.room_voice_messages.run(job.session_id)
+            await self.room_voice_messages.run(
+                job.session_id, self.worker_id
+            )
         except asyncio.CancelledError:
             await asyncio.to_thread(
                 self.repository.release_owned_room_voice_messages,
@@ -411,6 +413,7 @@ class DurableWorker:
             await asyncio.to_thread(
                 self.repository.mark_room_voice_messages_failed,
                 job.session_id,
+                self.worker_id,
                 exc.code,
                 exc.message,
                 retryable,
@@ -423,6 +426,7 @@ class DurableWorker:
             await asyncio.to_thread(
                 self.repository.mark_room_voice_messages_failed,
                 job.session_id,
+                self.worker_id,
                 "room_voice_messages_internal_error",
                 "获取上麦房间留言时发生未预期内部错误",
                 True,

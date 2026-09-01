@@ -775,8 +775,9 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
         "message-worker", 120
     )
     assert message_claim
-    repository.replace_room_voice_public_messages(
+    repository.complete_room_voice_messages(
         session_id,
+        "message-worker",
         [
             RoomVoicePublicMessageRecord(
                 session_id=session_id,
@@ -788,7 +789,6 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
             )
         ],
     )
-    repository.mark_room_voice_messages_completed(session_id)
 
     with TestClient(app) as visitor:
         history = visitor.get("/room-voice")

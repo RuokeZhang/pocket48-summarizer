@@ -546,10 +546,7 @@ class Pocket48VoiceClient:
         text = strip_control_chars(str(ext.get("text") or ""))[:1000]
         if not nickname or not text:
             return None
-        raw_id = strip_control_chars(
-            str(raw.get("msgidClient") or raw.get("msgId") or "")
-        )[:200]
-        message_id = raw_id or hashlib.sha256(
+        message_id = hashlib.sha256(
             f"{sent_ms}\0{nickname}\0{text}".encode("utf-8")
         ).hexdigest()
         return PublicRoomMessage(

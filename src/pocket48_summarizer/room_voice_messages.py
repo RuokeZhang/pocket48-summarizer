@@ -28,7 +28,7 @@ class RoomVoiceMessageService:
         self.repository = repository
         self.client_factory = client_factory
 
-    async def run(self, session_id: str) -> None:
+    async def run(self, session_id: str, worker_id: str) -> None:
         job = self._require_job(session_id)
         member_id = self._positive_id(job.member_id, "成员")
         started_at_ms = self._timestamp_ms(
@@ -50,7 +50,7 @@ class RoomVoiceMessageService:
                 else await client.resolve_chatroom_id(member_id)
             )
             self.repository.set_room_voice_room_id(
-                session_id, str(room_id)
+                session_id, str(room_id), worker_id
             )
             messages = await client.fetch_public_room_messages(
                 room_id=room_id,
@@ -60,8 +60,9 @@ class RoomVoiceMessageService:
             )
         finally:
             await client.close()
-        self.repository.replace_room_voice_public_messages(
+        self.repository.complete_room_voice_messages(
             session_id,
+            worker_id,
             [
                 RoomVoicePublicMessageRecord(
                     session_id=session_id,
@@ -74,7 +75,6 @@ class RoomVoiceMessageService:
                 for message in messages
             ],
         )
-        self.repository.mark_room_voice_messages_completed(session_id)
 
     def _require_job(
         self, session_id: str

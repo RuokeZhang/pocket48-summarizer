@@ -522,6 +522,9 @@ class RoomVoiceMonitor:
             "member_name": (
                 self.settings.pocket48_voice_member_name or None
             ),
+            "member_id": (
+                self.settings.pocket48_voice_member_id or None
+            ),
             "started_at": self.now().isoformat(),
             "ended_at": None,
             "status": "starting",

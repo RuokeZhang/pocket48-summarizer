@@ -581,7 +581,7 @@ async def test_active_recording_persists_private_redacted_state(settings):
     state_path, state = load_only_session(settings)
     assert state["status"] == "ended"
     assert state["monitor_id"] == "primary"
-    assert "member_id" not in state
+    assert state["member_id"] == "407126"
     assert state["member_name"] == "杨晔"
     assert state["stream"] == {
         "host": "voice.example.test",

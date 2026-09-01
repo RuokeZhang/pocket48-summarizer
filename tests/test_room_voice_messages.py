@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 import pytest
 
 from pocket48_summarizer.clients.pocket48_voice import PublicRoomMessage
+from pocket48_summarizer.errors import AppError
+from pocket48_summarizer.models import RoomVoicePublicMessageRecord
 from pocket48_summarizer.room_voice_messages import RoomVoiceMessageService
 
 
@@ -71,7 +73,7 @@ async def test_fetches_and_persists_minimized_room_messages(
         client_factory=lambda *_args: client,
     )
 
-    await service.run(session_id)
+    await service.run(session_id, "worker")
 
     completed = repository.get_room_voice_processing(session_id)
     assert completed and completed.messages_status == "completed"
@@ -115,6 +117,7 @@ def test_failed_room_message_job_can_be_retried(repository):
     assert claimed
     repository.mark_room_voice_messages_failed(
         session_id,
+        "worker",
         "temporary_failure",
         "临时失败",
         True,
@@ -124,3 +127,50 @@ def test_failed_room_message_job_can_be_retried(repository):
 
     assert retried.messages_status == "queued"
     assert retried.messages_error_message is None
+
+
+def test_stale_worker_cannot_replace_reclaimed_room_messages(repository):
+    session_id = "11111111-2222-4333-8444-555555555555"
+    repository.enqueue_room_voice_processing(
+        session_id=session_id,
+        monitor_id="yang-bingyi",
+        member_name="杨冰怡",
+        member_id="6744",
+        capture_started_at="2026-09-01T15:00:00+00:00",
+        capture_ended_at="2026-09-01T15:05:00+00:00",
+        segment_count=1,
+        total_bytes=100,
+    )
+    first = repository.claim_next_room_voice_messages("worker-a", 120)
+    assert first
+    with repository.database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE room_voice_processing_jobs
+            SET messages_lease_expires_at = '2000-01-01T00:00:00+00:00'
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        )
+    assert repository.recover_expired_room_voice_messages() == 1
+    second = repository.claim_next_room_voice_messages("worker-b", 120)
+    assert second
+    message = RoomVoicePublicMessageRecord(
+        session_id=session_id,
+        message_id="message-b",
+        timestamp_ms=1000,
+        sent_at="2026-09-01T15:00:01+00:00",
+        nickname="新 Worker",
+        text="保留这条",
+    )
+
+    with pytest.raises(AppError, match="租约"):
+        repository.complete_room_voice_messages(
+            session_id, "worker-a", [message]
+        )
+
+    repository.complete_room_voice_messages(
+        session_id, "worker-b", [message]
+    )
+    stored = repository.get_room_voice_public_messages(session_id)
+    assert [item.message_id for item in stored] == ["message-b"]

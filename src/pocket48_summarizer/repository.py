@@ -2366,26 +2366,56 @@ class JobRepository:
             )
 
     def set_room_voice_room_id(
-        self, session_id: str, room_id: str
+        self, session_id: str, room_id: str, worker_id: str
     ) -> None:
         with self.database.connect() as connection:
-            connection.execute(
+            updated = connection.execute(
                 """
                 UPDATE room_voice_processing_jobs
                 SET room_id = ?, updated_at = ?
-                WHERE session_id = ?
+                WHERE session_id = ? AND messages_status = ?
+                  AND messages_worker_id = ?
                 """,
-                (room_id, utcnow(), session_id),
+                (
+                    room_id,
+                    utcnow(),
+                    session_id,
+                    JobStatus.RUNNING,
+                    worker_id,
+                ),
+            ).rowcount
+        if updated != 1:
+            raise AppError(
+                "room_voice_messages_lease_lost",
+                "上麦房间留言任务租约已失效",
+                True,
             )
 
-    def replace_room_voice_public_messages(
+    def complete_room_voice_messages(
         self,
         session_id: str,
+        worker_id: str,
         messages: Iterable[RoomVoicePublicMessageRecord],
     ) -> None:
         rows = list(messages)
+        now = utcnow()
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            owned = connection.execute(
+                """
+                SELECT 1
+                FROM room_voice_processing_jobs
+                WHERE session_id = ? AND messages_status = ?
+                  AND messages_worker_id = ?
+                """,
+                (session_id, JobStatus.RUNNING, worker_id),
+            ).fetchone()
+            if owned is None:
+                raise AppError(
+                    "room_voice_messages_lease_lost",
+                    "上麦房间留言任务租约已失效",
+                    True,
+                )
             connection.execute(
                 """
                 DELETE FROM room_voice_public_messages
@@ -2412,6 +2442,28 @@ class JobRepository:
                     for message in rows
                 ],
             )
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_status = ?, messages_completed_at = ?,
+                    messages_worker_id = NULL,
+                    messages_lease_expires_at = NULL,
+                    messages_error_code = NULL,
+                    messages_error_message = NULL,
+                    messages_error_retryable = 0,
+                    updated_at = ?
+                WHERE session_id = ? AND messages_status = ?
+                  AND messages_worker_id = ?
+                """,
+                (
+                    JobStatus.COMPLETED,
+                    now,
+                    now,
+                    session_id,
+                    JobStatus.RUNNING,
+                    worker_id,
+                ),
+            )
 
     def get_room_voice_public_messages(
         self, session_id: str
@@ -2429,35 +2481,10 @@ class JobRepository:
             ).fetchall()
         return [self._room_voice_public_message(row) for row in rows]
 
-    def mark_room_voice_messages_completed(
-        self, session_id: str
-    ) -> None:
-        now = utcnow()
-        with self.database.connect() as connection:
-            connection.execute(
-                """
-                UPDATE room_voice_processing_jobs
-                SET messages_status = ?, messages_completed_at = ?,
-                    messages_worker_id = NULL,
-                    messages_lease_expires_at = NULL,
-                    messages_error_code = NULL,
-                    messages_error_message = NULL,
-                    messages_error_retryable = 0,
-                    updated_at = ?
-                WHERE session_id = ? AND messages_status = ?
-                """,
-                (
-                    JobStatus.COMPLETED,
-                    now,
-                    now,
-                    session_id,
-                    JobStatus.RUNNING,
-                ),
-            )
-
     def mark_room_voice_messages_failed(
         self,
         session_id: str,
+        worker_id: str,
         code: str,
         message: str,
         retryable: bool,
@@ -2472,7 +2499,8 @@ class JobRepository:
                     messages_worker_id = NULL,
                     messages_lease_expires_at = NULL,
                     updated_at = ?
-                WHERE session_id = ?
+                WHERE session_id = ? AND messages_status = ?
+                  AND messages_worker_id = ?
                 """,
                 (
                     JobStatus.FAILED,
@@ -2481,6 +2509,8 @@ class JobRepository:
                     int(retryable),
                     utcnow(),
                     session_id,
+                    JobStatus.RUNNING,
+                    worker_id,
                 ),
             )
 

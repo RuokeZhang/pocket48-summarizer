@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -414,7 +415,9 @@ async def test_fetches_only_deduplicated_public_fan_text_messages(
     )
 
     assert len(messages) == 1
-    assert messages[0].message_id == "fan-message"
+    assert messages[0].message_id == hashlib.sha256(
+        f"{started_at_ms + 20_000}\0粉丝\0大家好".encode("utf-8")
+    ).hexdigest()
     assert messages[0].timestamp_ms == 20_000
     assert messages[0].nickname == "粉丝"
     assert messages[0].text == "大家好"
