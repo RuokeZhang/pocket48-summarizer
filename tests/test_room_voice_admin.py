@@ -665,6 +665,10 @@ def test_public_room_voice_page_redacts_private_state(settings, repository):
 
     assert page.status_code == 200
     assert "本页公开展示" in page.text
+    assert page.text.count('class="back-link"') == 1
+    assert 'data-i18n="roomVoiceTitle"' in page.text
+    assert 'data-i18n="roomVoiceCurrentStatus"' in page.text
+    assert 'data-room-voice-status="recording"' in page.text
     assert "杨晔" in page.text
     assert "王睿琦" in page.text
     assert "杨冰怡" in page.text

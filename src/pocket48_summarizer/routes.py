@@ -1201,6 +1201,11 @@ async def index(request: Request, member: str | None = None) -> Response:
     )
 
 
+@router.get("/en", response_class=RedirectResponse)
+async def english_home() -> RedirectResponse:
+    return RedirectResponse("/?lang=en", status_code=307)
+
+
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_page(request: Request, job_id: str) -> Response:
     context, job = require_readable_job(request, job_id)

@@ -432,6 +432,24 @@ def test_rejects_untrusted_host_header(settings, repository):
         assert response.status_code == 400
 
 
+def test_english_home_redirects_to_language_override(settings, repository):
+    app = create_app(
+        settings,
+        ApplicationServices(repository=repository, worker=DummyWorker()),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/en", follow_redirects=False)
+        i18n = client.get("/static/i18n.js")
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/?lang=en"
+    assert i18n.status_code == 200
+    assert 'new URLSearchParams(' in i18n.text
+    assert 'searchParams.delete("lang")' in i18n.text
+    assert "translateRoomVoiceStatus" in i18n.text
+
+
 def test_timeline_clip_can_be_created_and_downloaded(
     settings, repository, tmp_path
 ):
@@ -1837,9 +1855,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260901-15" in page.text
-    assert "styles.css?v=20260901-15" in page.text
-    assert "app.js?v=20260901-15" in page.text
+    assert "i18n.js?v=20260901-16" in page.text
+    assert "styles.css?v=20260901-16" in page.text
+    assert "app.js?v=20260901-16" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200

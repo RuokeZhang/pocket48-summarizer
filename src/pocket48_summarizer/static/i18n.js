@@ -7,6 +7,47 @@
       requestFailedTitle: "请求失败",
       logout: "退出",
       glossaryNav: "词库",
+      roomVoiceNav: "上麦记录",
+      roomVoiceDocumentTitle: "上麦记录 · 口袋48直播总结",
+      roomVoiceTitle: "房间上麦监控与录音",
+      roomVoiceLede: "本页公开展示已配置成员的脱敏监控状态和安全完成的历史录音分段，无需登录即可播放或下载。",
+      roomVoiceCurrentStatus: "当前监控状态",
+      roomVoiceLastUpdated: "最近更新",
+      roomVoicePendingResolution: "待动态解析",
+      roomVoiceRecentSessions: "最近采集会话",
+      roomVoiceUnknownTarget: "未知监控目标",
+      roomVoiceSession: "会话",
+      roomVoiceStatus: "状态",
+      roomVoiceStartEnd: "开始 / 结束",
+      roomVoiceSegmentsSize: "分段 / 总大小",
+      roomVoicePlayableSegments: "可播放的已完成分段",
+      roomVoiceBytes: "{count} 字节",
+      roomVoiceDownloadSegment: "下载 {name}",
+      roomVoiceNoPlayableSegments: "当前没有可安全播放的已完成分段。",
+      roomVoiceNoSessions: "还没有可安全显示的采集会话。",
+      roomVoicePrivateWarningTitle: "私有维护区：口袋48账号只能保持一个活跃会话。",
+      roomVoicePrivateWarning: "完成短信登录会让同一账号的官方手机 App 退出；手机 App 再次登录也会使监控凭证失效。系统不会自动发送、重发、轮询验证码或自动登录。",
+      roomVoiceSmsSentTitle: "短信请求已发送一次。",
+      roomVoiceSmsSent: "请手动填写收到的验证码。手机号不会保存或回显。",
+      roomVoiceChallengeTitle: "口袋48要求人机验证。",
+      roomVoiceChallenge: "请等待至少 60 秒，再重新填写手机号并明确提交答案。",
+      roomVoiceLoginSuccessTitle: "监控凭证已安全保存。",
+      roomVoiceLoginSuccess: "独立监控进程会热加载凭证，并在下一轮自动开始查询。",
+      roomVoiceAccountMaintenance: "监控账号维护",
+      roomVoicePaSeed: "PA 签名种子",
+      roomVoiceCredentials: "监控凭证",
+      roomVoicePrivateFileReady: "已就绪（0600）",
+      roomVoicePrivateFileUnsafe: "权限或所有者不安全",
+      roomVoicePrivateFileMissing: "尚未创建",
+      roomVoiceChallengeOptions: "可选答案",
+      roomVoiceSendSms: "发送短信",
+      roomVoiceAreaCode: "国家/地区代码",
+      roomVoiceMobile: "手机号",
+      roomVoiceChallengeAnswer: "人机验证答案（仅在上方出现题目时填写）",
+      roomVoiceSendSmsOnce: "明确发送一次短信",
+      roomVoiceCompleteLogin: "完成登录",
+      roomVoiceSmsCode: "短信验证码",
+      roomVoiceLoginOnce: "明确登录一次并保存凭证",
       switchLanguage: "切换为英文",
       historyNavigation: "页面导航",
       goBack: "后退",
@@ -337,6 +378,47 @@
       requestFailedTitle: "Request failed",
       logout: "Log out",
       glossaryNav: "Glossary",
+      roomVoiceNav: "Room audio",
+      roomVoiceDocumentTitle: "Room audio · Pocket48 Replay Summarizer",
+      roomVoiceTitle: "Pocket48 room audio monitor and recordings",
+      roomVoiceLede: "This public page shows privacy-safe monitor status for configured members and completed recording segments. No login is required to play or download them.",
+      roomVoiceCurrentStatus: "Current monitor status",
+      roomVoiceLastUpdated: "Last updated",
+      roomVoicePendingResolution: "Pending dynamic resolution",
+      roomVoiceRecentSessions: "Recent recording sessions",
+      roomVoiceUnknownTarget: "Unknown monitor target",
+      roomVoiceSession: "Session",
+      roomVoiceStatus: "Status",
+      roomVoiceStartEnd: "Start / end",
+      roomVoiceSegmentsSize: "Segments / total size",
+      roomVoicePlayableSegments: "Playable completed segments",
+      roomVoiceBytes: "{count} bytes",
+      roomVoiceDownloadSegment: "Download {name}",
+      roomVoiceNoPlayableSegments: "No completed segment is currently safe to play.",
+      roomVoiceNoSessions: "No recording sessions are available yet.",
+      roomVoicePrivateWarningTitle: "Private maintenance: a Pocket48 account can keep only one active session.",
+      roomVoicePrivateWarning: "Signing in by SMS logs the same account out of the official mobile app. Signing in again on the app also invalidates the monitor credentials. The system never sends or resends SMS codes, polls codes, or signs in automatically.",
+      roomVoiceSmsSentTitle: "One SMS request was sent.",
+      roomVoiceSmsSent: "Enter the received code manually. The phone number is neither stored nor displayed.",
+      roomVoiceChallengeTitle: "Pocket48 requires a verification challenge.",
+      roomVoiceChallenge: "Wait at least 60 seconds, then enter the phone number again and explicitly submit the answer.",
+      roomVoiceLoginSuccessTitle: "Monitor credentials were stored securely.",
+      roomVoiceLoginSuccess: "The independent monitor process will reload them and query again on its next cycle.",
+      roomVoiceAccountMaintenance: "Monitor account maintenance",
+      roomVoicePaSeed: "PA signing seed",
+      roomVoiceCredentials: "Monitor credentials",
+      roomVoicePrivateFileReady: "Ready (0600)",
+      roomVoicePrivateFileUnsafe: "Unsafe permissions or owner",
+      roomVoicePrivateFileMissing: "Not created",
+      roomVoiceChallengeOptions: "Available answers",
+      roomVoiceSendSms: "Send SMS",
+      roomVoiceAreaCode: "Country/region code",
+      roomVoiceMobile: "Mobile number",
+      roomVoiceChallengeAnswer: "Verification answer (only when a challenge appears above)",
+      roomVoiceSendSmsOnce: "Explicitly send one SMS",
+      roomVoiceCompleteLogin: "Complete login",
+      roomVoiceSmsCode: "SMS verification code",
+      roomVoiceLoginOnce: "Explicitly log in once and save credentials",
       switchLanguage: "Switch to Chinese",
       historyNavigation: "Page navigation",
       goBack: "Back",
@@ -698,6 +780,51 @@
     }
   };
 
+  const roomVoiceStatusLabels = {
+    zh: {
+      waiting: "等待下一轮查询",
+      polling: "查询中",
+      inactive: "暂无上麦",
+      recording: "正在录音",
+      active_without_stream: "已上麦但暂无可用音频流",
+      awaiting_inactive: "等待本次上麦结束",
+      recording_cooldown: "录音失败后冷却中",
+      waiting_next_poll: "等待下一轮查询",
+      unavailable: "暂不可用",
+      error: "查询失败",
+      storage_limit: "存储空间已达上限",
+      starting: "正在启动录音",
+      completed: "已完成",
+      partial: "部分完成",
+      interrupted: "已中断",
+      max_duration: "达到最长录音时长",
+      max_bytes: "达到单次录音容量上限",
+      failed: "失败",
+      ended: "已结束"
+    },
+    en: {
+      waiting: "Waiting for the next poll",
+      polling: "Polling",
+      inactive: "No active room audio",
+      recording: "Recording",
+      active_without_stream: "Active without an available audio stream",
+      awaiting_inactive: "Waiting for the current room session to end",
+      recording_cooldown: "Cooling down after a recording failure",
+      waiting_next_poll: "Waiting for the next poll",
+      unavailable: "Unavailable",
+      error: "Query failed",
+      storage_limit: "Storage limit reached",
+      starting: "Starting recording",
+      completed: "Completed",
+      partial: "Partially completed",
+      interrupted: "Interrupted",
+      max_duration: "Maximum recording duration reached",
+      max_bytes: "Per-recording size limit reached",
+      failed: "Failed",
+      ended: "Ended"
+    }
+  };
+
   const serverMessages = {
     "请先登录或重新登录": "Please log in or sign in again",
     "用户名或密码错误": "Incorrect username or password",
@@ -738,6 +865,24 @@
   const storageKey = "p48-language";
 
   const readLanguage = () => {
+    const requestedLanguage = new URLSearchParams(
+      window.location.search
+    ).get("lang");
+    if (requestedLanguage === "en" || requestedLanguage === "zh") {
+      try {
+        window.localStorage.setItem(storageKey, requestedLanguage);
+      } catch {
+        // The requested language still applies when storage is unavailable.
+      }
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("lang");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`
+      );
+      return requestedLanguage;
+    }
     try {
       return window.localStorage.getItem(storageKey) === "en" ? "en" : "zh";
     } catch {
@@ -780,6 +925,10 @@
     statusLabels[currentLanguage][status] || status
   );
 
+  const translateRoomVoiceStatus = (status) => (
+    roomVoiceStatusLabels[currentLanguage][status] || status
+  );
+
   const translateServerMessage = (message) => {
     if (currentLanguage === "zh" || !message) return message;
     const quotaMatch = message.match(/^今日任务额度已用完（每天 (\d+) 个）$/);
@@ -808,6 +957,8 @@
       document.title = t("loginDocumentTitle");
     } else if (window.location.pathname === "/admin/glossary") {
       document.title = t("glossaryDocumentTitle");
+    } else if (window.location.pathname === "/room-voice") {
+      document.title = t("roomVoiceDocumentTitle");
     } else if (document.querySelector(".error-page")) {
       document.title = t("requestFailedTitle");
     }
@@ -831,6 +982,11 @@
     });
     document.querySelectorAll("[data-job-status]").forEach((element) => {
       element.textContent = translateStatus(element.dataset.jobStatus);
+    });
+    document.querySelectorAll("[data-room-voice-status]").forEach((element) => {
+      element.textContent = translateRoomVoiceStatus(
+        element.dataset.roomVoiceStatus
+      );
     });
     document.querySelectorAll("[data-operational-message]").forEach((element) => {
       element.textContent = translateOperationalMessage(
@@ -882,6 +1038,7 @@
     setText,
     t,
     translateOperationalMessage,
+    translateRoomVoiceStatus,
     translateServerMessage,
     translateStatus
   };

@@ -1,29 +1,29 @@
 {% extends "base.html" %}
 {% block title %}上麦记录{% endblock %}
 {% block content %}
-  <a class="back-link" href="/">返回首页</a>
+  <a class="back-link" href="/" data-i18n="backHome">返回首页</a>
 
   <section class="hero compact-hero">
     <div>
       <p class="eyebrow">Public room voice history</p>
-      <h1>房间上麦监控与录音</h1>
-      <p class="lede">本页公开展示杨晔、王睿琦的脱敏监控状态和已安全完成的历史录音分段，无需登录即可播放或下载。</p>
+      <h1 data-i18n="roomVoiceTitle">房间上麦监控与录音</h1>
+      <p class="lede" data-i18n="roomVoiceLede">本页公开展示已配置成员的脱敏监控状态和安全完成的历史录音分段，无需登录即可播放或下载。</p>
     </div>
   </section>
 
   <section class="panel">
     <p class="eyebrow">Live monitor status</p>
-    <h2>当前监控状态</h2>
+    <h2 data-i18n="roomVoiceCurrentStatus">当前监控状态</h2>
     <div class="admin-form-grid room-voice-form-grid">
       {% for item in monitors %}
         <article class="admin-stat">
           <span>{{ item.monitor_id }}</span>
           <h3>{{ item.name or "—" }}</h3>
-          <p><span class="status">{{ item.phase }}</span></p>
-          <p>最近更新：{{ item.updated_at or "—" }}</p>
+          <p><span class="status" data-room-voice-status="{{ item.phase }}">{{ item.phase }}</span></p>
+          <p><span data-i18n="roomVoiceLastUpdated">最近更新</span>：{{ item.updated_at or "—" }}</p>
           <p>Member ID：{{ item.member_id or "—" }}</p>
-          <p>Channel ID：{{ item.channel_id or "待动态解析" }}</p>
-          <p>Server ID：{{ item.server_id or "待动态解析" }}</p>
+          <p>Channel ID：{% if item.channel_id %}{{ item.channel_id }}{% else %}<span data-i18n="roomVoicePendingResolution">待动态解析</span>{% endif %}</p>
+          <p>Server ID：{% if item.server_id %}{{ item.server_id }}{% else %}<span data-i18n="roomVoicePendingResolution">待动态解析</span>{% endif %}</p>
         </article>
       {% endfor %}
     </div>
@@ -33,44 +33,44 @@
     <div class="section-heading">
       <div>
         <p class="eyebrow">Playable history</p>
-        <h2>最近采集会话</h2>
+        <h2 data-i18n="roomVoiceRecentSessions">最近采集会话</h2>
       </div>
     </div>
     {% for group in history_groups %}
       <section>
-        <h3>{{ group.name or "未知监控目标" }}</h3>
+        <h3>{% if group.name %}{{ group.name }}{% else %}<span data-i18n="roomVoiceUnknownTarget">未知监控目标</span>{% endif %}</h3>
         <div class="admin-table-wrap">
           <table class="admin-table">
             <thead>
               <tr>
-                <th>会话</th>
-                <th>状态</th>
-                <th>开始 / 结束</th>
-                <th>分段 / 总大小</th>
-                <th>可播放的已完成分段</th>
+                <th data-i18n="roomVoiceSession">会话</th>
+                <th data-i18n="roomVoiceStatus">状态</th>
+                <th data-i18n="roomVoiceStartEnd">开始 / 结束</th>
+                <th data-i18n="roomVoiceSegmentsSize">分段 / 总大小</th>
+                <th data-i18n="roomVoicePlayableSegments">可播放的已完成分段</th>
               </tr>
             </thead>
             <tbody>
               {% for session in group.sessions %}
                 <tr>
                   <td>{{ session.session_id }}</td>
-                  <td><span class="status">{{ session.status }}</span></td>
+                  <td><span class="status" data-room-voice-status="{{ session.status }}">{{ session.status }}</span></td>
                   <td>{{ session.started_at or "—" }}<small>{{ session.ended_at or "—" }}</small></td>
-                  <td>{{ session.segment_count }}<small>{{ session.total_bytes }} 字节</small></td>
+                  <td>{{ session.segment_count }}<small data-i18n="roomVoiceBytes" data-i18n-param-count="{{ session.total_bytes }}">{{ session.total_bytes }} 字节</small></td>
                   <td>
                     {% for segment in session.segments %}
                       <div>
                         <audio controls preload="none" src="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}"></audio>
-                        <a href="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}" download="{{ segment.name }}">下载 {{ segment.name }}</a>
-                        <small>{{ segment.size_bytes }} 字节</small>
+                        <a href="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}" download="{{ segment.name }}" data-i18n="roomVoiceDownloadSegment" data-i18n-param-name="{{ segment.name }}">下载 {{ segment.name }}</a>
+                        <small data-i18n="roomVoiceBytes" data-i18n-param-count="{{ segment.size_bytes }}">{{ segment.size_bytes }} 字节</small>
                       </div>
                     {% else %}
-                      <span class="muted">当前没有可安全播放的已完成分段。</span>
+                      <span class="muted" data-i18n="roomVoiceNoPlayableSegments">当前没有可安全播放的已完成分段。</span>
                     {% endfor %}
                   </td>
                 </tr>
               {% else %}
-                <tr><td colspan="5">还没有可安全显示的采集会话。</td></tr>
+                <tr><td colspan="5" data-i18n="roomVoiceNoSessions">还没有可安全显示的采集会话。</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -81,38 +81,38 @@
 
   {% if can_operate %}
     <section class="notice error">
-      <strong>私有维护区：口袋48账号只能保持一个活跃会话。</strong>
-      <p>完成短信登录会让同一账号的官方手机 App 退出；手机 App 再次登录也会使监控凭证失效。系统不会自动发送、重发、轮询验证码或自动登录。</p>
+      <strong data-i18n="roomVoicePrivateWarningTitle">私有维护区：口袋48账号只能保持一个活跃会话。</strong>
+      <p data-i18n="roomVoicePrivateWarning">完成短信登录会让同一账号的官方手机 App 退出；手机 App 再次登录也会使监控凭证失效。系统不会自动发送、重发、轮询验证码或自动登录。</p>
     </section>
 
     {% if notice == "sms-sent" %}
       <section class="notice">
-        <strong>短信请求已发送一次。</strong>
-        <p>请手动填写收到的验证码。手机号不会保存或回显。</p>
+        <strong data-i18n="roomVoiceSmsSentTitle">短信请求已发送一次。</strong>
+        <p data-i18n="roomVoiceSmsSent">请手动填写收到的验证码。手机号不会保存或回显。</p>
       </section>
     {% elif notice == "challenge" %}
       <section class="notice warning">
-        <strong>口袋48要求人机验证。</strong>
-        <p>请等待至少 60 秒，再重新填写手机号并明确提交答案。</p>
+        <strong data-i18n="roomVoiceChallengeTitle">口袋48要求人机验证。</strong>
+        <p data-i18n="roomVoiceChallenge">请等待至少 60 秒，再重新填写手机号并明确提交答案。</p>
       </section>
     {% elif notice == "login-success" %}
       <section class="notice">
-        <strong>监控凭证已安全保存。</strong>
-        <p>独立监控进程会热加载凭证，并在下一轮自动开始查询。</p>
+        <strong data-i18n="roomVoiceLoginSuccessTitle">监控凭证已安全保存。</strong>
+        <p data-i18n="roomVoiceLoginSuccess">独立监控进程会热加载凭证，并在下一轮自动开始查询。</p>
       </section>
     {% endif %}
 
     <section class="panel">
       <p class="eyebrow">Private operator controls</p>
-      <h2>监控账号维护</h2>
+      <h2 data-i18n="roomVoiceAccountMaintenance">监控账号维护</h2>
       <div class="admin-stat-grid">
         <article class="admin-stat">
-          <span>PA 签名种子</span>
-          <strong>{{ "已就绪（0600）" if pa_file.private else ("权限或所有者不安全" if pa_file.exists else "尚未创建") }}</strong>
+          <span data-i18n="roomVoicePaSeed">PA 签名种子</span>
+          <strong data-i18n="{{ 'roomVoicePrivateFileReady' if pa_file.private else ('roomVoicePrivateFileUnsafe' if pa_file.exists else 'roomVoicePrivateFileMissing') }}">{{ "已就绪（0600）" if pa_file.private else ("权限或所有者不安全" if pa_file.exists else "尚未创建") }}</strong>
         </article>
         <article class="admin-stat">
-          <span>监控凭证</span>
-          <strong>{{ "已就绪（0600）" if credentials_file.private else ("权限或所有者不安全" if credentials_file.exists else "尚未创建") }}</strong>
+          <span data-i18n="roomVoiceCredentials">监控凭证</span>
+          <strong data-i18n="{{ 'roomVoicePrivateFileReady' if credentials_file.private else ('roomVoicePrivateFileUnsafe' if credentials_file.exists else 'roomVoicePrivateFileMissing') }}">{{ "已就绪（0600）" if credentials_file.private else ("权限或所有者不安全" if credentials_file.exists else "尚未创建") }}</strong>
         </article>
       </div>
 
@@ -120,7 +120,7 @@
         <section class="notice warning">
           <strong>{{ challenge.question }}</strong>
           {% if challenge.options %}
-            <p>可选答案：{{ challenge.options | join(" / ") }}</p>
+            <p><span data-i18n="roomVoiceChallengeOptions">可选答案</span>：{{ challenge.options | join(" / ") }}</p>
           {% endif %}
         </section>
       {% endif %}
@@ -130,30 +130,30 @@
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <div>
             <p class="eyebrow">Manual SMS request</p>
-            <h2>发送短信</h2>
+            <h2 data-i18n="roomVoiceSendSms">发送短信</h2>
           </div>
-          <label for="room-voice-area">国家/地区代码</label>
+          <label for="room-voice-area" data-i18n="roomVoiceAreaCode">国家/地区代码</label>
           <input id="room-voice-area" name="area" value="86" inputmode="numeric" maxlength="4" required>
-          <label for="room-voice-mobile">手机号</label>
+          <label for="room-voice-mobile" data-i18n="roomVoiceMobile">手机号</label>
           <input id="room-voice-mobile" name="mobile" type="tel" inputmode="numeric" autocomplete="off" maxlength="20" required>
-          <label for="room-voice-challenge">人机验证答案（仅在上方出现题目时填写）</label>
+          <label for="room-voice-challenge" data-i18n="roomVoiceChallengeAnswer">人机验证答案（仅在上方出现题目时填写）</label>
           <input id="room-voice-challenge" name="challenge_answer" autocomplete="off" maxlength="200">
-          <button type="submit">明确发送一次短信</button>
+          <button type="submit" data-i18n="roomVoiceSendSmsOnce">明确发送一次短信</button>
         </form>
 
         <form class="panel admin-form" action="/admin/room-voice/login" method="post">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <div>
             <p class="eyebrow">Complete one login</p>
-            <h2>完成登录</h2>
+            <h2 data-i18n="roomVoiceCompleteLogin">完成登录</h2>
           </div>
-          <label for="room-voice-login-area">国家/地区代码</label>
+          <label for="room-voice-login-area" data-i18n="roomVoiceAreaCode">国家/地区代码</label>
           <input id="room-voice-login-area" name="area" value="86" inputmode="numeric" maxlength="4" required>
-          <label for="room-voice-login-mobile">手机号</label>
+          <label for="room-voice-login-mobile" data-i18n="roomVoiceMobile">手机号</label>
           <input id="room-voice-login-mobile" name="mobile" type="tel" inputmode="numeric" autocomplete="off" maxlength="20" required>
-          <label for="room-voice-code">短信验证码</label>
+          <label for="room-voice-code" data-i18n="roomVoiceSmsCode">短信验证码</label>
           <input id="room-voice-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required>
-          <button type="submit">明确登录一次并保存凭证</button>
+          <button type="submit" data-i18n="roomVoiceLoginOnce">明确登录一次并保存凭证</button>
         </form>
       </div>
     </section>
