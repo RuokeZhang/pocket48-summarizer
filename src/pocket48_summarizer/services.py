@@ -21,6 +21,7 @@ from .room_voice_processing import (
     RoomVoiceProcessingService,
     RoomVoiceSummaryRepository,
 )
+from .room_voice_messages import RoomVoiceMessageService
 from .summarization.service import SummarizationService
 from .translation import SubtitleTranslationService
 from .vocabulary import VocabularyManager
@@ -40,6 +41,7 @@ class ApplicationServices:
     llm: OpenAICompatibleClient | None = None
     translator: SubtitleTranslationService | None = None
     room_voice_processor: RoomVoiceProcessingService | None = None
+    room_voice_messages: RoomVoiceMessageService | None = None
     member_catalog_client: MemberCatalogClient | None = None
     member_catalog: MemberCatalogService | None = None
     vocabulary: VocabularyManager | None = None
@@ -98,6 +100,7 @@ def build_services(
         ),
         vocabulary=vocabulary,
     )
+    room_voice_messages = RoomVoiceMessageService(settings, repository)
     pipeline = ReplayPipeline(
         settings=settings,
         repository=repository,
@@ -117,6 +120,7 @@ def build_services(
         member_catalog,
         vocabulary,
         room_voice_processor,
+        room_voice_messages,
     )
     return ApplicationServices(
         repository=repository,
@@ -142,6 +146,7 @@ def build_services(
         llm=llm,
         translator=translator,
         room_voice_processor=room_voice_processor,
+        room_voice_messages=room_voice_messages,
         member_catalog_client=member_catalog_client,
         member_catalog=member_catalog,
         vocabulary=vocabulary,

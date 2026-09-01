@@ -50,63 +50,107 @@
       {% endif %}
     </div>
     {% if session.segments %}
-      <div class="room-voice-portrait-player">
-        <div class="room-voice-playlist" data-room-voice-playlist>
-          <audio
-            controls
-            preload="metadata"
-            src="/room-voice/{{ session.session_id }}/segments/{{ session.segments[0].name }}"
-          ></audio>
-          {% for segment in session.segments %}
-            <span
-              hidden
-              data-room-voice-segment-src="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}"
-            ></span>
-          {% endfor %}
-          <div class="room-voice-playlist-controls">
-            <button
-              type="button"
-              data-room-voice-previous
-              title="上一段"
-              data-i18n-title="roomVoicePreviousPart"
-              aria-label="上一段"
-              data-i18n-aria-label="roomVoicePreviousPart"
-            >&lsaquo;</button>
-            <span
-              data-room-voice-playlist-progress
-              data-current="1"
-              data-total="{{ session.segments | length }}"
-            >录音 1 / {{ session.segments | length }}</span>
-            <button
-              type="button"
-              data-room-voice-next
-              title="下一段"
-              data-i18n-title="roomVoiceNextPart"
-              aria-label="下一段"
-              data-i18n-aria-label="roomVoiceNextPart"
-            >&rsaquo;</button>
+      <div class="room-voice-replay-layout">
+        <div class="room-voice-portrait-player">
+          <div class="room-voice-playlist" data-room-voice-playlist>
+            <audio
+              controls
+              preload="metadata"
+              src="/room-voice/{{ session.session_id }}/segments/{{ session.segments[0].name }}"
+            ></audio>
+            {% for segment in session.segments %}
+              <span
+                hidden
+                data-room-voice-segment-src="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}"
+              ></span>
+            {% endfor %}
+            <div class="room-voice-playlist-controls">
+              <button
+                type="button"
+                data-room-voice-previous
+                title="上一段"
+                data-i18n-title="roomVoicePreviousPart"
+                aria-label="上一段"
+                data-i18n-aria-label="roomVoicePreviousPart"
+              >&lsaquo;</button>
+              <span
+                data-room-voice-playlist-progress
+                data-current="1"
+                data-total="{{ session.segments | length }}"
+              >录音 1 / {{ session.segments | length }}</span>
+              <button
+                type="button"
+                data-room-voice-next
+                title="下一段"
+                data-i18n-title="roomVoiceNextPart"
+                aria-label="下一段"
+                data-i18n-aria-label="roomVoiceNextPart"
+              >&rsaquo;</button>
+            </div>
+          </div>
+          <div class="room-voice-lyric-viewport">
+            {% if transcript %}
+              <ol class="room-voice-lyrics">
+                {% for segment in transcript %}
+                  <li
+                    data-room-voice-caption
+                    data-start-ms="{{ segment.start_ms }}"
+                    data-end-ms="{{ segment.end_ms }}"
+                  >
+                    <button type="button" data-room-voice-seek-ms="{{ segment.start_ms }}">
+                      <small>{{ format_clock(segment.start_ms) }}</small>
+                      <span>{{ segment.text }}</span>
+                    </button>
+                  </li>
+                {% endfor %}
+              </ol>
+            {% else %}
+              <p class="muted" data-i18n="roomVoiceTranscriptPending">字幕尚未生成。</p>
+            {% endif %}
           </div>
         </div>
-        <div class="room-voice-lyric-viewport">
-          {% if transcript %}
-            <ol class="room-voice-lyrics">
-              {% for segment in transcript %}
+
+        <aside class="room-voice-message-panel">
+          <header>
+            <div>
+              <p class="eyebrow">Public room messages</p>
+              <h3 data-i18n="roomVoicePublicMessages">同期口袋留言</h3>
+            </div>
+            <span class="status" data-job-status="{{ processing.messages_status }}">{{ processing.messages_status }}</span>
+          </header>
+          {% if room_messages %}
+            <ol class="room-voice-message-list">
+              {% for message in room_messages %}
                 <li
-                  data-room-voice-caption
-                  data-start-ms="{{ segment.start_ms }}"
-                  data-end-ms="{{ segment.end_ms }}"
+                  data-room-voice-message
+                  data-timestamp-ms="{{ message.timestamp_ms }}"
                 >
-                  <button type="button" data-room-voice-seek-ms="{{ segment.start_ms }}">
-                    <small>{{ format_clock(segment.start_ms) }}</small>
-                    <span>{{ segment.text }}</span>
+                  <button type="button" data-room-voice-seek-ms="{{ message.timestamp_ms }}">
+                    <span>
+                      <strong>{{ message.nickname }}</strong>
+                      <small>{{ format_clock(message.timestamp_ms) }}</small>
+                    </span>
+                    <p>{{ message.text }}</p>
                   </button>
                 </li>
               {% endfor %}
             </ol>
+          {% elif processing.messages_status == "failed" %}
+            <div class="notice error">
+              <p data-server-message="{{ processing.messages_error_message }}">{{ processing.messages_error_message }}</p>
+              {% if can_operate and processing.messages_error_retryable %}
+                <form action="/admin/room-voice/{{ session.session_id }}/messages/retry" method="post">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button type="submit" data-i18n="roomVoiceRetryMessages">重试获取留言</button>
+                </form>
+              {% endif %}
+            </div>
+          {% elif processing.messages_status == "completed" %}
+            <p class="muted" data-i18n="roomVoiceNoPublicMessages">这段时间没有公开文字留言。</p>
           {% else %}
-            <p class="muted" data-i18n="roomVoiceTranscriptPending">字幕尚未生成。</p>
+            <p class="muted" data-i18n="roomVoiceMessagesProcessing">正在获取同期公开留言。</p>
           {% endif %}
-        </div>
+        </aside>
       </div>
     {% else %}
       <p class="muted" data-i18n="roomVoiceNoPlayableSegments">当前没有可安全播放的已完成分段。</p>

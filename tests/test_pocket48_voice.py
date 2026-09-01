@@ -291,6 +291,137 @@ async def test_treats_business_401004_as_expired_token(settings):
 
 
 @pytest.mark.asyncio
+async def test_resolves_chatroom_id_across_conversation_pages(settings):
+    requests: list[dict[str, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if payload["nextTime"] == 0:
+            content = {
+                "conversations": [
+                    {"ownerId": "999", "targetId": "111"}
+                ],
+                "nextTime": 123,
+            }
+        else:
+            content = {
+                "conversations": [
+                    {"ownerId": "6744", "targetId": "67333093"}
+                ],
+                "nextTime": 0,
+            }
+        return httpx.Response(
+            200,
+            json={"status": 200, "success": True, "content": content},
+        )
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = Pocket48VoiceClient(settings, credentials(), http)
+
+    assert await client.resolve_chatroom_id(6744) == 67333093
+    assert requests == [
+        {"nextTime": 0, "limit": 100},
+        {"nextTime": 123, "limit": 100},
+    ]
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fetches_only_deduplicated_public_fan_text_messages(
+    settings,
+):
+    started_at_ms = 1_000_000
+    ended_at_ms = 1_100_000
+    fan_ext = json.dumps(
+        {
+            "messageType": "TEXT",
+            "text": "  大家好\u0000  ",
+            "user": {
+                "userId": "88",
+                "roleId": 1,
+                "nickName": "粉丝\u0000",
+            },
+        }
+    )
+    member_ext = json.dumps(
+        {
+            "messageType": "TEXT",
+            "text": "成员本人",
+            "user": {
+                "userId": "6744",
+                "roleId": 1,
+                "nickName": "成员",
+            },
+        }
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/im/api/v1/chatroom/msg/list/all")
+        assert json.loads(request.content) == {
+            "roomId": "67333093",
+            "needTop1Msg": False,
+            "nextTime": str(ended_at_ms),
+        }
+        messages = [
+            {
+                "msgType": "TEXT",
+                "msgTime": started_at_ms + 20_000,
+                "msgidClient": "fan-message",
+                "extInfo": fan_ext,
+            },
+            {
+                "msgType": "TEXT",
+                "msgTime": started_at_ms + 20_000,
+                "msgidClient": "fan-message",
+                "extInfo": fan_ext,
+            },
+            {
+                "msgType": "TEXT",
+                "msgTime": started_at_ms + 30_000,
+                "msgidClient": "member-message",
+                "extInfo": member_ext,
+            },
+            {
+                "msgType": "IMAGE",
+                "msgTime": started_at_ms + 40_000,
+                "msgidClient": "image-message",
+                "extInfo": fan_ext,
+            },
+            {
+                "msgType": "TEXT",
+                "msgTime": started_at_ms - 1,
+                "msgidClient": "before-window",
+                "extInfo": fan_ext,
+            },
+        ]
+        return httpx.Response(
+            200,
+            json={
+                "status": 200,
+                "success": True,
+                "content": {"message": messages, "nextTime": 0},
+            },
+        )
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = Pocket48VoiceClient(settings, credentials(), http)
+    messages = await client.fetch_public_room_messages(
+        room_id=67333093,
+        member_id=6744,
+        started_at_ms=started_at_ms,
+        ended_at_ms=ended_at_ms,
+    )
+
+    assert len(messages) == 1
+    assert messages[0].message_id == "fan-message"
+    assert messages[0].timestamp_ms == 20_000
+    assert messages[0].nickname == "粉丝"
+    assert messages[0].text == "大家好"
+    await http.aclose()
+
+
+@pytest.mark.asyncio
 async def test_rejects_oversized_or_malformed_voice_payload(settings):
     settings.max_api_response_bytes = 8
     http = httpx.AsyncClient(

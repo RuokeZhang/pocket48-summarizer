@@ -310,6 +310,10 @@ class RoomVoiceProcessingRecord(BaseModel):
     session_id: str
     monitor_id: str
     member_name: str | None = None
+    member_id: str | None = None
+    room_id: str | None = None
+    capture_started_at: str | None = None
+    capture_ended_at: str | None = None
     status: JobStatus
     stage: RoomVoiceProcessingStage
     progress_percent: int
@@ -333,6 +337,22 @@ class RoomVoiceProcessingRecord(BaseModel):
     updated_at: str
     started_at: str | None = None
     completed_at: str | None = None
+    messages_status: JobStatus
+    messages_error_code: str | None = None
+    messages_error_message: str | None = None
+    messages_error_retryable: bool = False
+    messages_worker_id: str | None = None
+    messages_lease_expires_at: str | None = None
+    messages_completed_at: str | None = None
+
+
+class RoomVoicePublicMessageRecord(BaseModel):
+    session_id: str
+    message_id: str
+    timestamp_ms: int = Field(ge=0)
+    sent_at: str
+    nickname: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=1000)
 
 
 class VideoClipRecord(BaseModel):

@@ -156,13 +156,17 @@ if (roomVoiceLyricPlayer) {
   const captions = [
     ...roomVoiceLyricPlayer.querySelectorAll("[data-room-voice-caption]")
   ];
+  const messages = [
+    ...roomVoiceLyricPlayer.querySelectorAll("[data-room-voice-message]")
+  ];
   const segmentDurationMs = Number(
     roomVoiceLyricPlayer.dataset.segmentDurationMs || 300000
   );
   let activeCaption = null;
+  let activeMessage = null;
 
-  const renderActiveCaption = () => {
-    if (!audio || !playlist || !captions.length) return;
+  const renderSynchronizedReplay = () => {
+    if (!audio || !playlist) return;
     const partIndex = Number(
       playlist.dataset.roomVoiceCurrentIndex || 0
     );
@@ -173,21 +177,36 @@ if (roomVoiceLyricPlayer) {
       currentMs >= Number(caption.dataset.startMs)
       && currentMs < Number(caption.dataset.endMs)
     )) || null;
-    if (nextCaption === activeCaption) return;
-    activeCaption?.classList.remove("is-active");
-    activeCaption = nextCaption;
-    activeCaption?.classList.add("is-active");
-    activeCaption?.scrollIntoView({
-      block: "center",
-      behavior: audio.paused ? "auto" : "smooth"
-    });
+    if (nextCaption !== activeCaption) {
+      activeCaption?.classList.remove("is-active");
+      activeCaption = nextCaption;
+      activeCaption?.classList.add("is-active");
+      activeCaption?.scrollIntoView({
+        block: "center",
+        behavior: audio.paused ? "auto" : "smooth"
+      });
+    }
+    let nextMessage = null;
+    for (const message of messages) {
+      if (Number(message.dataset.timestampMs) > currentMs) break;
+      nextMessage = message;
+    }
+    if (nextMessage !== activeMessage) {
+      activeMessage?.classList.remove("is-active");
+      activeMessage = nextMessage;
+      activeMessage?.classList.add("is-active");
+      activeMessage?.scrollIntoView({
+        block: "center",
+        behavior: audio.paused ? "auto" : "smooth"
+      });
+    }
   };
 
-  audio?.addEventListener("timeupdate", renderActiveCaption);
-  audio?.addEventListener("seeked", renderActiveCaption);
+  audio?.addEventListener("timeupdate", renderSynchronizedReplay);
+  audio?.addEventListener("seeked", renderSynchronizedReplay);
   playlist?.addEventListener(
     "roomvoicepartchange",
-    renderActiveCaption
+    renderSynchronizedReplay
   );
   roomVoiceLyricPlayer.addEventListener("click", (event) => {
     const target = event.target.closest("[data-room-voice-seek-ms]");
@@ -204,7 +223,7 @@ if (roomVoiceLyricPlayer) {
       (targetMs - partIndex * segmentDurationMs) / 1000
     );
   });
-  renderActiveCaption();
+  renderSynchronizedReplay();
 }
 
 const createForm = document.querySelector("#create-job-form");

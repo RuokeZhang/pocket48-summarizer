@@ -267,13 +267,21 @@ button, input, select, textarea { font: inherit; }
   align-items: flex-start;
 }
 
+.room-voice-replay-layout {
+  display: grid;
+  grid-template-columns: minmax(19rem, 30rem) minmax(18rem, 1fr);
+  gap: 1.25rem;
+  align-items: stretch;
+  margin-top: 1rem;
+}
+
 .room-voice-portrait-player {
   display: flex;
   flex-direction: column;
   width: min(100%, 30rem);
   height: min(76vh, 46rem);
   min-height: 34rem;
-  margin: 1rem auto 0;
+  margin: 0;
   overflow: hidden;
   border: 1px solid #34394a;
   border-radius: 1.75rem;
@@ -358,6 +366,117 @@ button, input, select, textarea { font: inherit; }
   font-size: 1.08rem;
   font-weight: 750;
   line-height: 1.65;
+}
+
+.room-voice-message-panel {
+  display: flex;
+  min-width: 0;
+  height: min(76vh, 46rem);
+  min-height: 34rem;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #34394a;
+  border-radius: 1.5rem;
+  background: linear-gradient(180deg, #171923 0%, #0e1017 100%);
+}
+
+.room-voice-message-panel > header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border-bottom: 1px solid #292d38;
+}
+
+.room-voice-message-panel h3,
+.room-voice-message-panel p {
+  margin: 0;
+}
+
+.room-voice-message-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 45% 0.75rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.room-voice-message-list li {
+  border: 1px solid transparent;
+  border-radius: 1rem;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    opacity 180ms ease;
+  opacity: 0.52;
+}
+
+.room-voice-message-list li.is-active {
+  border-color: #7659a5;
+  background: rgb(108 72 150 / 25%);
+  opacity: 1;
+}
+
+.room-voice-message-list button {
+  display: grid;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.75rem 0.85rem;
+  border: 0;
+  background: transparent;
+  color: #d9dce5;
+  text-align: left;
+}
+
+.room-voice-message-list button > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.room-voice-message-list strong {
+  overflow: hidden;
+  color: #f0c5ff;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-voice-message-list small {
+  flex: 0 0 auto;
+  color: #858da0;
+  font-size: 0.68rem;
+}
+
+.room-voice-message-list p {
+  color: #d1d4de;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.room-voice-message-panel > .muted,
+.room-voice-message-panel > .notice {
+  margin: 1rem;
+}
+
+@media (max-width: 760px) {
+  .room-voice-replay-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .room-voice-portrait-player,
+  .room-voice-message-panel {
+    width: 100%;
+    height: min(70vh, 40rem);
+    min-height: 30rem;
+  }
 }
 
 .room-voice-transcript {

@@ -929,6 +929,7 @@ async def room_voice_analysis_page(
         )
     transcript = repository.get_all_room_voice_transcript(session_id)
     transcript_count = repository.count_room_voice_transcript(session_id)
+    room_messages = repository.get_room_voice_public_messages(session_id)
     summary = None
     if processing.summary_json:
         try:
@@ -954,6 +955,7 @@ async def room_voice_analysis_page(
             "summary": summary,
             "transcript": transcript,
             "transcript_count": transcript_count,
+            "room_messages": room_messages,
             "format_clock": format_clock,
             "segment_duration_ms": (
                 settings.pocket48_voice_segment_seconds * 1000
@@ -972,6 +974,27 @@ async def room_voice_analysis_retry(
         request, context, form.get("_csrf")
     )
     request.app.state.services.repository.retry_room_voice_processing(
+        session_id
+    )
+    worker = request.app.state.services.worker
+    if worker is not None:
+        worker.notify()
+    return RedirectResponse(
+        f"/room-voice/{session_id}/analysis",
+        status_code=303,
+    )
+
+
+@router.post("/admin/room-voice/{session_id}/messages/retry")
+async def room_voice_messages_retry(
+    request: Request, session_id: str
+) -> Response:
+    context = require_room_voice_operator(request)
+    form = await parse_form(request)
+    request.app.state.auth.require_csrf(
+        request, context, form.get("_csrf")
+    )
+    request.app.state.services.repository.retry_room_voice_messages(
         session_id
     )
     worker = request.app.state.services.worker

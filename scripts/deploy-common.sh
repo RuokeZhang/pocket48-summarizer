@@ -314,6 +314,7 @@ wait_for_status_zero() {
   local table="$1"
   local timeout_seconds="$2"
   local statuses="${3:-'running'}"
+  local status_column="${4:-status}"
   local deadline=$((SECONDS + timeout_seconds))
   local count
   if [[ ! -f "$DATABASE" ]]; then
@@ -328,7 +329,7 @@ wait_for_status_zero() {
   while true; do
     count="$(
       sqlite3 "$DATABASE" \
-        "SELECT COUNT(*) FROM $table WHERE status IN ($statuses);"
+        "SELECT COUNT(*) FROM $table WHERE $status_column IN ($statuses);"
     )"
     if [[ "$count" == "0" ]]; then
       return 0
@@ -420,6 +421,9 @@ switch_worker_release() {
   if ! wait_for_status_zero jobs "$drain_seconds" \
     || ! wait_for_status_zero \
       room_voice_processing_jobs "$drain_seconds" \
+    || ! wait_for_status_zero \
+      room_voice_processing_jobs "$drain_seconds" \
+      "'running'" messages_status \
     || ! wait_for_status_zero \
       subtitle_translation_requests "$drain_seconds"; then
     rm -f "$WORKER_MAINTENANCE_FILE"

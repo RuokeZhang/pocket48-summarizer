@@ -33,6 +33,7 @@ from .models import (
     ReplayMetadata,
     RoomVoiceProcessingRecord,
     RoomVoiceProcessingStage,
+    RoomVoicePublicMessageRecord,
     SubtitleTranslationRequestRecord,
     SubtitleTranslationStatus,
     TranscriptSegment,
@@ -158,6 +159,12 @@ class JobRepository:
         if row is None:
             return None
         return RoomVoiceProcessingRecord.model_validate(dict(row))
+
+    @staticmethod
+    def _room_voice_public_message(
+        row: sqlite3.Row,
+    ) -> RoomVoicePublicMessageRecord:
+        return RoomVoicePublicMessageRecord.model_validate(dict(row))
 
     @staticmethod
     def _member_catalog(
@@ -2142,6 +2149,9 @@ class JobRepository:
         member_name: str | None,
         segment_count: int,
         total_bytes: int,
+        member_id: str | None = None,
+        capture_started_at: str | None = None,
+        capture_ended_at: str | None = None,
     ) -> RoomVoiceProcessingRecord:
         now = utcnow()
         with self.database.connect() as connection:
@@ -2150,8 +2160,9 @@ class JobRepository:
                 INSERT OR IGNORE INTO room_voice_processing_jobs (
                     session_id, monitor_id, member_name, status, stage,
                     progress_percent, progress_message, segment_count,
-                    total_bytes, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                    total_bytes, member_id, capture_started_at,
+                    capture_ended_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -2162,8 +2173,34 @@ class JobRepository:
                     "等待生成字幕与总结",
                     segment_count,
                     total_bytes,
+                    member_id,
+                    capture_started_at,
+                    capture_ended_at,
                     now,
                     now,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET member_id = COALESCE(member_id, ?),
+                    capture_started_at = COALESCE(capture_started_at, ?),
+                    capture_ended_at = COALESCE(capture_ended_at, ?),
+                    updated_at = CASE
+                        WHEN member_id IS NULL
+                          OR capture_started_at IS NULL
+                          OR capture_ended_at IS NULL
+                        THEN ?
+                        ELSE updated_at
+                    END
+                WHERE session_id = ?
+                """,
+                (
+                    member_id,
+                    capture_started_at,
+                    capture_ended_at,
+                    now,
+                    session_id,
                 ),
             )
             row = connection.execute(
@@ -2208,6 +2245,295 @@ class JobRepository:
             for row in rows
             if (record := self._room_voice_processing(row)) is not None
         ]
+
+    def claim_next_room_voice_messages(
+        self, worker_id: str, lease_seconds: int
+    ) -> RoomVoiceProcessingRecord | None:
+        now = datetime.now(UTC)
+        now_text = now.isoformat()
+        lease = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE messages_status = ?
+                ORDER BY created_at
+                LIMIT 1
+                """,
+                (JobStatus.QUEUED,),
+            ).fetchone()
+            if row is None:
+                return None
+            updated = connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_status = ?, messages_worker_id = ?,
+                    messages_lease_expires_at = ?,
+                    messages_error_code = NULL,
+                    messages_error_message = NULL,
+                    messages_error_retryable = 0,
+                    updated_at = ?
+                WHERE session_id = ? AND messages_status = ?
+                """,
+                (
+                    JobStatus.RUNNING,
+                    worker_id,
+                    lease,
+                    now_text,
+                    row["session_id"],
+                    JobStatus.QUEUED,
+                ),
+            ).rowcount
+            if updated != 1:
+                return None
+            claimed = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE session_id = ?
+                """,
+                (row["session_id"],),
+            ).fetchone()
+        return self._room_voice_processing(claimed)
+
+    def recover_expired_room_voice_messages(self) -> int:
+        now = utcnow()
+        with self.database.connect() as connection:
+            return connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_status = ?, messages_worker_id = NULL,
+                    messages_lease_expires_at = NULL, updated_at = ?
+                WHERE messages_status = ?
+                  AND messages_lease_expires_at IS NOT NULL
+                  AND messages_lease_expires_at < ?
+                """,
+                (
+                    JobStatus.QUEUED,
+                    now,
+                    JobStatus.RUNNING,
+                    now,
+                ),
+            ).rowcount
+
+    def touch_room_voice_messages_lease(
+        self, session_id: str, worker_id: str, lease_seconds: int
+    ) -> None:
+        now = datetime.now(UTC)
+        lease = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self.database.connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_lease_expires_at = ?, updated_at = ?
+                WHERE session_id = ? AND messages_status = ?
+                  AND messages_worker_id = ?
+                """,
+                (
+                    lease,
+                    now.isoformat(),
+                    session_id,
+                    JobStatus.RUNNING,
+                    worker_id,
+                ),
+            ).rowcount
+        if updated != 1:
+            raise AppError(
+                "room_voice_messages_lease_lost",
+                "上麦房间留言任务租约已失效",
+                True,
+            )
+
+    def release_owned_room_voice_messages(
+        self, session_id: str, worker_id: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_status = ?, messages_worker_id = NULL,
+                    messages_lease_expires_at = NULL, updated_at = ?
+                WHERE session_id = ? AND messages_status = ?
+                  AND messages_worker_id = ?
+                """,
+                (
+                    JobStatus.QUEUED,
+                    utcnow(),
+                    session_id,
+                    JobStatus.RUNNING,
+                    worker_id,
+                ),
+            )
+
+    def set_room_voice_room_id(
+        self, session_id: str, room_id: str
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET room_id = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (room_id, utcnow(), session_id),
+            )
+
+    def replace_room_voice_public_messages(
+        self,
+        session_id: str,
+        messages: Iterable[RoomVoicePublicMessageRecord],
+    ) -> None:
+        rows = list(messages)
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                DELETE FROM room_voice_public_messages
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            )
+            connection.executemany(
+                """
+                INSERT INTO room_voice_public_messages (
+                    session_id, message_id, timestamp_ms, sent_at,
+                    nickname, text
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        session_id,
+                        message.message_id,
+                        message.timestamp_ms,
+                        message.sent_at,
+                        message.nickname,
+                        message.text,
+                    )
+                    for message in rows
+                ],
+            )
+
+    def get_room_voice_public_messages(
+        self, session_id: str
+    ) -> list[RoomVoicePublicMessageRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT session_id, message_id, timestamp_ms, sent_at,
+                    nickname, text
+                FROM room_voice_public_messages
+                WHERE session_id = ?
+                ORDER BY timestamp_ms, message_id
+                """,
+                (session_id,),
+            ).fetchall()
+        return [self._room_voice_public_message(row) for row in rows]
+
+    def mark_room_voice_messages_completed(
+        self, session_id: str
+    ) -> None:
+        now = utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_status = ?, messages_completed_at = ?,
+                    messages_worker_id = NULL,
+                    messages_lease_expires_at = NULL,
+                    messages_error_code = NULL,
+                    messages_error_message = NULL,
+                    messages_error_retryable = 0,
+                    updated_at = ?
+                WHERE session_id = ? AND messages_status = ?
+                """,
+                (
+                    JobStatus.COMPLETED,
+                    now,
+                    now,
+                    session_id,
+                    JobStatus.RUNNING,
+                ),
+            )
+
+    def mark_room_voice_messages_failed(
+        self,
+        session_id: str,
+        code: str,
+        message: str,
+        retryable: bool,
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_status = ?, messages_error_code = ?,
+                    messages_error_message = ?,
+                    messages_error_retryable = ?,
+                    messages_worker_id = NULL,
+                    messages_lease_expires_at = NULL,
+                    updated_at = ?
+                WHERE session_id = ?
+                """,
+                (
+                    JobStatus.FAILED,
+                    code,
+                    message,
+                    int(retryable),
+                    utcnow(),
+                    session_id,
+                ),
+            )
+
+    def retry_room_voice_messages(
+        self, session_id: str
+    ) -> RoomVoiceProcessingRecord:
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise AppError(
+                    "room_voice_processing_not_found",
+                    "上麦录音处理任务不存在",
+                    False,
+                )
+            if (
+                row["messages_status"] != JobStatus.FAILED
+                or not row["messages_error_retryable"]
+            ):
+                raise AppError(
+                    "room_voice_messages_not_retryable",
+                    "当前上麦房间留言任务不可重试",
+                    False,
+                )
+            connection.execute(
+                """
+                UPDATE room_voice_processing_jobs
+                SET messages_status = ?, messages_error_code = NULL,
+                    messages_error_message = NULL,
+                    messages_error_retryable = 0,
+                    messages_worker_id = NULL,
+                    messages_lease_expires_at = NULL,
+                    updated_at = ?
+                WHERE session_id = ?
+                """,
+                (JobStatus.QUEUED, utcnow(), session_id),
+            )
+            updated = connection.execute(
+                """
+                SELECT * FROM room_voice_processing_jobs
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        record = self._room_voice_processing(updated)
+        assert record is not None
+        return record
 
     def claim_next_room_voice_processing(
         self, worker_id: str, lease_seconds: int

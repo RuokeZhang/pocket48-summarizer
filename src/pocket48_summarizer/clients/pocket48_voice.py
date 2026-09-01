@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -29,6 +32,10 @@ from ..security import (
 ROOM_INFO_PATH = "/im/api/v1/im/team/room/info"
 MEMBER_ROOM_PATH = "/im/api/v1/im/server/jump"
 VOICE_OPERATE_PATH = "/im/api/v1/team/voice/operate"
+CONVERSATION_PATH = "/im/api/v1/conversation/page"
+ROOM_MESSAGES_PATH = "/im/api/v1/chatroom/msg/list/all"
+ROOM_MESSAGE_MAX_PAGES = 100
+ROOM_MESSAGE_MAX_ITEMS = 5000
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -133,6 +140,15 @@ class MemberRoom:
     member_id: int
     channel_id: int
     server_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class PublicRoomMessage:
+    message_id: str
+    timestamp_ms: int
+    sent_at: str
+    nickname: str
+    text: str
 
 
 class RoomVoiceParticipant(BaseModel):
@@ -339,6 +355,225 @@ class Pocket48VoiceClient:
         )
         status.stream_endpoint()
         return status
+
+    async def resolve_chatroom_id(self, member_id: int) -> int:
+        next_time = 0
+        seen_cursors: set[int] = set()
+        for _ in range(ROOM_MESSAGE_MAX_PAGES):
+            response = await self._post(
+                CONVERSATION_PATH,
+                {"nextTime": next_time, "limit": 100},
+            )
+            payload = self._response_payload(response)
+            content = payload.get("content")
+            if not isinstance(content, dict):
+                raise self._schema_error(
+                    "口袋48会话列表缺少 content"
+                )
+            conversations = content.get("conversations")
+            if not isinstance(conversations, list):
+                conversations = content.get("conversation")
+            if not isinstance(conversations, list):
+                raise self._schema_error(
+                    "口袋48会话列表缺少 conversations"
+                )
+            for conversation in conversations:
+                if not isinstance(conversation, dict):
+                    continue
+                owner_id = self._positive_integer(
+                    conversation.get("ownerId")
+                )
+                room_id = self._positive_integer(
+                    conversation.get("targetId")
+                    or conversation.get("roomId")
+                )
+                if owner_id == member_id and room_id is not None:
+                    return room_id
+            cursor = self._nonnegative_integer(content.get("nextTime"))
+            if (
+                cursor is None
+                or cursor <= 0
+                or cursor in seen_cursors
+                or not conversations
+            ):
+                break
+            seen_cursors.add(cursor)
+            next_time = cursor
+            await asyncio.sleep(0.2)
+        raise ExternalServiceError(
+            "room_voice_chatroom_not_found",
+            "口袋48会话列表中没有找到该成员房间",
+            False,
+        )
+
+    async def fetch_public_room_messages(
+        self,
+        *,
+        room_id: int,
+        member_id: int,
+        started_at_ms: int,
+        ended_at_ms: int,
+    ) -> tuple[PublicRoomMessage, ...]:
+        if started_at_ms < 0 or ended_at_ms <= started_at_ms:
+            raise ConfigurationError("上麦房间留言时间窗口无效")
+        next_time = ended_at_ms
+        seen_cursors: set[int] = set()
+        messages: dict[str, PublicRoomMessage] = {}
+        for _ in range(ROOM_MESSAGE_MAX_PAGES):
+            response = await self._post(
+                ROOM_MESSAGES_PATH,
+                {
+                    "roomId": str(room_id),
+                    "needTop1Msg": False,
+                    "nextTime": str(next_time),
+                },
+            )
+            payload = self._response_payload(response)
+            content = payload.get("content")
+            if not isinstance(content, dict):
+                raise self._schema_error(
+                    "口袋48房间留言响应缺少 content"
+                )
+            raw_messages = content.get("message")
+            if not isinstance(raw_messages, list):
+                raise self._schema_error(
+                    "口袋48房间留言响应缺少 message"
+                )
+            reached_start = False
+            for raw in raw_messages:
+                parsed = self._public_room_message(
+                    raw,
+                    member_id=member_id,
+                    started_at_ms=started_at_ms,
+                    ended_at_ms=ended_at_ms,
+                )
+                raw_time = (
+                    self._nonnegative_integer(raw.get("msgTime"))
+                    if isinstance(raw, dict)
+                    else None
+                )
+                if raw_time is not None and raw_time < started_at_ms:
+                    reached_start = True
+                if parsed is not None:
+                    messages[parsed.message_id] = parsed
+                    if len(messages) >= ROOM_MESSAGE_MAX_ITEMS:
+                        reached_start = True
+                        break
+            cursor = self._nonnegative_integer(content.get("nextTime"))
+            if (
+                reached_start
+                or cursor is None
+                or cursor <= 0
+                or cursor in seen_cursors
+                or not raw_messages
+            ):
+                break
+            seen_cursors.add(cursor)
+            next_time = cursor
+            await asyncio.sleep(0.2)
+        return tuple(
+            sorted(
+                messages.values(),
+                key=lambda message: (
+                    message.timestamp_ms,
+                    message.message_id,
+                ),
+            )
+        )
+
+    def _response_payload(
+        self, response: httpx.Response
+    ) -> dict[str, Any]:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise self._schema_error() from exc
+        if not isinstance(payload, dict):
+            raise self._schema_error()
+        status = self._nonnegative_integer(payload.get("status"))
+        success = payload.get("success")
+        if (
+            response.status_code != 200
+            or status not in {None, 200}
+            or success is False
+        ):
+            raise self._response_error(response, status)
+        return payload
+
+    @classmethod
+    def _public_room_message(
+        cls,
+        raw: Any,
+        *,
+        member_id: int,
+        started_at_ms: int,
+        ended_at_ms: int,
+    ) -> PublicRoomMessage | None:
+        if not isinstance(raw, dict) or raw.get("msgType") != "TEXT":
+            return None
+        sent_ms = cls._nonnegative_integer(raw.get("msgTime"))
+        if (
+            sent_ms is None
+            or sent_ms < started_at_ms
+            or sent_ms > ended_at_ms
+        ):
+            return None
+        ext_raw = raw.get("extInfo")
+        if isinstance(ext_raw, dict):
+            ext = ext_raw
+        else:
+            try:
+                ext = json.loads(str(ext_raw or "{}"))
+            except ValueError:
+                return None
+        if not isinstance(ext, dict):
+            return None
+        message_type = str(ext.get("messageType") or "").upper()
+        if message_type != "TEXT":
+            return None
+        user = ext.get("user")
+        if not isinstance(user, dict):
+            return None
+        user_id = cls._positive_integer(user.get("userId"))
+        if user_id == member_id:
+            return None
+        role_id = cls._nonnegative_integer(user.get("roleId"))
+        if role_id is not None and role_id != 1:
+            return None
+        nickname = strip_control_chars(
+            str(user.get("nickName") or user.get("nickname") or "")
+        )[:100]
+        text = strip_control_chars(str(ext.get("text") or ""))[:1000]
+        if not nickname or not text:
+            return None
+        raw_id = strip_control_chars(
+            str(raw.get("msgidClient") or raw.get("msgId") or "")
+        )[:200]
+        message_id = raw_id or hashlib.sha256(
+            f"{sent_ms}\0{nickname}\0{text}".encode("utf-8")
+        ).hexdigest()
+        return PublicRoomMessage(
+            message_id=message_id,
+            timestamp_ms=sent_ms - started_at_ms,
+            sent_at=datetime.fromtimestamp(
+                sent_ms / 1000, tz=UTC
+            ).isoformat(),
+            nickname=nickname,
+            text=text,
+        )
+
+    @staticmethod
+    def _nonnegative_integer(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    @classmethod
+    def _positive_integer(cls, value: Any) -> int | None:
+        parsed = cls._nonnegative_integer(value)
+        return parsed if parsed is not None and parsed > 0 else None
 
     async def _post(
         self, path: str, payload: dict[str, Any]

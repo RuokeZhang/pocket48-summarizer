@@ -77,14 +77,18 @@ class RoomVoiceProcessingService:
 
     def discover_sessions(self) -> int:
         discovered = 0
+        member_ids = {
+            target.pocket48_voice_monitor_id: (
+                target.pocket48_voice_member_id
+            )
+            for target in self.settings.room_voice_monitor_settings()
+        }
         for session in list_processable_capture_sessions(
             self.settings.room_voice_path
         ):
             existing = self.repository.get_room_voice_processing(
                 session.session_id
             )
-            if existing is not None:
-                continue
             self.repository.enqueue_room_voice_processing(
                 session_id=session.session_id,
                 monitor_id=session.monitor_id,
@@ -93,8 +97,15 @@ class RoomVoiceProcessingService:
                 total_bytes=sum(
                     segment.size_bytes for segment in session.segments
                 ),
+                member_id=(
+                    session.member_id
+                    or member_ids.get(session.monitor_id)
+                ),
+                capture_started_at=session.started_at,
+                capture_ended_at=session.ended_at,
             )
-            discovered += 1
+            if existing is None:
+                discovered += 1
         return discovered
 
     async def run(self, session_id: str) -> None:

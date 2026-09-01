@@ -51,7 +51,9 @@ AI 封面，再填写 Ark 的 `ARK_API_KEY` 和控制台显示的实际
 `/var/lib/pocket48-summarizer/private/` 的 `0600` 文件。首次部署后
 服务会以 `waiting_credentials` 保持就绪。`/room-voice` 对所有访客公开，
 展示三个目标的脱敏状态和最近安全完成的本地 MP3 分段，并允许浏览器播放或
-下载；旧 `/admin/room-voice` 地址只重定向到该页面。只有站点用户名大小写
+下载；录音结束后 Worker 还会抓取同期公开文字留言，与字幕按连续播放时间
+同步展示。数据库只保存公开昵称、文字、发送时间和相对录音时间，不保存粉丝
+用户 ID 或账号画像字段。旧 `/admin/room-voice` 地址只重定向到该页面。只有站点用户名大小写
 折叠后精确等于 `ruoke` 的已登录用户可看到并提交短信/验证码维护表单，其他
 用户（包括其他管理员）由服务端拒绝。成功后 monitor 会热加载凭证，无需
 SSH 或重启服务。该登录会让同一账号的官方手机 App 退出，手机 App 再登录
@@ -148,7 +150,7 @@ curl --fail https://p48.ruokezhang.com/healthz
 
 ## 6. 蓝绿发布与回滚
 
-发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑、边界分析和 AI 封面写操作会短暂返回维护提示。脚本先取得剪辑操作锁，再同时排空旧 `video_clips`、新 `video_clip_exports` 的运行任务，以及 `ai_cover_generations` 的排队/运行任务，避免在 FFmpeg、静音分析、付费 Seedream 请求或本地叠字期间切槽。独立 Worker 会在当前直播任务、上麦录音 ASR/总结任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务、上麦处理任务和翻译任务并重新排队；任务已持久化的 DashScope ID、ASR 结果、总结分块和英文字幕片段会继续复用，不会从头重复提交。独立房间上麦 monitor 也会切换到同一 release；若发布时正在录音，SIGINT 会先保留已完成分段，新进程随后可以继续采集仍在进行的同一条流。
+发布脚本把指定 Git ref 安装到独立 release/venv，启动备用 Web 槽并检查健康，然后通过 Caddy reload 原子切流量。发布期间已有页面和下载保持可用；新剪辑、边界分析和 AI 封面写操作会短暂返回维护提示。脚本先取得剪辑操作锁，再同时排空旧 `video_clips`、新 `video_clip_exports` 的运行任务，以及 `ai_cover_generations` 的排队/运行任务，避免在 FFmpeg、静音分析、付费 Seedream 请求或本地叠字期间切槽。独立 Worker 会在当前直播任务、上麦录音 ASR/总结任务、同期公开留言任务或字幕翻译任务结束后切换，新任务可继续排队。Worker 每次启动都会回收租约已过期的卡死任务、上麦处理任务、留言任务和翻译任务并重新排队；任务已持久化的 DashScope ID、ASR 结果、总结分块、公开留言和英文字幕片段会继续复用，不会从头重复提交。独立房间上麦 monitor 也会切换到同一 release；若发布时正在录音，SIGINT 会先保留已完成分段，新进程随后可以继续采集仍在进行的同一条流。
 
 推荐使用手动触发的 GitHub Actions 工作流。一次性初始化会生成独立部署密钥；该密钥在服务器端绑定强制命令，只能部署已经进入 `origin/main` 的完整提交 SHA，不能打开任意 root shell，也不会把现有管理员 SSH 私钥上传到 GitHub：
 

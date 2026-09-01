@@ -25,7 +25,10 @@ from pocket48_summarizer.clients.pocket48_voice import (
 )
 from pocket48_summarizer.config import AdditionalRoomVoiceTarget
 from pocket48_summarizer.errors import AppError
-from pocket48_summarizer.models import TranscriptSegment
+from pocket48_summarizer.models import (
+    RoomVoicePublicMessageRecord,
+    TranscriptSegment,
+)
 from pocket48_summarizer.room_voice_admin import (
     PA_REFERENCE_MAX_BYTES,
     PendingChallenge,
@@ -743,6 +746,9 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
         session_id=session_id,
         monitor_id="primary",
         member_name="杨晔",
+        member_id="407126",
+        capture_started_at="2026-08-31T19:00:00+00:00",
+        capture_ended_at="2026-08-31T19:05:00+00:00",
         segment_count=1,
         total_bytes=5,
     )
@@ -765,6 +771,24 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
         "可以重试",
         True,
     )
+    message_claim = repository.claim_next_room_voice_messages(
+        "message-worker", 120
+    )
+    assert message_claim
+    repository.replace_room_voice_public_messages(
+        session_id,
+        [
+            RoomVoicePublicMessageRecord(
+                session_id=session_id,
+                message_id="public-message",
+                timestamp_ms=500,
+                sent_at="2026-08-31T19:00:00.500000+00:00",
+                nickname="公开昵称",
+                text="公开留言",
+            )
+        ],
+    )
+    repository.mark_room_voice_messages_completed(session_id)
 
     with TestClient(app) as visitor:
         history = visitor.get("/room-voice")
@@ -772,6 +796,10 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
         javascript = visitor.get("/static/app.js")
         denied = visitor.post(
             f"/admin/room-voice/{session_id}/analysis/retry",
+            follow_redirects=False,
+        )
+        denied_messages = visitor.post(
+            f"/admin/room-voice/{session_id}/messages/retry",
             follow_redirects=False,
         )
 
@@ -783,11 +811,17 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
     assert "data-room-voice-lyric-player" in analysis.text
     assert "data-room-voice-caption" in analysis.text
     assert "data-room-voice-seek-ms" in analysis.text
+    assert "公开昵称" in analysis.text
+    assert "公开留言" in analysis.text
+    assert "data-room-voice-message" in analysis.text
+    assert 'data-timestamp-ms="500"' in analysis.text
     assert "roomvoicepartchange" in javascript.text
     assert 'audio?.addEventListener("ended"' in javascript.text
     assert "scrollIntoView" in javascript.text
     assert denied.status_code == 303
     assert denied.headers["location"] == "/login"
+    assert denied_messages.status_code == 303
+    assert denied_messages.headers["location"] == "/login"
 
 
 @pytest.mark.parametrize(
