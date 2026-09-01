@@ -520,18 +520,8 @@ class Pocket48VoiceClient:
             or sent_ms > ended_at_ms
         ):
             return None
-        ext_raw = raw.get("extInfo")
-        if isinstance(ext_raw, dict):
-            ext = ext_raw
-        else:
-            try:
-                ext = json.loads(str(ext_raw or "{}"))
-            except ValueError:
-                return None
+        ext = cls._public_room_message_ext(raw.get("extInfo"))
         if not isinstance(ext, dict):
-            return None
-        message_type = str(ext.get("messageType") or "").upper()
-        if message_type != "TEXT":
             return None
         user = ext.get("user")
         if not isinstance(user, dict):
@@ -539,13 +529,12 @@ class Pocket48VoiceClient:
         user_id = cls._positive_integer(user.get("userId"))
         if user_id == member_id:
             return None
-        role_id = cls._nonnegative_integer(user.get("roleId"))
-        if role_id is not None and role_id != 1:
-            return None
         nickname = strip_control_chars(
             str(user.get("nickName") or user.get("nickname") or "")
         )[:100]
-        text = strip_control_chars(str(ext.get("text") or ""))[:1000]
+        text = cls._public_room_message_text(raw.get("bodys"))[:1000]
+        if not text:
+            text = cls._public_room_message_text(ext.get("text"))[:1000]
         if not nickname or not text:
             return None
         message_id = hashlib.sha256(
@@ -560,6 +549,52 @@ class Pocket48VoiceClient:
             nickname=nickname,
             text=text,
         )
+
+    @staticmethod
+    def _public_room_message_ext(value: Any) -> dict[str, Any] | None:
+        parsed = value
+        for _ in range(3):
+            if isinstance(parsed, dict):
+                return parsed
+            if not isinstance(parsed, str) or not parsed.strip():
+                return None
+            try:
+                parsed = json.loads(parsed)
+            except ValueError:
+                return None
+        return parsed if isinstance(parsed, dict) else None
+
+    @classmethod
+    def _public_room_message_text(cls, value: Any) -> str:
+        parsed = value
+        for _ in range(3):
+            if isinstance(parsed, str):
+                normalized = strip_control_chars(parsed)
+                if not normalized:
+                    return ""
+                if normalized[0] not in {'"', "{", "["}:
+                    return normalized
+                try:
+                    parsed = json.loads(normalized)
+                except ValueError:
+                    return normalized
+                continue
+            if isinstance(parsed, dict):
+                for key in (
+                    "text",
+                    "content",
+                    "msg",
+                    "message",
+                    "desc",
+                    "title",
+                    "notice",
+                ):
+                    candidate = parsed.get(key)
+                    if isinstance(candidate, str):
+                        return strip_control_chars(candidate)
+                return ""
+            return ""
+        return strip_control_chars(parsed) if isinstance(parsed, str) else ""
 
     @staticmethod
     def _nonnegative_integer(value: Any) -> int | None:

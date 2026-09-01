@@ -335,23 +335,21 @@ async def test_fetches_only_deduplicated_public_fan_text_messages(
     started_at_ms = 1_000_000
     ended_at_ms = 1_100_000
     fan_ext = json.dumps(
-        {
-            "messageType": "TEXT",
-            "text": "  大家好\u0000  ",
-            "user": {
-                "userId": "88",
-                "roleId": 1,
-                "nickName": "粉丝\u0000",
-            },
-        }
+        json.dumps(
+            {
+                "user": {
+                    "userId": "88",
+                    "roleId": 0,
+                    "nickName": "粉丝\u0000",
+                },
+            }
+        )
     )
     member_ext = json.dumps(
         {
-            "messageType": "TEXT",
-            "text": "成员本人",
             "user": {
                 "userId": "6744",
-                "roleId": 1,
+                "roleId": 3,
                 "nickName": "成员",
             },
         }
@@ -370,30 +368,35 @@ async def test_fetches_only_deduplicated_public_fan_text_messages(
                 "msgType": "TEXT",
                 "msgTime": started_at_ms + 20_000,
                 "msgidClient": "fan-message",
+                "bodys": "  大家好\u0000  ",
                 "extInfo": fan_ext,
             },
             {
                 "msgType": "TEXT",
                 "msgTime": started_at_ms + 20_000,
                 "msgidClient": "fan-message",
+                "bodys": "  大家好\u0000  ",
                 "extInfo": fan_ext,
             },
             {
                 "msgType": "TEXT",
                 "msgTime": started_at_ms + 30_000,
                 "msgidClient": "member-message",
+                "bodys": "成员本人",
                 "extInfo": member_ext,
             },
             {
                 "msgType": "IMAGE",
                 "msgTime": started_at_ms + 40_000,
                 "msgidClient": "image-message",
+                "bodys": "图片",
                 "extInfo": fan_ext,
             },
             {
                 "msgType": "TEXT",
                 "msgTime": started_at_ms - 1,
                 "msgidClient": "before-window",
+                "bodys": "窗口之前",
                 "extInfo": fan_ext,
             },
         ]
