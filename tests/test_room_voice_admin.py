@@ -665,9 +665,14 @@ def test_public_room_voice_page_redacts_private_state(settings, repository):
     assert 'data-i18n="roomVoiceTitle"' in page.text
     assert 'data-i18n="roomVoiceCurrentStatus"' in page.text
     assert 'data-room-voice-status="recording"' in page.text
+    assert 'class="admin-stat room-voice-monitor-card"' in page.text
+    assert 'class="room-voice-monitor-details"' in page.text
+    assert 'data-i18n="roomVoiceDetails"' in page.text
     assert styles.status_code == 200
     assert '[data-room-voice-status="recording"]' in styles.text
     assert '[data-room-voice-status="error"]' in styles.text
+    assert ".room-voice-monitor-card" in styles.text
+    assert ".room-voice-monitor-details" in styles.text
     assert "杨晔" in page.text
     assert "王睿琦" in page.text
     assert "杨冰怡" in page.text

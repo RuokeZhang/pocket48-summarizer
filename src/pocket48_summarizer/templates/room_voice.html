@@ -11,19 +11,28 @@
     </div>
   </section>
 
-  <section class="panel">
+  <section class="panel room-voice-monitor-panel">
     <p class="eyebrow">Live monitor status</p>
     <h2 data-i18n="roomVoiceCurrentStatus">当前监控状态</h2>
-    <div class="admin-form-grid room-voice-form-grid">
+    <div class="admin-form-grid room-voice-form-grid room-voice-monitor-grid">
       {% for item in monitors %}
-        <article class="admin-stat">
-          <span>{{ item.monitor_id }}</span>
+        <article class="admin-stat room-voice-monitor-card">
+          <span class="room-voice-monitor-id">{{ item.monitor_id }}</span>
           <h3>{{ item.name or "—" }}</h3>
-          <p><span class="status" data-room-voice-status="{{ item.phase }}">{{ item.phase }}</span></p>
-          <p><span data-i18n="roomVoiceLastUpdated">最近更新</span>：{{ item.updated_at or "—" }}</p>
-          <p>Member ID：{{ item.member_id or "—" }}</p>
-          <p>Channel ID：{% if item.channel_id %}{{ item.channel_id }}{% else %}<span data-i18n="roomVoicePendingResolution">待动态解析</span>{% endif %}</p>
-          <p>Server ID：{% if item.server_id %}{{ item.server_id }}{% else %}<span data-i18n="roomVoicePendingResolution">待动态解析</span>{% endif %}</p>
+          <p class="room-voice-monitor-status"><span class="status" data-room-voice-status="{{ item.phase }}">{{ item.phase }}</span></p>
+          <p class="room-voice-monitor-updated"><span data-i18n="roomVoiceLastUpdated">最近更新</span>：{{ item.updated_at or "—" }}</p>
+          <div class="room-voice-monitor-technical">
+            <p>Member ID：{{ item.member_id or "—" }}</p>
+            <p>Channel ID：{% if item.channel_id %}{{ item.channel_id }}{% else %}<span data-i18n="roomVoicePendingResolution">待动态解析</span>{% endif %}</p>
+            <p>Server ID：{% if item.server_id %}{{ item.server_id }}{% else %}<span data-i18n="roomVoicePendingResolution">待动态解析</span>{% endif %}</p>
+          </div>
+          <details class="room-voice-monitor-details">
+            <summary data-i18n="roomVoiceDetails">查看详情</summary>
+            <p><span data-i18n="roomVoiceLastUpdated">最近更新</span>：{{ item.updated_at or "—" }}</p>
+            <p>Member ID：{{ item.member_id or "—" }}</p>
+            <p>Channel ID：{% if item.channel_id %}{{ item.channel_id }}{% else %}<span data-i18n="roomVoicePendingResolution">待动态解析</span>{% endif %}</p>
+            <p>Server ID：{% if item.server_id %}{{ item.server_id }}{% else %}<span data-i18n="roomVoicePendingResolution">待动态解析</span>{% endif %}</p>
+          </details>
         </article>
       {% endfor %}
     </div>
