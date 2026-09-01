@@ -62,6 +62,151 @@ if (historyBack && historyForward) {
   updateHistoryControls();
 }
 
+const roomVoicePlaylists = [
+  ...document.querySelectorAll("[data-room-voice-playlist]")
+];
+
+for (const playlist of roomVoicePlaylists) {
+  const audio = playlist.querySelector("audio");
+  const sources = [
+    ...playlist.querySelectorAll("[data-room-voice-segment-src]")
+  ].map((item) => item.dataset.roomVoiceSegmentSrc).filter(Boolean);
+  const previous = playlist.querySelector("[data-room-voice-previous]");
+  const next = playlist.querySelector("[data-room-voice-next]");
+  const progress = playlist.querySelector(
+    "[data-room-voice-playlist-progress]"
+  );
+  let currentIndex = 0;
+
+  const renderProgress = () => {
+    playlist.dataset.roomVoiceCurrentIndex = String(currentIndex);
+    if (progress) {
+      progress.dataset.current = String(currentIndex + 1);
+      progress.dataset.total = String(sources.length);
+      setLocalizedText(progress, "roomVoicePartProgress", {
+        current: currentIndex + 1,
+        total: sources.length
+      });
+    }
+    if (previous) previous.disabled = currentIndex === 0;
+    if (next) next.disabled = currentIndex >= sources.length - 1;
+  };
+
+  const selectPart = (index, autoplay, positionSeconds = 0) => {
+    if (!audio || index < 0 || index >= sources.length) return;
+    const startPlayback = () => {
+      if (Number.isFinite(positionSeconds) && positionSeconds > 0) {
+        audio.currentTime = Math.min(
+          positionSeconds,
+          Number.isFinite(audio.duration)
+            ? Math.max(0, audio.duration - 0.05)
+            : positionSeconds
+        );
+      }
+      if (autoplay) {
+        const playback = audio.play();
+        if (playback) playback.catch(() => {});
+      }
+    };
+    if (index === currentIndex && audio.currentSrc) {
+      startPlayback();
+      return;
+    }
+    currentIndex = index;
+    audio.src = sources[currentIndex];
+    audio.load();
+    renderProgress();
+    playlist.dispatchEvent(new CustomEvent("roomvoicepartchange", {
+      detail: { index: currentIndex }
+    }));
+    if (audio.readyState >= 1) {
+      startPlayback();
+    } else {
+      audio.addEventListener("loadedmetadata", startPlayback, { once: true });
+    }
+  };
+
+  previous?.addEventListener("click", () => {
+    selectPart(currentIndex - 1, true);
+  });
+  next?.addEventListener("click", () => {
+    selectPart(currentIndex + 1, true);
+  });
+  audio?.addEventListener("ended", () => {
+    if (currentIndex < sources.length - 1) {
+      selectPart(currentIndex + 1, true);
+    }
+  });
+  playlist.selectRoomVoicePart = selectPart;
+  playlist.roomVoiceAudio = audio;
+  playlist.roomVoiceSourceCount = sources.length;
+  playlist.refreshLanguage = renderProgress;
+  renderProgress();
+}
+
+const roomVoiceLyricPlayer = document.querySelector(
+  "[data-room-voice-lyric-player]"
+);
+
+if (roomVoiceLyricPlayer) {
+  const playlist = roomVoiceLyricPlayer.querySelector(
+    "[data-room-voice-playlist]"
+  );
+  const audio = playlist?.roomVoiceAudio;
+  const captions = [
+    ...roomVoiceLyricPlayer.querySelectorAll("[data-room-voice-caption]")
+  ];
+  const segmentDurationMs = Number(
+    roomVoiceLyricPlayer.dataset.segmentDurationMs || 300000
+  );
+  let activeCaption = null;
+
+  const renderActiveCaption = () => {
+    if (!audio || !playlist || !captions.length) return;
+    const partIndex = Number(
+      playlist.dataset.roomVoiceCurrentIndex || 0
+    );
+    const currentMs = (
+      partIndex * segmentDurationMs + audio.currentTime * 1000
+    );
+    const nextCaption = captions.find((caption) => (
+      currentMs >= Number(caption.dataset.startMs)
+      && currentMs < Number(caption.dataset.endMs)
+    )) || null;
+    if (nextCaption === activeCaption) return;
+    activeCaption?.classList.remove("is-active");
+    activeCaption = nextCaption;
+    activeCaption?.classList.add("is-active");
+    activeCaption?.scrollIntoView({
+      block: "center",
+      behavior: audio.paused ? "auto" : "smooth"
+    });
+  };
+
+  audio?.addEventListener("timeupdate", renderActiveCaption);
+  audio?.addEventListener("seeked", renderActiveCaption);
+  playlist?.addEventListener(
+    "roomvoicepartchange",
+    renderActiveCaption
+  );
+  roomVoiceLyricPlayer.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-room-voice-seek-ms]");
+    if (!target || !playlist?.selectRoomVoicePart) return;
+    const targetMs = Number(target.dataset.roomVoiceSeekMs);
+    if (!Number.isFinite(targetMs) || targetMs < 0) return;
+    const partIndex = Math.min(
+      Math.floor(targetMs / segmentDurationMs),
+      Math.max(0, playlist.roomVoiceSourceCount - 1)
+    );
+    playlist.selectRoomVoicePart(
+      partIndex,
+      true,
+      (targetMs - partIndex * segmentDurationMs) / 1000
+    );
+  });
+  renderActiveCaption();
+}
+
 const createForm = document.querySelector("#create-job-form");
 
 if (createForm) {
@@ -3883,6 +4028,7 @@ void loadAllTranscript();
 void loadAllDanmaku();
 
 document.addEventListener("p48:languagechange", () => {
+  roomVoicePlaylists.forEach((playlist) => playlist.refreshLanguage?.());
   if (lastTranslationPayload) renderTranslationState(lastTranslationPayload);
   renderPlaybackSyncSummary();
   renderClipExports();

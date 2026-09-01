@@ -686,8 +686,16 @@ def test_public_room_voice_page_redacts_private_state(settings, repository):
     segment_url = (
         f"/room-voice/{session_id}/segments/segment-000000.mp3"
     )
-    assert f'<audio controls preload="none" src="{segment_url}">' in page.text
-    assert f'href="{segment_url}"' in page.text
+    assert 'class="room-voice-session-card"' in page.text
+    assert 'class="room-voice-playlist"' in page.text
+    assert f'src="{segment_url}"' in page.text
+    assert f'data-room-voice-segment-src="{segment_url}"' in page.text
+    assert 'data-room-voice-previous' in page.text
+    assert 'data-room-voice-next' in page.text
+    assert 'data-room-voice-playlist-progress' in page.text
+    assert 'data-i18n="roomVoiceSession"' not in page.text
+    assert 'data-i18n="roomVoiceSegmentsSize"' not in page.text
+    assert 'data-i18n="roomVoiceDownloadSegment"' not in page.text
     assert 'action="/admin/room-voice/sms"' not in page.text
     assert 'action="/admin/room-voice/login"' not in page.text
     assert "监控账号维护" not in page.text
@@ -761,6 +769,7 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
     with TestClient(app) as visitor:
         history = visitor.get("/room-voice")
         analysis = visitor.get(f"/room-voice/{session_id}/analysis")
+        javascript = visitor.get("/static/app.js")
         denied = visitor.post(
             f"/admin/room-voice/{session_id}/analysis/retry",
             follow_redirects=False,
@@ -771,6 +780,12 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
     assert analysis.status_code == 200
     assert "公开字幕" in analysis.text
     assert "可以重试" in analysis.text
+    assert "data-room-voice-lyric-player" in analysis.text
+    assert "data-room-voice-caption" in analysis.text
+    assert "data-room-voice-seek-ms" in analysis.text
+    assert "roomvoicepartchange" in javascript.text
+    assert 'audio?.addEventListener("ended"' in javascript.text
+    assert "scrollIntoView" in javascript.text
     assert denied.status_code == 303
     assert denied.headers["location"] == "/login"
 

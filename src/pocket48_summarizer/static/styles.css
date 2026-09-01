@@ -168,6 +168,198 @@ button, input, select, textarea { font: inherit; }
 .room-voice-monitor-technical { display: contents; }
 .room-voice-monitor-details { display: none; }
 
+.room-voice-history-group + .room-voice-history-group {
+  margin-top: 2rem;
+}
+
+.room-voice-session-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.room-voice-session-card {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border: 1px solid #2b2f3b;
+  border-radius: 1rem;
+  background: #11141d;
+}
+
+.room-voice-session-card > header,
+.room-voice-session-content,
+.room-voice-playlist,
+.room-voice-playlist-controls,
+.room-voice-analysis-link {
+  display: flex;
+  align-items: center;
+}
+
+.room-voice-session-card > header {
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.room-voice-session-time {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.room-voice-session-time strong,
+.room-voice-session-time small {
+  overflow-wrap: anywhere;
+}
+
+.room-voice-session-time small {
+  color: #9299aa;
+}
+
+.room-voice-session-content {
+  gap: 1rem;
+}
+
+.room-voice-playlist {
+  flex: 1 1 32rem;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.room-voice-playlist audio {
+  width: min(100%, 38rem);
+  min-width: 12rem;
+}
+
+.room-voice-playlist-controls {
+  flex: 0 0 auto;
+  gap: 0.35rem;
+  color: #9299aa;
+  white-space: nowrap;
+}
+
+.room-voice-playlist-controls button {
+  width: 2rem;
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.room-voice-playlist-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.room-voice-analysis-link {
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+
+.room-voice-analysis-link small {
+  max-width: 18rem;
+  color: #9299aa;
+  text-align: right;
+}
+
+.room-voice-replay-panel .section-heading {
+  align-items: flex-start;
+}
+
+.room-voice-portrait-player {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 30rem);
+  height: min(76vh, 46rem);
+  min-height: 34rem;
+  margin: 1rem auto 0;
+  overflow: hidden;
+  border: 1px solid #34394a;
+  border-radius: 1.75rem;
+  background:
+    radial-gradient(circle at 50% 0%, #372847 0, transparent 38%),
+    linear-gradient(180deg, #171923 0%, #0a0c12 100%);
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
+}
+
+.room-voice-portrait-player .room-voice-playlist {
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  padding: 1rem 1rem 0.75rem;
+  border-bottom: 1px solid #292d38;
+  background: rgb(10 12 18 / 72%);
+  backdrop-filter: blur(18px);
+}
+
+.room-voice-portrait-player .room-voice-playlist audio {
+  width: 100%;
+}
+
+.room-voice-portrait-player .room-voice-playlist-controls {
+  justify-content: center;
+}
+
+.room-voice-lyric-viewport {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+
+.room-voice-lyric-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.room-voice-lyrics {
+  display: grid;
+  gap: 1.1rem;
+  margin: 0;
+  padding: 45% 1.5rem;
+  list-style: none;
+}
+
+.room-voice-lyrics li {
+  transition: opacity 180ms ease, transform 180ms ease;
+  opacity: 0.34;
+}
+
+.room-voice-lyrics li.is-active {
+  transform: scale(1.035);
+  opacity: 1;
+}
+
+.room-voice-lyrics button {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #c7cbd5;
+  text-align: center;
+}
+
+.room-voice-lyrics li.is-active button {
+  color: #fff;
+}
+
+.room-voice-lyrics small {
+  color: #8d95a8;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.room-voice-lyrics span {
+  font-size: 1.08rem;
+  font-weight: 750;
+  line-height: 1.65;
+}
+
 .room-voice-transcript {
   display: grid;
   gap: 0.75rem;
@@ -2511,6 +2703,40 @@ code { color: #d4c8ff; }
     margin: 7px 0 0;
     overflow-wrap: anywhere;
     line-height: 1.35;
+  }
+  .room-voice-session-card {
+    padding: 0.85rem;
+  }
+  .room-voice-session-card > header {
+    align-items: flex-start;
+  }
+  .room-voice-session-time strong {
+    font-size: 0.85rem;
+  }
+  .room-voice-session-content,
+  .room-voice-playlist {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .room-voice-playlist {
+    flex-basis: auto;
+  }
+  .room-voice-playlist audio {
+    width: 100%;
+    min-width: 0;
+  }
+  .room-voice-playlist-controls {
+    justify-content: center;
+  }
+  .room-voice-analysis-link {
+    align-items: stretch;
+  }
+  .room-voice-analysis-link .button-link {
+    justify-content: center;
+  }
+  .room-voice-analysis-link small {
+    max-width: none;
+    text-align: center;
   }
   .account-actions {
     min-width: 0;

@@ -910,7 +910,6 @@ async def room_voice_page(request: Request) -> Response:
 async def room_voice_analysis_page(
     request: Request,
     session_id: str,
-    offset: int = 0,
 ) -> Response:
     settings = request.app.state.settings
     session = safe_capture_session(settings.room_voice_path, session_id)
@@ -928,12 +927,7 @@ async def room_voice_analysis_page(
             "这段上麦录音尚未进入字幕与总结队列",
             False,
         )
-    offset = max(0, offset)
-    transcript = repository.get_room_voice_transcript(
-        session_id,
-        limit=500,
-        offset=offset,
-    )
+    transcript = repository.get_all_room_voice_transcript(session_id)
     transcript_count = repository.count_room_voice_transcript(session_id)
     summary = None
     if processing.summary_json:
@@ -960,14 +954,10 @@ async def room_voice_analysis_page(
             "summary": summary,
             "transcript": transcript,
             "transcript_count": transcript_count,
-            "offset": offset,
-            "next_offset": (
-                offset + len(transcript)
-                if offset + len(transcript) < transcript_count
-                else None
-            ),
-            "previous_offset": max(0, offset - 500) if offset else None,
             "format_clock": format_clock,
+            "segment_duration_ms": (
+                settings.pocket48_voice_segment_seconds * 1000
+            ),
         },
     )
 

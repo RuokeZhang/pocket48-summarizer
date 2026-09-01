@@ -46,63 +46,87 @@
       </div>
     </div>
     {% for group in history_groups %}
-      <section>
+      <section class="room-voice-history-group">
         <h3>{% if group.name %}{{ group.name }}{% else %}<span data-i18n="roomVoiceUnknownTarget">未知监控目标</span>{% endif %}</h3>
-        <div class="admin-table-wrap">
-          <table class="admin-table">
-            <thead>
-              <tr>
-                <th data-i18n="roomVoiceSession">会话</th>
-                <th data-i18n="roomVoiceStatus">状态</th>
-                <th data-i18n="roomVoiceStartEnd">开始 / 结束</th>
-                <th data-i18n="roomVoiceSegmentsSize">分段 / 总大小</th>
-                <th data-i18n="roomVoicePlayableSegments">可播放的已完成分段</th>
-                <th data-i18n="roomVoiceAnalysis">字幕与总结</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for session in group.sessions %}
-                <tr>
-                  <td>{{ session.session_id }}</td>
-                  <td><span class="status" data-room-voice-status="{{ session.status }}">{{ session.status }}</span></td>
-                  <td>{{ session.started_at or "—" }}<small>{{ session.ended_at or "—" }}</small></td>
-                  <td>{{ session.segment_count }}<small data-i18n="roomVoiceBytes" data-i18n-param-count="{{ session.total_bytes }}">{{ session.total_bytes }} 字节</small></td>
-                  <td>
+        <div class="room-voice-session-list">
+          {% for session in group.sessions %}
+            <article class="room-voice-session-card">
+              <header>
+                <div class="room-voice-session-time">
+                  <strong>{{ session.started_at or "—" }}</strong>
+                  <small>{{ session.ended_at or "—" }}</small>
+                </div>
+                <span class="status" data-room-voice-status="{{ session.status }}">{{ session.status }}</span>
+              </header>
+
+              <div class="room-voice-session-content">
+                {% if session.segments %}
+                  <div class="room-voice-playlist" data-room-voice-playlist>
+                    <audio
+                      controls
+                      preload="none"
+                      src="/room-voice/{{ session.session_id }}/segments/{{ session.segments[0].name }}"
+                    ></audio>
                     {% for segment in session.segments %}
-                      <div>
-                        <audio controls preload="none" src="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}"></audio>
-                        <a href="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}" download="{{ segment.name }}" data-i18n="roomVoiceDownloadSegment" data-i18n-param-name="{{ segment.name }}">下载 {{ segment.name }}</a>
-                        <small data-i18n="roomVoiceBytes" data-i18n-param-count="{{ segment.size_bytes }}">{{ segment.size_bytes }} 字节</small>
-                      </div>
-                    {% else %}
-                      <span class="muted" data-i18n="roomVoiceNoPlayableSegments">当前没有可安全播放的已完成分段。</span>
+                      <span
+                        hidden
+                        data-room-voice-segment-src="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}"
+                      ></span>
                     {% endfor %}
-                  </td>
-                  <td>
-                    {% if session.processing %}
-                      <a href="/room-voice/{{ session.session_id }}/analysis">
-                        {% if session.processing.status == "completed" %}
-                          <span data-i18n="roomVoiceAnalysisReady">查看字幕与总结</span>
-                        {% elif session.processing.status == "failed" %}
-                          <span data-i18n="roomVoiceAnalysisFailed">处理失败，查看详情</span>
-                        {% else %}
-                          <span data-i18n="roomVoiceAnalysisProcessing">正在生成字幕与总结</span>
-                        {% endif %}
-                      </a>
+                    <div class="room-voice-playlist-controls">
+                      <button
+                        type="button"
+                        data-room-voice-previous
+                        title="上一段"
+                        data-i18n-title="roomVoicePreviousPart"
+                        aria-label="上一段"
+                        data-i18n-aria-label="roomVoicePreviousPart"
+                      >&lsaquo;</button>
+                      <span
+                        data-room-voice-playlist-progress
+                        data-current="1"
+                        data-total="{{ session.segments | length }}"
+                      >录音 1 / {{ session.segments | length }}</span>
+                      <button
+                        type="button"
+                        data-room-voice-next
+                        title="下一段"
+                        data-i18n-title="roomVoiceNextPart"
+                        aria-label="下一段"
+                        data-i18n-aria-label="roomVoiceNextPart"
+                      >&rsaquo;</button>
+                    </div>
+                  </div>
+                {% else %}
+                  <span class="muted" data-i18n="roomVoiceNoPlayableSegments">当前没有可安全播放的已完成分段。</span>
+                {% endif %}
+
+                <div class="room-voice-analysis-link">
+                  {% if session.processing %}
+                    <a class="button-link" href="/room-voice/{{ session.session_id }}/analysis">
+                      {% if session.processing.status == "completed" %}
+                        <span data-i18n="roomVoiceAnalysisReady">查看字幕与总结</span>
+                      {% elif session.processing.status == "failed" %}
+                        <span data-i18n="roomVoiceAnalysisFailed">处理失败，查看详情</span>
+                      {% else %}
+                        <span data-i18n="roomVoiceAnalysisProcessing">正在生成字幕与总结</span>
+                      {% endif %}
+                    </a>
+                    {% if session.processing.status != "completed" %}
                       <small>
                         {{ session.processing.progress_percent }}% ·
                         <span data-operational-message="{{ session.processing.progress_message }}">{{ session.processing.progress_message }}</span>
                       </small>
-                    {% else %}
-                      <span class="muted" data-i18n="roomVoiceAnalysisPending">等待后台发现</span>
                     {% endif %}
-                  </td>
-                </tr>
-              {% else %}
-                <tr><td colspan="6" data-i18n="roomVoiceNoSessions">还没有可安全显示的采集会话。</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
+                  {% else %}
+                    <span class="muted" data-i18n="roomVoiceAnalysisPending">等待后台发现</span>
+                  {% endif %}
+                </div>
+              </div>
+            </article>
+          {% else %}
+            <p class="muted" data-i18n="roomVoiceNoSessions">还没有可安全显示的采集会话。</p>
+          {% endfor %}
         </div>
       </section>
     {% endfor %}

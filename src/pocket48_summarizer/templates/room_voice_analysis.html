@@ -35,6 +35,84 @@
     {% endif %}
   </section>
 
+  <section
+    class="panel room-voice-replay-panel"
+    data-room-voice-lyric-player
+    data-segment-duration-ms="{{ segment_duration_ms }}"
+  >
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Synchronized replay</p>
+        <h2 data-i18n="roomVoiceLyricReplay">上麦歌词回放</h2>
+      </div>
+      {% if transcript %}
+        <a href="/room-voice/{{ session.session_id }}/transcript.srt" download data-i18n="roomVoiceDownloadSrt">下载 SRT 字幕</a>
+      {% endif %}
+    </div>
+    {% if session.segments %}
+      <div class="room-voice-portrait-player">
+        <div class="room-voice-playlist" data-room-voice-playlist>
+          <audio
+            controls
+            preload="metadata"
+            src="/room-voice/{{ session.session_id }}/segments/{{ session.segments[0].name }}"
+          ></audio>
+          {% for segment in session.segments %}
+            <span
+              hidden
+              data-room-voice-segment-src="/room-voice/{{ session.session_id }}/segments/{{ segment.name }}"
+            ></span>
+          {% endfor %}
+          <div class="room-voice-playlist-controls">
+            <button
+              type="button"
+              data-room-voice-previous
+              title="上一段"
+              data-i18n-title="roomVoicePreviousPart"
+              aria-label="上一段"
+              data-i18n-aria-label="roomVoicePreviousPart"
+            >&lsaquo;</button>
+            <span
+              data-room-voice-playlist-progress
+              data-current="1"
+              data-total="{{ session.segments | length }}"
+            >录音 1 / {{ session.segments | length }}</span>
+            <button
+              type="button"
+              data-room-voice-next
+              title="下一段"
+              data-i18n-title="roomVoiceNextPart"
+              aria-label="下一段"
+              data-i18n-aria-label="roomVoiceNextPart"
+            >&rsaquo;</button>
+          </div>
+        </div>
+        <div class="room-voice-lyric-viewport">
+          {% if transcript %}
+            <ol class="room-voice-lyrics">
+              {% for segment in transcript %}
+                <li
+                  data-room-voice-caption
+                  data-start-ms="{{ segment.start_ms }}"
+                  data-end-ms="{{ segment.end_ms }}"
+                >
+                  <button type="button" data-room-voice-seek-ms="{{ segment.start_ms }}">
+                    <small>{{ format_clock(segment.start_ms) }}</small>
+                    <span>{{ segment.text }}</span>
+                  </button>
+                </li>
+              {% endfor %}
+            </ol>
+          {% else %}
+            <p class="muted" data-i18n="roomVoiceTranscriptPending">字幕尚未生成。</p>
+          {% endif %}
+        </div>
+      </div>
+    {% else %}
+      <p class="muted" data-i18n="roomVoiceNoPlayableSegments">当前没有可安全播放的已完成分段。</p>
+    {% endif %}
+  </section>
+
   {% if summary %}
     <section class="panel summary-panel">
       <p class="eyebrow">AI summary</p>
@@ -70,33 +148,4 @@
     </section>
   {% endif %}
 
-  <section class="panel">
-    <p class="eyebrow">Full captions</p>
-    <h2 data-i18n="transcript">字幕</h2>
-    {% if transcript %}
-      <p>
-        <a href="/room-voice/{{ session.session_id }}/transcript.srt" download data-i18n="roomVoiceDownloadSrt">下载 SRT 字幕</a>
-      </p>
-      <ol class="room-voice-transcript">
-        {% for segment in transcript %}
-          <li>
-            <strong>{{ format_clock(segment.start_ms) }}–{{ format_clock(segment.end_ms) }}</strong>
-            {% if segment.speaker_id %}<small>{{ segment.speaker_id }}</small>{% endif %}
-            <p>{{ segment.text }}</p>
-          </li>
-        {% endfor %}
-      </ol>
-      <nav class="room-voice-pagination">
-        {% if previous_offset is not none %}
-          <a href="?offset={{ previous_offset }}" data-i18n="previousPage">上一页</a>
-        {% endif %}
-        <span>{{ offset + 1 }}–{{ offset + transcript | length }} / {{ transcript_count }}</span>
-        {% if next_offset is not none %}
-          <a href="?offset={{ next_offset }}" data-i18n="nextPage">下一页</a>
-        {% endif %}
-      </nav>
-    {% else %}
-      <p class="muted" data-i18n="roomVoiceTranscriptPending">字幕尚未生成。</p>
-    {% endif %}
-  </section>
 {% endblock %}
