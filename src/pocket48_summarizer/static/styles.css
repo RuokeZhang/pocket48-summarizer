@@ -52,12 +52,14 @@ button, input, select, textarea { font: inherit; }
    has to be the same pill rather than a bare text link. */
 .logout-button,
 .header-pill {
+  flex: 0 0 auto;
   padding: 7px 11px;
   border: 1px solid #373b48;
   border-radius: 999px;
   background: transparent;
   color: #bfc6d8;
   font-size: 12px;
+  white-space: nowrap;
 }
 .header-pill {
   display: inline-grid;
@@ -68,6 +70,7 @@ button, input, select, textarea { font: inherit; }
 }
 .language-toggle {
   display: grid;
+  flex: 0 0 auto;
   min-width: 42px;
   height: 34px;
   place-items: center;
@@ -2355,9 +2358,22 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 code { color: #d4c8ff; }
 
 @media (max-width: 760px) {
-  .site-header { padding: 0 18px; }
+  .site-header { gap: 10px; padding: 0 12px; }
   .brand small { display: none; }
   .local-pill { display: none; }
+  .account-actions {
+    min-width: 0;
+    gap: 4px;
+  }
+  .logout-button,
+  .header-pill {
+    height: 34px;
+    padding: 0 8px;
+  }
+  .language-toggle {
+    min-width: 38px;
+    padding: 0 7px;
+  }
   .page-shell { width: min(100% - 24px, 1180px); padding-top: 34px; }
   .member-filter-form { align-items: stretch; flex-wrap: wrap; }
   .member-filter-field { flex: 1 1 100%; }
@@ -2479,6 +2495,10 @@ code { color: #d4c8ff; }
   .ai-cover-panel {
     display: none;
   }
+}
+
+@media (max-width: 520px) {
+  .brand > span:last-child { display: none; }
 }
 
 @media (pointer: coarse) {

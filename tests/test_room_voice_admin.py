@@ -134,6 +134,11 @@ def make_admin_app(settings, repository):
                     name="王睿琦",
                     member_id=530390,
                 ),
+                AdditionalRoomVoiceTarget(
+                    id="yang-bingyi",
+                    name="杨冰怡",
+                    member_id=6744,
+                ),
             ),
         }
     )
@@ -657,9 +662,11 @@ def test_public_room_voice_page_redacts_private_state(settings, repository):
     assert "本页公开展示" in page.text
     assert "杨晔" in page.text
     assert "王睿琦" in page.text
+    assert "杨冰怡" in page.text
     assert "recording" in page.text
     assert "407126" in page.text
     assert "530390" in page.text
+    assert "6744" in page.text
     assert "7587624" in page.text
     assert "6227955" in page.text
     segment_url = (

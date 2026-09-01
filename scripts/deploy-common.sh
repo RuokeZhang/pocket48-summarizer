@@ -18,8 +18,6 @@ WORKER_MAINTENANCE_FILE="$RUNTIME_DIR/worker-maintenance"
 WORKER_READY_FILE="$RUNTIME_DIR/worker-ready"
 VOICE_MONITOR_READY_FILE="$RUNTIME_DIR/room-voice-monitor-ready"
 VOICE_MONITOR_STATUS_FILE="$RUNTIME_DIR/room-voice-monitor-status.json"
-VOICE_MONITOR_WANG_RUIQI_READY_FILE="$RUNTIME_DIR/room-voice-monitor-wang-ruiqi-ready"
-VOICE_MONITOR_WANG_RUIQI_STATUS_FILE="$RUNTIME_DIR/room-voice-monitor-wang-ruiqi-status.json"
 CLIP_OPERATION_LOCK="$RUNTIME_DIR/clip-operation.lock"
 WORKER_OPERATION_LOCK="$RUNTIME_DIR/worker-operation.lock"
 UPSTREAM_FILE="/etc/caddy/pocket48-upstream.caddy"
@@ -230,22 +228,73 @@ restore_voice_monitor_unit() {
   systemctl daemon-reload
 }
 
-voice_monitor_expects_wang_ruiqi() {
+voice_monitor_additional_target_ids() {
   local release_dir="$1"
   local target_env="$release_dir/deploy/room-voice-target.env"
-  [[ -f "$target_env" ]] \
-    && grep -Fq '"id":"wang-ruiqi"' "$target_env"
+  if [[ ! -f "$target_env" ]]; then
+    return 0
+  fi
+  python3 - "$target_env" <<'PY'
+import ast
+import json
+import re
+import sys
+
+target_env = sys.argv[1]
+raw_value = None
+with open(target_env, encoding="utf-8") as handle:
+    for line in handle:
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "POCKET48_VOICE_ADDITIONAL_TARGETS_JSON":
+            raw_value = value.strip()
+            break
+if raw_value is None:
+    raise SystemExit(0)
+if (
+    len(raw_value) >= 2
+    and raw_value[0] == raw_value[-1]
+    and raw_value[0] in {"'", '"'}
+):
+    raw_value = ast.literal_eval(raw_value)
+targets = json.loads(raw_value)
+if not isinstance(targets, list):
+    raise SystemExit(1)
+for target in targets:
+    if not isinstance(target, dict):
+        raise SystemExit(1)
+    target_id = target.get("id")
+    if not isinstance(target_id, str) or not re.fullmatch(
+        r"[a-z0-9]+(?:-[a-z0-9]+)*", target_id
+    ):
+        raise SystemExit(1)
+    print(target_id)
+PY
 }
 
 voice_monitor_release_ready() {
   local release_dir="$1"
   local ready_files=("$VOICE_MONITOR_READY_FILE")
   local status_files=("$VOICE_MONITOR_STATUS_FILE")
-  local path
-  if voice_monitor_expects_wang_ruiqi "$release_dir"; then
-    ready_files+=("$VOICE_MONITOR_WANG_RUIQI_READY_FILE")
-    status_files+=("$VOICE_MONITOR_WANG_RUIQI_STATUS_FILE")
+  local runtime_dir
+  runtime_dir="$(dirname "$VOICE_MONITOR_READY_FILE")"
+  local additional_target_ids
+  if ! additional_target_ids="$(
+    voice_monitor_additional_target_ids "$release_dir"
+  )"; then
+    return 1
   fi
+  local target_id
+  local path
+  while IFS= read -r target_id; do
+    if [[ -n "$target_id" ]]; then
+      ready_files+=(
+        "$runtime_dir/room-voice-monitor-$target_id-ready"
+      )
+      status_files+=(
+        "$runtime_dir/room-voice-monitor-$target_id-status.json"
+      )
+    fi
+  done <<< "$additional_target_ids"
   for path in "${ready_files[@]}"; do
     if [[ ! -f "$path" || "$(< "$path")" != "$release_dir" ]]; then
       return 1
@@ -453,9 +502,7 @@ switch_voice_monitor_release() {
   if [[ ! -x "$release_dir/.venv/bin/pocket48-voice-monitor" \
     || ! -f "$candidate_unit" ]]; then
     systemctl disable --now pocket48-voice-monitor.service || true
-    rm -f \
-      "$VOICE_MONITOR_READY_FILE" \
-      "$VOICE_MONITOR_WANG_RUIQI_READY_FILE"
+    rm -f "$(dirname "$VOICE_MONITOR_READY_FILE")"/room-voice-monitor*-ready
     rm -f "$VOICE_MONITOR_LINK"
     return 3
   fi
@@ -479,8 +526,7 @@ switch_voice_monitor_release() {
     had_previous_unit=true
   fi
   if ! rm -f \
-    "$VOICE_MONITOR_READY_FILE" \
-    "$VOICE_MONITOR_WANG_RUIQI_READY_FILE"; then
+    "$(dirname "$VOICE_MONITOR_READY_FILE")"/room-voice-monitor*-ready; then
     rm -f "$unit_backup"
     return 1
   fi

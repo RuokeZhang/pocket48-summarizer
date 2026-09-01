@@ -1837,9 +1837,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="mobile-history-nav"' in page.text
     assert 'id="history-back"' in page.text
     assert 'id="history-forward"' in page.text
-    assert "i18n.js?v=20260829-14" in page.text
-    assert "styles.css?v=20260829-14" in page.text
-    assert "app.js?v=20260829-14" in page.text
+    assert "i18n.js?v=20260901-15" in page.text
+    assert "styles.css?v=20260901-15" in page.text
+    assert "app.js?v=20260901-15" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
@@ -1869,6 +1869,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert "width: 27%" in styles.text
     assert ".mobile-danmaku-overlay" in styles.text
     assert ".mobile-history-nav" in styles.text
+    assert "white-space: nowrap" in styles.text
+    assert "@media (max-width: 520px)" in styles.text
+    assert ".brand > span:last-child { display: none; }" in styles.text
     assert "safe-area-inset-bottom" in styles.text
     assert "--mobile-overlay-content-bottom: 10px" in styles.text
     assert "--mobile-danmaku-stream-padding: 6px" in styles.text
