@@ -362,7 +362,7 @@ async def test_fetches_only_deduplicated_public_fan_text_messages(
         assert json.loads(request.content) == {
             "roomId": "67333093",
             "needTop1Msg": False,
-            "nextTime": str(ended_at_ms),
+            "nextTime": "0",
         }
         messages = [
             {

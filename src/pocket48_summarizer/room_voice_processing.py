@@ -12,6 +12,7 @@ from .media.ffmpeg import FFmpegRunner
 from .models import RoomVoiceProcessingRecord, RoomVoiceProcessingStage
 from .parsing.transcript import normalize_asr_result
 from .repository import JobRepository
+from .room_voice_messages import ROOM_VOICE_MESSAGES_VERSION
 from .room_voice_admin import (
     list_processable_capture_sessions,
     safe_capture_segment_path,
@@ -103,6 +104,7 @@ class RoomVoiceProcessingService:
                 ),
                 capture_started_at=session.started_at,
                 capture_ended_at=session.ended_at,
+                messages_version=ROOM_VOICE_MESSAGES_VERSION,
             )
             if existing is None:
                 discovered += 1

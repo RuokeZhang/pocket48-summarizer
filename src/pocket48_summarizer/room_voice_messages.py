@@ -13,6 +13,8 @@ from .errors import AppError, ConfigurationError
 from .models import RoomVoiceProcessingRecord, RoomVoicePublicMessageRecord
 from .repository import JobRepository
 
+ROOM_VOICE_MESSAGES_VERSION = "public-text-v1"
+
 
 class RoomVoiceMessageService:
     def __init__(
@@ -63,6 +65,7 @@ class RoomVoiceMessageService:
         self.repository.complete_room_voice_messages(
             session_id,
             worker_id,
+            ROOM_VOICE_MESSAGES_VERSION,
             [
                 RoomVoicePublicMessageRecord(
                     session_id=session_id,

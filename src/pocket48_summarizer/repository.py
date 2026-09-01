@@ -2152,6 +2152,7 @@ class JobRepository:
         member_id: str | None = None,
         capture_started_at: str | None = None,
         capture_ended_at: str | None = None,
+        messages_version: str | None = None,
     ) -> RoomVoiceProcessingRecord:
         now = utcnow()
         with self.database.connect() as connection:
@@ -2226,6 +2227,32 @@ class JobRepository:
                     JobStatus.FAILED,
                 ),
             )
+            if messages_version:
+                connection.execute(
+                    """
+                    UPDATE room_voice_processing_jobs
+                    SET messages_status = ?,
+                        messages_completed_at = NULL,
+                        messages_error_code = NULL,
+                        messages_error_message = NULL,
+                        messages_error_retryable = 0,
+                        messages_worker_id = NULL,
+                        messages_lease_expires_at = NULL,
+                        updated_at = ?
+                    WHERE session_id = ? AND messages_status = ?
+                      AND COALESCE(messages_version, '') != ?
+                      AND member_id IS NOT NULL
+                      AND capture_started_at IS NOT NULL
+                      AND capture_ended_at IS NOT NULL
+                    """,
+                    (
+                        JobStatus.QUEUED,
+                        now,
+                        session_id,
+                        JobStatus.COMPLETED,
+                        messages_version,
+                    ),
+                )
             row = connection.execute(
                 """
                 SELECT * FROM room_voice_processing_jobs
@@ -2418,6 +2445,7 @@ class JobRepository:
         self,
         session_id: str,
         worker_id: str,
+        messages_version: str,
         messages: Iterable[RoomVoicePublicMessageRecord],
     ) -> None:
         rows = list(messages)
@@ -2469,6 +2497,7 @@ class JobRepository:
                 """
                 UPDATE room_voice_processing_jobs
                 SET messages_status = ?, messages_completed_at = ?,
+                    messages_version = ?,
                     messages_worker_id = NULL,
                     messages_lease_expires_at = NULL,
                     messages_error_code = NULL,
@@ -2481,6 +2510,7 @@ class JobRepository:
                 (
                     JobStatus.COMPLETED,
                     now,
+                    messages_version,
                     now,
                     session_id,
                     JobStatus.RUNNING,

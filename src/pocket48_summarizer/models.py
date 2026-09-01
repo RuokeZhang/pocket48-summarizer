@@ -338,6 +338,7 @@ class RoomVoiceProcessingRecord(BaseModel):
     started_at: str | None = None
     completed_at: str | None = None
     messages_status: JobStatus
+    messages_version: str | None = None
     messages_error_code: str | None = None
     messages_error_message: str | None = None
     messages_error_retryable: bool = False

@@ -778,6 +778,7 @@ def test_room_voice_analysis_is_public_and_retry_stays_ruoke_only(
     repository.complete_room_voice_messages(
         session_id,
         "message-worker",
+        "public-text-v1",
         [
             RoomVoicePublicMessageRecord(
                 session_id=session_id,

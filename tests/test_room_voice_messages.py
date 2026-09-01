@@ -77,6 +77,7 @@ async def test_fetches_and_persists_minimized_room_messages(
 
     completed = repository.get_room_voice_processing(session_id)
     assert completed and completed.messages_status == "completed"
+    assert completed.messages_version == "public-text-v1"
     assert completed.room_id == "67333093"
     assert client.fetch_call == {
         "room_id": 67333093,
@@ -166,11 +167,11 @@ def test_stale_worker_cannot_replace_reclaimed_room_messages(repository):
 
     with pytest.raises(AppError, match="租约"):
         repository.complete_room_voice_messages(
-            session_id, "worker-a", [message]
+            session_id, "worker-a", "public-text-v1", [message]
         )
 
     repository.complete_room_voice_messages(
-        session_id, "worker-b", [message]
+        session_id, "worker-b", "public-text-v1", [message]
     )
     stored = repository.get_room_voice_public_messages(session_id)
     assert [item.message_id for item in stored] == ["message-b"]
@@ -209,3 +210,37 @@ def test_metadata_backfill_requeues_configuration_failure(repository):
     assert updated.messages_status == "queued"
     assert updated.messages_error_code is None
     assert updated.member_id == "530390"
+
+
+def test_message_parser_version_requeues_completed_session(repository):
+    session_id = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+    repository.enqueue_room_voice_processing(
+        session_id=session_id,
+        monitor_id="wang-ruiqi",
+        member_name="王睿琦",
+        member_id="530390",
+        capture_started_at="2026-09-01T15:00:00+00:00",
+        capture_ended_at="2026-09-01T15:05:00+00:00",
+        segment_count=1,
+        total_bytes=100,
+    )
+    claimed = repository.claim_next_room_voice_messages("worker", 120)
+    assert claimed
+    repository.complete_room_voice_messages(
+        session_id, "worker", "legacy-v0", []
+    )
+
+    updated = repository.enqueue_room_voice_processing(
+        session_id=session_id,
+        monitor_id="wang-ruiqi",
+        member_name="王睿琦",
+        member_id="530390",
+        capture_started_at="2026-09-01T15:00:00+00:00",
+        capture_ended_at="2026-09-01T15:05:00+00:00",
+        messages_version="public-text-v1",
+        segment_count=1,
+        total_bytes=100,
+    )
+
+    assert updated.messages_status == "queued"
+    assert updated.messages_version == "legacy-v0"

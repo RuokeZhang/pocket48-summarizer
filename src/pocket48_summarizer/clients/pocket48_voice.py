@@ -416,7 +416,7 @@ class Pocket48VoiceClient:
     ) -> tuple[PublicRoomMessage, ...]:
         if started_at_ms < 0 or ended_at_ms <= started_at_ms:
             raise ConfigurationError("上麦房间留言时间窗口无效")
-        next_time = ended_at_ms
+        next_time = 0
         seen_cursors: set[int] = set()
         messages: dict[str, PublicRoomMessage] = {}
         for _ in range(ROOM_MESSAGE_MAX_PAGES):
