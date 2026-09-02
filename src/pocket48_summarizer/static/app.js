@@ -3436,11 +3436,16 @@ const enterReplayFullscreen = async () => {
       && navigator.maxTouchPoints > 1
     )
   );
+  const useMobileFullscreen = (
+    isIOS
+    || /Android/i.test(navigator.userAgent)
+    || window.matchMedia("(pointer: coarse)").matches
+  );
   const requestFullscreen = (
     playbackLayout.requestFullscreen
     || playbackLayout.webkitRequestFullscreen
   );
-  if (!isIOS && typeof requestFullscreen === "function") {
+  if (!useMobileFullscreen && typeof requestFullscreen === "function") {
     try {
       await Promise.resolve(requestFullscreen.call(playbackLayout));
       return;
