@@ -27,6 +27,8 @@ from pocket48_summarizer.clients.pocket48_voice import (
 from pocket48_summarizer.config import AdditionalRoomVoiceTarget, Settings
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.voice_monitor import (
+    MEMBER_ROOM_REFRESH_SECONDS,
+    RECONNECT_COOLOFF_SECONDS,
     RECONNECT_MAX_ATTEMPTS,
     RECONNECT_POLL_SECONDS,
     RECONNECT_WINDOW_SECONDS,
@@ -421,12 +423,15 @@ async def test_member_only_target_resolves_room_before_status(settings):
         settings, client_factory=lambda *_: client
     )
 
+    current = [datetime(2026, 9, 1, tzinfo=UTC)]
+    monitor.now = lambda: current[0]
     await monitor.poll_once(asyncio.Event())
     client.room = MemberRoom(
         member_id=530390,
         channel_id=1279500,
         server_id=7654322,
     )
+    current[0] += timedelta(seconds=MEMBER_ROOM_REFRESH_SECONDS)
     await monitor.poll_once(asyncio.Event())
 
     assert client.resolve_calls == [530390, 530390]
@@ -853,7 +858,7 @@ async def test_shared_storage_coordinator_reserves_capacity_once(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("returncode", "segment_bytes", "expected"),
-    [(-1, 4, "partial"), (-1, 0, "failed")],
+    [(-1, 4, "partial"), (-1, 0, None)],
 )
 async def test_process_exit_state_reflects_retained_audio(
     settings, returncode, segment_bytes, expected
@@ -871,6 +876,11 @@ async def test_process_exit_state_reflects_retained_audio(
 
     await monitor.poll_once(asyncio.Event())
 
+    if expected is None:
+        assert not list(
+            settings.room_voice_path.glob("*/session.json")
+        )
+        return
     _, state = load_only_session(settings)
     assert state["status"] == expected
     assert state["segment_count"] == (1 if segment_bytes else 0)
@@ -1124,7 +1134,7 @@ def test_recovers_stale_recording_without_deleting_segments(settings):
 
 
 @pytest.mark.asyncio
-async def test_same_active_stream_does_not_create_immediate_duplicate(
+async def test_same_active_stream_retries_after_short_cooldown(
     settings,
 ):
     monitor_settings(settings)
@@ -1216,7 +1226,7 @@ async def test_empty_reconnect_failure_keeps_short_cooldown(settings):
         monitor._reconnect_attempts_remaining
         == RECONNECT_MAX_ATTEMPTS - 1
     )
-    assert monitor._consecutive_recording_failures == 0
+    assert monitor._consecutive_recording_failures == 1
     assert monitor._recording_cooldown_until == current[0] + timedelta(
         seconds=RECONNECT_POLL_SECONDS
     )
@@ -1244,6 +1254,9 @@ async def test_exhausted_reconnect_attempts_resume_normal_backoff(settings):
     await monitor.poll_once(asyncio.Event())
 
     assert monitor._reconnect_until is None
+    assert monitor._reconnect_blocked_until == current[0] + timedelta(
+        seconds=RECONNECT_COOLOFF_SECONDS
+    )
     assert monitor._consecutive_recording_failures == 1
     assert monitor._recording_cooldown_until == current[0] + timedelta(
         seconds=settings.pocket48_voice_poll_seconds
@@ -1257,12 +1270,67 @@ async def test_reconnect_window_uses_short_poll_delay(settings):
     async def record_delay(delay: float) -> None:
         delays.append(delay)
 
-    monitor = RoomVoiceMonitor(settings, sleeper=record_delay)
+    monitor = RoomVoiceMonitor(
+        settings,
+        sleeper=record_delay,
+        jitter=lambda *_: 0,
+    )
     monitor._start_reconnect_window()
 
     await monitor._sleep_until_next_poll(asyncio.Event())
 
     assert delays == [RECONNECT_POLL_SECONDS]
+
+
+@pytest.mark.asyncio
+async def test_reconnect_window_does_not_rearm_during_cooloff(settings):
+    monitor_settings(settings)
+    provision_private_files(settings)
+    current = [datetime(2026, 9, 1, 15, 16, 26, tzinfo=UTC)]
+    recorder = FakeRecorder()
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: FakeClient(
+            [active_status(), active_status()]
+        ),
+        recorder=recorder,
+        now=lambda: current[0],
+    )
+
+    await monitor.poll_once(asyncio.Event())
+    monitor._reconnect_attempts_remaining = 1
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    await monitor.poll_once(asyncio.Event())
+
+    assert monitor._reconnect_until is None
+    assert monitor._reconnect_blocked_until == current[0] + timedelta(
+        seconds=RECONNECT_COOLOFF_SECONDS
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_failed_reconnect_session_is_removed(settings):
+    monitor_settings(settings)
+    provision_private_files(settings)
+    current = [datetime(2026, 9, 1, 15, 16, 26, tzinfo=UTC)]
+    recorder = FakeRecorder()
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: FakeClient(
+            [active_status(), active_status()]
+        ),
+        recorder=recorder,
+        now=lambda: current[0],
+    )
+
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    recorder.process = ImmediateProcess(1)
+    recorder.segment_bytes = 0
+    await monitor.poll_once(asyncio.Event())
+
+    sessions = list(settings.room_voice_path.glob("*/session.json"))
+    assert len(sessions) == 1
 
 
 @pytest.mark.asyncio

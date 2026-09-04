@@ -50,6 +50,9 @@ ALLOWED_STREAM_PORTS = {None, 1935, 443}
 RECONNECT_WINDOW_SECONDS = 300
 RECONNECT_POLL_SECONDS = 5
 RECONNECT_MAX_ATTEMPTS = 20
+RECONNECT_COOLOFF_SECONDS = 300
+MEMBER_ROOM_REFRESH_SECONDS = 600
+MAX_RECORDING_RETRY_SECONDS = 300
 
 
 class VoiceClient(Protocol):
@@ -162,9 +165,11 @@ class RoomVoiceMonitor:
         self._consecutive_recording_failures = 0
         self._reconnect_until: datetime | None = None
         self._reconnect_attempts_remaining = 0
+        self._reconnect_blocked_until: datetime | None = None
         self._ready_value: str | None = None
         self._secured_segments: set[Path] = set()
         self._resolved_member_room: MemberRoom | None = None
+        self._resolved_member_room_refresh_at: datetime | None = None
 
     async def run(self, stop_event: asyncio.Event) -> None:
         self.settings.prepare_directories()
@@ -214,9 +219,16 @@ class RoomVoiceMonitor:
                 raise ConfigurationError(
                     "房间上麦监控动态房间解析需要 member ID"
                 )
-            if self._resolved_member_room is None:
+            if (
+                self._resolved_member_room is None
+                or self._member_room_refresh_due()
+            ):
                 self._resolved_member_room = (
                     await self._client.resolve_member_room(member_id)
+                )
+                self._resolved_member_room_refresh_at = (
+                    self.now()
+                    + timedelta(seconds=MEMBER_ROOM_REFRESH_SECONDS)
                 )
             channel_id = self._resolved_member_room.channel_id
             server_id = self._resolved_member_room.server_id
@@ -235,7 +247,7 @@ class RoomVoiceMonitor:
                 dynamically_resolved
                 and exc.code == "room_voice_lookup_failed"
             ):
-                self._resolved_member_room = None
+                self._clear_resolved_member_room()
             raise
         if dynamically_resolved:
             self._resolved_member_room = MemberRoom(
@@ -246,10 +258,14 @@ class RoomVoiceMonitor:
 
         if status.stream_url is None:
             reconnecting = self._reconnect_active()
+            if reconnecting:
+                self._reconnect_attempts_remaining -= 1
+                reconnecting = self._reconnect_active()
             if not status.active and not reconnecting:
                 self._await_inactive_fingerprint = None
                 self._recording_cooldown_until = None
                 self._consecutive_recording_failures = 0
+                self._reconnect_blocked_until = None
             self._write_monitor_status(
                 (
                     "reconnecting"
@@ -261,8 +277,8 @@ class RoomVoiceMonitor:
                     )
                 )
             )
-            if dynamically_resolved:
-                self._resolved_member_room = None
+            if dynamically_resolved and (reconnecting or status.active):
+                self._clear_resolved_member_room()
             return
 
         stream_url = status.stream_url.get_secret_value()
@@ -283,6 +299,7 @@ class RoomVoiceMonitor:
             await self.storage_coordinator.reserve(self.settings)
         )
         if storage_error is not None:
+            self._clear_reconnect_window(block_rearm=True)
             self._write_monitor_status(
                 "storage_limit", error_code=storage_error
             )
@@ -321,7 +338,7 @@ class RoomVoiceMonitor:
         elif outcome not in {"failed"}:
             self._clear_reconnect_window()
         reconnecting = self._reconnect_active()
-        if outcome == "failed" and not reconnecting:
+        if outcome == "failed":
             self._consecutive_recording_failures += 1
         else:
             self._consecutive_recording_failures = 0
@@ -332,7 +349,7 @@ class RoomVoiceMonitor:
             cooldown_seconds = self.settings.pocket48_voice_poll_seconds
         if self._consecutive_recording_failures and not reconnecting:
             cooldown_seconds = min(
-                3600,
+                MAX_RECORDING_RETRY_SECONDS,
                 cooldown_seconds
                 * 2
                 ** min(self._consecutive_recording_failures - 1, 6),
@@ -342,12 +359,24 @@ class RoomVoiceMonitor:
         )
 
     def _start_reconnect_window(self) -> None:
+        if (
+            self._reconnect_blocked_until is not None
+            and self.now() < self._reconnect_blocked_until
+        ):
+            return
+        self._reconnect_blocked_until = None
         self._reconnect_until = self.now() + timedelta(
             seconds=RECONNECT_WINDOW_SECONDS
         )
         self._reconnect_attempts_remaining = RECONNECT_MAX_ATTEMPTS
 
-    def _clear_reconnect_window(self) -> None:
+    def _clear_reconnect_window(
+        self, *, block_rearm: bool = False
+    ) -> None:
+        if block_rearm and self._reconnect_until is not None:
+            self._reconnect_blocked_until = self.now() + timedelta(
+                seconds=RECONNECT_COOLOFF_SECONDS
+            )
         self._reconnect_until = None
         self._reconnect_attempts_remaining = 0
 
@@ -357,9 +386,19 @@ class RoomVoiceMonitor:
             or self._reconnect_attempts_remaining <= 0
             or self.now() >= self._reconnect_until
         ):
-            self._clear_reconnect_window()
+            self._clear_reconnect_window(block_rearm=True)
             return False
         return True
+
+    def _member_room_refresh_due(self) -> bool:
+        return (
+            self._resolved_member_room_refresh_at is None
+            or self.now() >= self._resolved_member_room_refresh_at
+        )
+
+    def _clear_resolved_member_room(self) -> None:
+        self._resolved_member_room = None
+        self._resolved_member_room_refresh_at = None
 
     async def close(self) -> None:
         await self._replace_client(None)
@@ -721,6 +760,19 @@ class RoomVoiceMonitor:
                 "room_voice_ffmpeg_partial",
                 "FFmpeg 异常退出，已保留完成的房间上麦录音分段",
             )
+        if outcome == "failed":
+            segment_count, _ = self._segment_stats(session_path)
+            if segment_count == 0:
+                try:
+                    shutil.rmtree(session_path)
+                except OSError:
+                    error = (
+                        "room_voice_empty_session_cleanup_failed",
+                        "无法清理未生成音频的房间上麦录音会话",
+                    )
+                else:
+                    self._write_monitor_status("waiting_next_poll")
+                    return outcome
         self._finalize_state(
             state_path, state, outcome or "failed", error=error
         )
@@ -845,7 +897,7 @@ class RoomVoiceMonitor:
         self, stop_event: asyncio.Event
     ) -> None:
         if self._reconnect_active():
-            delay = RECONNECT_POLL_SECONDS
+            delay = RECONNECT_POLL_SECONDS + self.jitter(0, 1)
         else:
             delay = self.settings.pocket48_voice_poll_seconds
             jitter_limit = (
