@@ -495,7 +495,10 @@ async def test_member_room_cache_refreshes_after_lookup_failure(settings):
 
 
 @pytest.mark.asyncio
-async def test_member_room_refresh_failure_uses_cached_room(settings):
+@pytest.mark.parametrize("retryable", [False, True])
+async def test_member_room_refresh_failure_uses_cached_room(
+    settings, retryable
+):
     settings.pocket48_voice_monitor_id = "wang-ruiqi"
     settings.pocket48_voice_member_name = "王睿琦"
     settings.pocket48_voice_member_id = "530390"
@@ -524,7 +527,7 @@ async def test_member_room_refresh_failure_uses_cached_room(settings):
         raise AppError(
             "room_voice_lookup_failed",
             "temporary room lookup failure",
-            True,
+            retryable,
         )
 
     client.resolve_member_room = fail_refresh

@@ -233,7 +233,7 @@ class RoomVoiceMonitor:
                         await self._client.resolve_member_room(member_id)
                     )
                 except AppError as exc:
-                    if not exc.retryable:
+                    if exc.code == "room_voice_auth_required":
                         raise
                     self._resolved_member_room_refresh_at = (
                         self.now()
