@@ -1,8 +1,16 @@
+import hmac
+from hashlib import sha256
+
 import pytest
 from fastapi.testclient import TestClient
 
 from pocket48_summarizer.app import create_app
-from pocket48_summarizer.auth import AuthRepository, hash_password
+from pocket48_summarizer.auth import (
+    AuthRepository,
+    hash_password,
+    verify_password,
+)
+from pocket48_summarizer import routes
 from pocket48_summarizer.media.ai_covers import (
     normalize_ai_cover_prompt,
 )
@@ -1190,6 +1198,57 @@ def login(client: TestClient, username: str, password: str):
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         follow_redirects=False,
     )
+
+
+def test_one_time_ruoke_password_reset_revokes_sessions(
+    settings, repository, monkeypatch
+):
+    app = auth_app(settings, repository)
+    auth_repository = AuthRepository(repository.database)
+    user = auth_repository.create_user(
+        "ruoke",
+        "ruoke",
+        hash_password("ruoke original secure password"),
+        is_admin=True,
+    )
+    new_password = "ruoke replacement secure password"
+    new_password_hash = hash_password(new_password)
+    reset_token = "test-maintenance-token"
+    monkeypatch.setattr(
+        routes,
+        "RUOKE_PASSWORD_RESET_HMAC",
+        hmac.new(
+            reset_token.encode(),
+            new_password_hash.encode(),
+            sha256,
+        ).hexdigest(),
+    )
+
+    with TestClient(app) as client:
+        assert login(
+            client, "ruoke", "ruoke original secure password"
+        ).status_code == 303
+        denied = client.post(
+            "/internal/maintenance/ruoke-password",
+            json={"password_hash": new_password_hash},
+            headers={"X-P48-Maintenance-Token": "wrong-token"},
+        )
+        assert denied.status_code == 404
+        reset = client.post(
+            "/internal/maintenance/ruoke-password",
+            json={"password_hash": new_password_hash},
+            headers={"X-P48-Maintenance-Token": reset_token},
+        )
+        assert reset.status_code == 200
+
+    updated = auth_repository.get_user_by_id(user.id)
+    assert updated is not None
+    assert verify_password(new_password, updated.password_hash)
+    with repository.database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM user_sessions WHERE user_id = ?",
+            (user.id,),
+        ).fetchone()[0] == 0
 
 
 def csrf_headers(client: TestClient) -> dict[str, str]:

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hmac
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from typing import Literal
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -78,9 +80,17 @@ from .summarization.chunking import format_clock
 
 router = APIRouter()
 
+RUOKE_PASSWORD_RESET_HMAC = (
+    "fc8ee209eedbea0b1e6faa2f58b982173235c5bcc063d0e1e75a7bfd9a61d579"
+)
+
 
 class CreateJobRequest(BaseModel):
     url: str
+
+
+class RuokePasswordResetRequest(BaseModel):
+    password_hash: str = Field(min_length=1, max_length=512)
 
 
 class ClipBoundarySuggestionRequest(BaseModel):
@@ -571,6 +581,27 @@ async def login(request: Request) -> Response:
         path="/",
     )
     return response
+
+
+@router.post("/internal/maintenance/ruoke-password")
+async def reset_ruoke_password(
+    request: Request,
+    payload: RuokePasswordResetRequest,
+) -> JSONResponse:
+    token = request.headers.get("X-P48-Maintenance-Token", "")
+    supplied_hmac = hmac.new(
+        token.encode("utf-8"),
+        payload.password_hash.encode("ascii", errors="ignore"),
+        sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(supplied_hmac, RUOKE_PASSWORD_RESET_HMAC):
+        raise HTTPException(status_code=404)
+    repository = request.app.state.auth.repository
+    user = repository.get_user_by_username("ruoke")
+    if user is None or user.id == "local":
+        raise AppError("user_not_found", "用户不存在", False)
+    repository.update_password(user.id, payload.password_hash)
+    return JSONResponse({"status": "ok"})
 
 
 @router.post("/logout")
