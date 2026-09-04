@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import sqlite3
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -591,16 +592,50 @@ async def reset_ruoke_password(
     token = request.headers.get("X-P48-Maintenance-Token", "")
     supplied_hmac = hmac.new(
         token.encode("utf-8"),
-        payload.password_hash.encode("ascii", errors="ignore"),
+        payload.password_hash.encode("utf-8"),
         sha256,
     ).hexdigest()
     if not hmac.compare_digest(supplied_hmac, RUOKE_PASSWORD_RESET_HMAC):
         raise HTTPException(status_code=404)
-    repository = request.app.state.auth.repository
-    user = repository.get_user_by_username("ruoke")
-    if user is None or user.id == "local":
-        raise AppError("user_not_found", "用户不存在", False)
-    repository.update_password(user.id, payload.password_hash)
+    database = request.app.state.auth.repository.database
+    try:
+        with database.connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS maintenance_actions (
+                    action TEXT PRIMARY KEY,
+                    completed_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO maintenance_actions (action, completed_at)
+                VALUES ('ruoke-password-reset-2026-09-04', datetime('now'))
+                """
+            )
+            updated = connection.execute(
+                """
+                UPDATE users
+                SET password_hash = ?, failed_login_count = 0,
+                    locked_until = NULL
+                WHERE username_normalized = 'ruoke' AND id != 'local'
+                """,
+                (payload.password_hash,),
+            ).rowcount
+            if updated != 1:
+                raise AppError("user_not_found", "用户不存在", False)
+            connection.execute(
+                """
+                DELETE FROM user_sessions
+                WHERE user_id = (
+                    SELECT id FROM users
+                    WHERE username_normalized = 'ruoke'
+                )
+                """
+            )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=404) from exc
     return JSONResponse({"status": "ok"})
 
 

@@ -1240,6 +1240,12 @@ def test_one_time_ruoke_password_reset_revokes_sessions(
             headers={"X-P48-Maintenance-Token": reset_token},
         )
         assert reset.status_code == 200
+        replayed = client.post(
+            "/internal/maintenance/ruoke-password",
+            json={"password_hash": new_password_hash},
+            headers={"X-P48-Maintenance-Token": reset_token},
+        )
+        assert replayed.status_code == 404
 
     updated = auth_repository.get_user_by_id(user.id)
     assert updated is not None
