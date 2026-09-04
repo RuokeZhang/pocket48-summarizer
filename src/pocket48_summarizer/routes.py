@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import hmac
-import sqlite3
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
 from typing import Literal
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -81,17 +78,9 @@ from .summarization.chunking import format_clock
 
 router = APIRouter()
 
-RUOKE_PASSWORD_RESET_HMAC = (
-    "fc8ee209eedbea0b1e6faa2f58b982173235c5bcc063d0e1e75a7bfd9a61d579"
-)
-
 
 class CreateJobRequest(BaseModel):
     url: str
-
-
-class RuokePasswordResetRequest(BaseModel):
-    password_hash: str = Field(min_length=1, max_length=512)
 
 
 class ClipBoundarySuggestionRequest(BaseModel):
@@ -582,61 +571,6 @@ async def login(request: Request) -> Response:
         path="/",
     )
     return response
-
-
-@router.post("/internal/maintenance/ruoke-password")
-async def reset_ruoke_password(
-    request: Request,
-    payload: RuokePasswordResetRequest,
-) -> JSONResponse:
-    token = request.headers.get("X-P48-Maintenance-Token", "")
-    supplied_hmac = hmac.new(
-        token.encode("utf-8"),
-        payload.password_hash.encode("utf-8"),
-        sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(supplied_hmac, RUOKE_PASSWORD_RESET_HMAC):
-        raise HTTPException(status_code=404)
-    database = request.app.state.auth.repository.database
-    try:
-        with database.connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS maintenance_actions (
-                    action TEXT PRIMARY KEY,
-                    completed_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                INSERT INTO maintenance_actions (action, completed_at)
-                VALUES ('ruoke-password-reset-2026-09-04', datetime('now'))
-                """
-            )
-            updated = connection.execute(
-                """
-                UPDATE users
-                SET password_hash = ?, failed_login_count = 0,
-                    locked_until = NULL
-                WHERE username_normalized = 'ruoke' AND id != 'local'
-                """,
-                (payload.password_hash,),
-            ).rowcount
-            if updated != 1:
-                raise AppError("user_not_found", "用户不存在", False)
-            connection.execute(
-                """
-                DELETE FROM user_sessions
-                WHERE user_id = (
-                    SELECT id FROM users
-                    WHERE username_normalized = 'ruoke'
-                )
-                """
-            )
-    except sqlite3.IntegrityError as exc:
-        raise HTTPException(status_code=404) from exc
-    return JSONResponse({"status": "ok"})
 
 
 @router.post("/logout")
