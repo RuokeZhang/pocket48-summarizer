@@ -495,6 +495,53 @@ async def test_member_room_cache_refreshes_after_lookup_failure(settings):
 
 
 @pytest.mark.asyncio
+async def test_member_room_refresh_failure_uses_cached_room(settings):
+    settings.pocket48_voice_monitor_id = "wang-ruiqi"
+    settings.pocket48_voice_member_name = "王睿琦"
+    settings.pocket48_voice_member_id = "530390"
+    settings.pocket48_voice_channel_id = None
+    settings.pocket48_voice_server_id = None
+    provision_private_files(settings)
+    current = [datetime(2026, 9, 1, tzinfo=UTC)]
+    client = ResolvingFakeClient(
+        [inactive_status(), inactive_status()],
+        MemberRoom(
+            member_id=530390,
+            channel_id=7587624,
+            server_id=6227955,
+        ),
+    )
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: client,
+        now=lambda: current[0],
+    )
+
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=MEMBER_ROOM_REFRESH_SECONDS)
+
+    async def fail_refresh(_member_id: int) -> MemberRoom:
+        raise AppError(
+            "room_voice_lookup_failed",
+            "temporary room lookup failure",
+            True,
+        )
+
+    client.resolve_member_room = fail_refresh
+    await monitor.poll_once(asyncio.Event())
+
+    assert client.calls == [
+        (7587624, 6227955),
+        (7587624, 6227955),
+    ]
+    assert monitor._resolved_member_room == MemberRoom(
+        member_id=530390,
+        channel_id=7587624,
+        server_id=6227955,
+    )
+
+
+@pytest.mark.asyncio
 async def test_waits_for_and_reloads_changed_credentials(settings):
     monitor_settings(settings)
     clients: list[FakeClient] = []
@@ -1343,6 +1390,71 @@ async def test_reconnect_api_error_consumes_attempt_budget(settings):
         monitor._reconnect_attempts_remaining
         == RECONNECT_MAX_ATTEMPTS - 1
     )
+
+
+@pytest.mark.asyncio
+async def test_reconnect_validation_error_consumes_attempt_budget(
+    settings,
+):
+    monitor_settings(settings)
+    provision_private_files(settings)
+    current = [datetime(2026, 9, 1, 15, 16, 26, tzinfo=UTC)]
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: FakeClient(
+            [
+                active_status(),
+                active_status(
+                    "rtmps://voice.example.test:444/live/stream"
+                ),
+            ]
+        ),
+        recorder=FakeRecorder(),
+        now=lambda: current[0],
+    )
+
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    with pytest.raises(AppError):
+        await monitor.poll_once(asyncio.Event())
+
+    assert (
+        monitor._reconnect_attempts_remaining
+        == RECONNECT_MAX_ATTEMPTS - 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_successful_reconnect_resets_inactive_confirmation(
+    settings,
+):
+    monitor_settings(settings)
+    provision_private_files(settings)
+    current = [datetime(2026, 9, 1, 15, 16, 26, tzinfo=UTC)]
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: FakeClient(
+            [
+                active_status(),
+                inactive_status(),
+                active_status(),
+                inactive_status(),
+            ]
+        ),
+        recorder=FakeRecorder(),
+        now=lambda: current[0],
+    )
+
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    await monitor.poll_once(asyncio.Event())
+
+    assert monitor._reconnect_inactive_polls == 1
+    assert monitor._reconnect_until is not None
 
 
 @pytest.mark.asyncio

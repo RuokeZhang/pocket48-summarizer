@@ -219,10 +219,7 @@ class RoomVoiceMonitor:
                 raise ConfigurationError(
                     "房间上麦监控动态房间解析需要 member ID"
                 )
-            if (
-                self._resolved_member_room is None
-                or self._member_room_refresh_due()
-            ):
+            if self._resolved_member_room is None:
                 self._resolved_member_room = (
                     await self._client.resolve_member_room(member_id)
                 )
@@ -230,6 +227,33 @@ class RoomVoiceMonitor:
                     self.now()
                     + timedelta(seconds=MEMBER_ROOM_REFRESH_SECONDS)
                 )
+            elif self._member_room_refresh_due():
+                try:
+                    refreshed_room = (
+                        await self._client.resolve_member_room(member_id)
+                    )
+                except AppError as exc:
+                    if not exc.retryable:
+                        raise
+                    self._resolved_member_room_refresh_at = (
+                        self.now()
+                        + timedelta(
+                            seconds=max(
+                                30,
+                                self.settings.pocket48_voice_poll_seconds,
+                            )
+                        )
+                    )
+                    LOGGER.warning(
+                        "Room voice member room refresh failed: %s",
+                        exc.code,
+                    )
+                else:
+                    self._resolved_member_room = refreshed_room
+                    self._resolved_member_room_refresh_at = (
+                        self.now()
+                        + timedelta(seconds=MEMBER_ROOM_REFRESH_SECONDS)
+                    )
             channel_id = self._resolved_member_room.channel_id
             server_id = self._resolved_member_room.server_id
         if channel_id is None or server_id is None:
@@ -237,13 +261,14 @@ class RoomVoiceMonitor:
                 "房间上麦监控缺少可查询的 channel ID 或 server ID"
             )
 
+        reconnect_attempt = self._reconnect_active()
         self._write_monitor_status("polling")
         try:
             status = await self._client.fetch_status(
                 channel_id, server_id
             )
         except AppError as exc:
-            if self._reconnect_active():
+            if reconnect_attempt:
                 self._reconnect_attempts_remaining -= 1
                 self._reconnect_active()
             if (
@@ -252,6 +277,8 @@ class RoomVoiceMonitor:
             ):
                 self._clear_resolved_member_room()
             raise
+        if reconnect_attempt:
+            self._reconnect_attempts_remaining -= 1
         if dynamically_resolved:
             self._resolved_member_room = MemberRoom(
                 member_id=member_id,
@@ -260,12 +287,10 @@ class RoomVoiceMonitor:
             )
 
         if status.stream_url is None:
-            was_reconnecting = self._reconnect_active()
+            was_reconnecting = reconnect_attempt
             recovering = (
                 was_reconnecting or self._reconnect_blocked_active()
             )
-            if was_reconnecting:
-                self._reconnect_attempts_remaining -= 1
             reconnecting = self._reconnect_active()
             if status.active:
                 self._reconnect_inactive_polls = 0
@@ -293,6 +318,7 @@ class RoomVoiceMonitor:
             )
             return
 
+        self._reconnect_inactive_polls = 0
         stream_url = status.stream_url.get_secret_value()
         endpoint = await self._validate_stream_url(stream_url)
         fingerprint = hashlib.sha256(
@@ -320,10 +346,8 @@ class RoomVoiceMonitor:
             raise ConfigurationError(
                 "房间上麦录音容量预留状态无效"
             )
-        reconnecting = self._reconnect_active()
+        reconnecting = reconnect_attempt
         reconnect_deadline = self._reconnect_until
-        if reconnecting:
-            self._reconnect_attempts_remaining -= 1
         try:
             outcome = await self._record_session(
                 stop_event=stop_event,
@@ -393,6 +417,7 @@ class RoomVoiceMonitor:
             )
         self._reconnect_until = None
         self._reconnect_attempts_remaining = 0
+        self._reconnect_inactive_polls = 0
 
     def _reconnect_active(self) -> bool:
         if (
