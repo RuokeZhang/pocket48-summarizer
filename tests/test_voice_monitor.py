@@ -112,9 +112,11 @@ class FakeRecorder:
         *,
         process=None,
         segment_bytes: int = 4,
+        create_empty_segment: bool = False,
     ):
         self.process = process or ImmediateProcess()
         self.segment_bytes = segment_bytes
+        self.create_empty_segment = create_empty_segment
         self.calls: list[dict[str, object]] = []
 
     async def start(
@@ -133,10 +135,15 @@ class FakeRecorder:
                 "segment_seconds": segment_seconds,
             }
         )
-        if self.segment_bytes:
+        if self.segment_bytes or self.create_empty_segment:
             segment = session_path / "segments" / "segment-000000.mp3"
             segment.write_bytes(b"x" * self.segment_bytes)
         return self.process
+
+
+class FailingRecorder:
+    async def start(self, *_args, **_kwargs):
+        raise OSError("ffmpeg unavailable")
 
 
 def inactive_status() -> RoomVoiceStatus:
@@ -1226,7 +1233,7 @@ async def test_empty_reconnect_failure_keeps_short_cooldown(settings):
         monitor._reconnect_attempts_remaining
         == RECONNECT_MAX_ATTEMPTS - 1
     )
-    assert monitor._consecutive_recording_failures == 1
+    assert monitor._consecutive_recording_failures == 0
     assert monitor._recording_cooldown_until == current[0] + timedelta(
         seconds=RECONNECT_POLL_SECONDS
     )
@@ -1283,6 +1290,62 @@ async def test_reconnect_window_uses_short_poll_delay(settings):
 
 
 @pytest.mark.asyncio
+async def test_two_inactive_polls_end_reconnect_window(settings):
+    monitor_settings(settings)
+    provision_private_files(settings)
+    current = [datetime(2026, 9, 1, 15, 16, 26, tzinfo=UTC)]
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: FakeClient(
+            [active_status(), inactive_status(), inactive_status()]
+        ),
+        recorder=FakeRecorder(),
+        now=lambda: current[0],
+    )
+
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    await monitor.poll_once(asyncio.Event())
+
+    assert monitor._reconnect_until is None
+    assert monitor._reconnect_blocked_until is None
+    safe_status = json.loads(
+        settings.room_voice_monitor_status_path.read_text()
+    )
+    assert safe_status["phase"] == "inactive"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_api_error_consumes_attempt_budget(settings):
+    monitor_settings(settings)
+    provision_private_files(settings)
+    current = [datetime(2026, 9, 1, 15, 16, 26, tzinfo=UTC)]
+    lookup_error = AppError(
+        "room_voice_lookup_failed", "temporary failure", True
+    )
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: FakeClient(
+            [active_status(), lookup_error]
+        ),
+        recorder=FakeRecorder(),
+        now=lambda: current[0],
+    )
+
+    await monitor.poll_once(asyncio.Event())
+    current[0] += timedelta(seconds=RECONNECT_POLL_SECONDS)
+    with pytest.raises(AppError):
+        await monitor.poll_once(asyncio.Event())
+
+    assert (
+        monitor._reconnect_attempts_remaining
+        == RECONNECT_MAX_ATTEMPTS - 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_reconnect_window_does_not_rearm_during_cooloff(settings):
     monitor_settings(settings)
     provision_private_files(settings)
@@ -1331,6 +1394,42 @@ async def test_empty_failed_reconnect_session_is_removed(settings):
 
     sessions = list(settings.room_voice_path.glob("*/session.json"))
     assert len(sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_zero_byte_segment_is_not_retained_as_audio(settings):
+    monitor_settings(settings)
+    provision_private_files(settings)
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: FakeClient([active_status()]),
+        recorder=FakeRecorder(
+            process=ImmediateProcess(0),
+            segment_bytes=0,
+            create_empty_segment=True,
+        ),
+    )
+
+    await monitor.poll_once(asyncio.Event())
+
+    assert not list(settings.room_voice_path.glob("*/session.json"))
+
+
+@pytest.mark.asyncio
+async def test_recorder_start_failure_removes_empty_session(settings):
+    monitor_settings(settings)
+    provision_private_files(settings)
+    monitor = RoomVoiceMonitor(
+        settings,
+        client_factory=lambda *_: FakeClient([active_status()]),
+        recorder=FailingRecorder(),
+    )
+
+    with pytest.raises(AppError) as captured:
+        await monitor.poll_once(asyncio.Event())
+
+    assert captured.value.code == "room_voice_ffmpeg_start_failed"
+    assert not list(settings.room_voice_path.glob("*/session.json"))
 
 
 @pytest.mark.asyncio

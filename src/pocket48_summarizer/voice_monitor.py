@@ -52,7 +52,6 @@ RECONNECT_POLL_SECONDS = 5
 RECONNECT_MAX_ATTEMPTS = 20
 RECONNECT_COOLOFF_SECONDS = 300
 MEMBER_ROOM_REFRESH_SECONDS = 600
-MAX_RECORDING_RETRY_SECONDS = 300
 
 
 class VoiceClient(Protocol):
@@ -166,6 +165,7 @@ class RoomVoiceMonitor:
         self._reconnect_until: datetime | None = None
         self._reconnect_attempts_remaining = 0
         self._reconnect_blocked_until: datetime | None = None
+        self._reconnect_inactive_polls = 0
         self._ready_value: str | None = None
         self._secured_segments: set[Path] = set()
         self._resolved_member_room: MemberRoom | None = None
@@ -243,6 +243,9 @@ class RoomVoiceMonitor:
                 channel_id, server_id
             )
         except AppError as exc:
+            if self._reconnect_active():
+                self._reconnect_attempts_remaining -= 1
+                self._reconnect_active()
             if (
                 dynamically_resolved
                 and exc.code == "room_voice_lookup_failed"
@@ -257,15 +260,26 @@ class RoomVoiceMonitor:
             )
 
         if status.stream_url is None:
-            reconnecting = self._reconnect_active()
-            if reconnecting:
+            was_reconnecting = self._reconnect_active()
+            recovering = (
+                was_reconnecting or self._reconnect_blocked_active()
+            )
+            if was_reconnecting:
                 self._reconnect_attempts_remaining -= 1
-                reconnecting = self._reconnect_active()
-            if not status.active and not reconnecting:
+            reconnecting = self._reconnect_active()
+            if status.active:
+                self._reconnect_inactive_polls = 0
+            elif recovering:
+                self._reconnect_inactive_polls += 1
+                if self._reconnect_inactive_polls >= 2:
+                    self._clear_reconnect_window()
+                    self._reconnect_blocked_until = None
+                    self._reconnect_inactive_polls = 0
+                    reconnecting = False
+            else:
                 self._await_inactive_fingerprint = None
                 self._recording_cooldown_until = None
                 self._consecutive_recording_failures = 0
-                self._reconnect_blocked_until = None
             self._write_monitor_status(
                 (
                     "reconnecting"
@@ -277,8 +291,6 @@ class RoomVoiceMonitor:
                     )
                 )
             )
-            if dynamically_resolved and (reconnecting or status.active):
-                self._clear_resolved_member_room()
             return
 
         stream_url = status.stream_url.get_secret_value()
@@ -329,18 +341,19 @@ class RoomVoiceMonitor:
         else:
             self._await_inactive_fingerprint = None
         if outcome in {"ended", "partial"}:
-            if (
-                not reconnecting
-                or reconnect_deadline is None
-                or self.now() >= reconnect_deadline
-            ):
+            if not reconnecting:
                 self._start_reconnect_window()
+            elif (
+                reconnect_deadline is not None
+                and self.now() >= reconnect_deadline
+            ):
+                self._clear_reconnect_window(block_rearm=True)
         elif outcome not in {"failed"}:
             self._clear_reconnect_window()
         reconnecting = self._reconnect_active()
-        if outcome == "failed":
+        if outcome == "failed" and not reconnecting:
             self._consecutive_recording_failures += 1
-        else:
+        elif outcome != "failed":
             self._consecutive_recording_failures = 0
         if reconnecting:
             cooldown_seconds = RECONNECT_POLL_SECONDS
@@ -349,7 +362,7 @@ class RoomVoiceMonitor:
             cooldown_seconds = self.settings.pocket48_voice_poll_seconds
         if self._consecutive_recording_failures and not reconnecting:
             cooldown_seconds = min(
-                MAX_RECORDING_RETRY_SECONDS,
+                3600,
                 cooldown_seconds
                 * 2
                 ** min(self._consecutive_recording_failures - 1, 6),
@@ -369,6 +382,7 @@ class RoomVoiceMonitor:
             seconds=RECONNECT_WINDOW_SECONDS
         )
         self._reconnect_attempts_remaining = RECONNECT_MAX_ATTEMPTS
+        self._reconnect_inactive_polls = 0
 
     def _clear_reconnect_window(
         self, *, block_rearm: bool = False
@@ -387,6 +401,14 @@ class RoomVoiceMonitor:
             or self.now() >= self._reconnect_until
         ):
             self._clear_reconnect_window(block_rearm=True)
+            return False
+        return True
+
+    def _reconnect_blocked_active(self) -> bool:
+        if self._reconnect_blocked_until is None:
+            return False
+        if self.now() >= self._reconnect_blocked_until:
+            self._reconnect_blocked_until = None
             return False
         return True
 
@@ -644,10 +666,9 @@ class RoomVoiceMonitor:
                 segment_seconds=self.settings.pocket48_voice_segment_seconds,
             )
         except AppError as exc:
-            self._finalize_state(
+            self._finalize_or_remove_empty_session(
                 state_path,
                 state,
-                "failed",
                 error=(
                     exc.code,
                     "房间上麦录音进程未能安全启动",
@@ -655,10 +676,9 @@ class RoomVoiceMonitor:
             )
             raise
         except OSError as exc:
-            self._finalize_state(
+            self._finalize_or_remove_empty_session(
                 state_path,
                 state,
-                "failed",
                 error=(
                     "room_voice_ffmpeg_start_failed",
                     "无法启动 FFmpeg 房间上麦录音进程",
@@ -717,9 +737,9 @@ class RoomVoiceMonitor:
                     outcome = "max_duration"
                 elif wait_task.done():
                     returncode = wait_task.result()
-                    if returncode == 0 and segment_count > 0:
+                    if returncode == 0 and total_bytes > 0:
                         outcome = "ended"
-                    elif segment_count > 0:
+                    elif total_bytes > 0:
                         outcome = "partial"
                     else:
                         outcome = "failed"
@@ -761,18 +781,11 @@ class RoomVoiceMonitor:
                 "FFmpeg 异常退出，已保留完成的房间上麦录音分段",
             )
         if outcome == "failed":
-            segment_count, _ = self._segment_stats(session_path)
-            if segment_count == 0:
-                try:
-                    shutil.rmtree(session_path)
-                except OSError:
-                    error = (
-                        "room_voice_empty_session_cleanup_failed",
-                        "无法清理未生成音频的房间上麦录音会话",
-                    )
-                else:
-                    self._write_monitor_status("waiting_next_poll")
-                    return outcome
+            self._finalize_or_remove_empty_session(
+                state_path, state, error=error
+            )
+            self._write_monitor_status("waiting_next_poll")
+            return outcome
         self._finalize_state(
             state_path, state, outcome or "failed", error=error
         )
@@ -780,6 +793,36 @@ class RoomVoiceMonitor:
             "waiting_next_poll", session_id=session_id
         )
         return outcome or "failed"
+
+    def _finalize_or_remove_empty_session(
+        self,
+        state_path: Path,
+        state: dict[str, Any],
+        *,
+        error: tuple[str, str] | None,
+    ) -> bool:
+        _, total_bytes = self._segment_stats(state_path.parent)
+        if total_bytes > 0:
+            self._finalize_state(
+                state_path, state, "failed", error=error
+            )
+            return False
+        try:
+            shutil.rmtree(state_path.parent)
+        except OSError:
+            if error is not None:
+                self._append_error(state, error[0], error[1])
+            self._finalize_state(
+                state_path,
+                state,
+                "failed",
+                error=(
+                    "room_voice_empty_session_cleanup_failed",
+                    "无法清理未生成音频的房间上麦录音会话",
+                ),
+            )
+            return False
+        return True
 
     async def _terminate_process(
         self,
