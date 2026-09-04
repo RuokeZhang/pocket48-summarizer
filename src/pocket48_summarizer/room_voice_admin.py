@@ -54,6 +54,7 @@ SAFE_PHASES = {
     "polling",
     "recording",
     "recording_cooldown",
+    "reconnecting",
     "storage_limit",
     "waiting",
     "waiting_configuration",

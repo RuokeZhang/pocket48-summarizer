@@ -70,6 +70,7 @@ button, input, select, textarea { font: inherit; }
 }
 [data-room-voice-status="active_without_stream"],
 [data-room-voice-status="recording_cooldown"],
+[data-room-voice-status="reconnecting"],
 [data-room-voice-status="storage_limit"],
 [data-room-voice-status="partial"],
 [data-room-voice-status="interrupted"],

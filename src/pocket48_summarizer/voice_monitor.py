@@ -47,6 +47,9 @@ FINAL_SESSION_STATES = {
     "ended",
 }
 ALLOWED_STREAM_PORTS = {None, 1935, 443}
+RECONNECT_WINDOW_SECONDS = 300
+RECONNECT_POLL_SECONDS = 5
+RECONNECT_MAX_ATTEMPTS = 20
 
 
 class VoiceClient(Protocol):
@@ -157,6 +160,8 @@ class RoomVoiceMonitor:
         self._await_inactive_fingerprint: str | None = None
         self._recording_cooldown_until: datetime | None = None
         self._consecutive_recording_failures = 0
+        self._reconnect_until: datetime | None = None
+        self._reconnect_attempts_remaining = 0
         self._ready_value: str | None = None
         self._secured_segments: set[Path] = set()
         self._resolved_member_room: MemberRoom | None = None
@@ -238,14 +243,26 @@ class RoomVoiceMonitor:
                 channel_id=status.channel_id,
                 server_id=status.server_id,
             )
+
         if status.stream_url is None:
-            if not status.active:
+            reconnecting = self._reconnect_active()
+            if not status.active and not reconnecting:
                 self._await_inactive_fingerprint = None
                 self._recording_cooldown_until = None
                 self._consecutive_recording_failures = 0
             self._write_monitor_status(
-                "inactive" if not status.active else "active_without_stream"
+                (
+                    "reconnecting"
+                    if reconnecting
+                    else (
+                        "inactive"
+                        if not status.active
+                        else "active_without_stream"
+                    )
+                )
             )
+            if dynamically_resolved:
+                self._resolved_member_room = None
             return
 
         stream_url = status.stream_url.get_secret_value()
@@ -274,6 +291,10 @@ class RoomVoiceMonitor:
             raise ConfigurationError(
                 "房间上麦录音容量预留状态无效"
             )
+        reconnecting = self._reconnect_active()
+        reconnect_deadline = self._reconnect_until
+        if reconnecting:
+            self._reconnect_attempts_remaining -= 1
         try:
             outcome = await self._record_session(
                 stop_event=stop_event,
@@ -290,12 +311,26 @@ class RoomVoiceMonitor:
             self._await_inactive_fingerprint = fingerprint
         else:
             self._await_inactive_fingerprint = None
-        if outcome == "failed":
+        if outcome in {"ended", "partial"}:
+            if (
+                not reconnecting
+                or reconnect_deadline is None
+                or self.now() >= reconnect_deadline
+            ):
+                self._start_reconnect_window()
+        elif outcome not in {"failed"}:
+            self._clear_reconnect_window()
+        reconnecting = self._reconnect_active()
+        if outcome == "failed" and not reconnecting:
             self._consecutive_recording_failures += 1
         else:
             self._consecutive_recording_failures = 0
-        cooldown_seconds = self.settings.pocket48_voice_poll_seconds
-        if self._consecutive_recording_failures:
+        if reconnecting:
+            cooldown_seconds = RECONNECT_POLL_SECONDS
+            self._write_monitor_status("reconnecting")
+        else:
+            cooldown_seconds = self.settings.pocket48_voice_poll_seconds
+        if self._consecutive_recording_failures and not reconnecting:
             cooldown_seconds = min(
                 3600,
                 cooldown_seconds
@@ -305,6 +340,26 @@ class RoomVoiceMonitor:
         self._recording_cooldown_until = self.now() + timedelta(
             seconds=cooldown_seconds
         )
+
+    def _start_reconnect_window(self) -> None:
+        self._reconnect_until = self.now() + timedelta(
+            seconds=RECONNECT_WINDOW_SECONDS
+        )
+        self._reconnect_attempts_remaining = RECONNECT_MAX_ATTEMPTS
+
+    def _clear_reconnect_window(self) -> None:
+        self._reconnect_until = None
+        self._reconnect_attempts_remaining = 0
+
+    def _reconnect_active(self) -> bool:
+        if (
+            self._reconnect_until is None
+            or self._reconnect_attempts_remaining <= 0
+            or self.now() >= self._reconnect_until
+        ):
+            self._clear_reconnect_window()
+            return False
+        return True
 
     async def close(self) -> None:
         await self._replace_client(None)
@@ -789,12 +844,15 @@ class RoomVoiceMonitor:
     async def _sleep_until_next_poll(
         self, stop_event: asyncio.Event
     ) -> None:
-        delay = self.settings.pocket48_voice_poll_seconds
-        jitter_limit = (
-            self.settings.pocket48_voice_poll_jitter_seconds
-        )
-        delay += self.jitter(0, jitter_limit)
-        delay = max(30.0, min(delay, 3600.0 + jitter_limit))
+        if self._reconnect_active():
+            delay = RECONNECT_POLL_SECONDS
+        else:
+            delay = self.settings.pocket48_voice_poll_seconds
+            jitter_limit = (
+                self.settings.pocket48_voice_poll_jitter_seconds
+            )
+            delay += self.jitter(0, jitter_limit)
+            delay = max(30.0, min(delay, 3600.0 + jitter_limit))
         sleep_task = asyncio.create_task(self.sleeper(delay))
         stop_task = asyncio.create_task(stop_event.wait())
         try:

@@ -1876,9 +1876,9 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert 'id="history-forward"' in page.text
     assert '<p class="eyebrow">Replay player</p>' in page.text
     assert '<p class="eyebrow">Synchronized replay</p>' not in page.text
-    assert "i18n.js?v=20260902-25" in page.text
-    assert "styles.css?v=20260902-25" in page.text
-    assert "app.js?v=20260902-25" in page.text
+    assert "i18n.js?v=20260904-26" in page.text
+    assert "styles.css?v=20260904-26" in page.text
+    assert "app.js?v=20260904-26" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text
     assert styles.status_code == 200
