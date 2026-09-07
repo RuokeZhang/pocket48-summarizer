@@ -529,10 +529,13 @@ class FFmpegRunner:
             "5",
             "-headers",
             "Origin: https://h5.48.cn\r\nReferer: https://h5.48.cn/\r\n",
-            "-ss",
-            f"{timestamp_ms / 1000:.3f}",
             "-i",
             manifest_url,
+            # Output-side seek: some pocket48 HLS manifests start with
+            # #EXT-X-DISCONTINUITY, which breaks fast input-side seek
+            # (FFmpeg lands on a corrupt packet and writes an empty file).
+            "-ss",
+            f"{timestamp_ms / 1000:.3f}",
             "-frames:v",
             "1",
             "-an",
