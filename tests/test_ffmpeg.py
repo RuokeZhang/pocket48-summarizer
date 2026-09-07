@@ -519,6 +519,7 @@ def test_ai_cover_source_command_extracts_clean_marked_frame(settings):
 
     assert command[command.index("-ss") + 1] == "12.300"
     assert command[command.index("-frames:v") + 1] == "1"
+    assert command.index("-ss") > command.index("-i")
     assert "-vf" not in command
     assert "-an" in command
 
