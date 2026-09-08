@@ -19,6 +19,7 @@ from .errors import AppError
 from .glossary import MemberCatalogService
 from .media.clips import VideoClipService
 from .media.ai_covers import AICoverService
+from .media.hls import HLSInspector
 from .repository import JobRepository
 from .room_voice_admin import RoomVoiceAdminService
 from .routes import router
@@ -65,6 +66,8 @@ def create_app(
         and services.ai_covers is None
         and not settings.missing_ai_cover_configuration()
     ):
+        if services.hls is None:
+            services.hls = HLSInspector(settings)
         services.ai_covers = AICoverService(
             settings,
             repository,
