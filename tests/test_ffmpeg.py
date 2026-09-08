@@ -522,6 +522,7 @@ def test_ai_cover_source_command_extracts_clean_marked_frame(settings):
     assert command[command.index("-i") + 1] == (
         "https://idol-vod.48.cn/fragments/seg.ts"
     )
+    assert command.index("-ss") > command.index("-i")
     assert "-vf" not in command
     assert "-an" in command
 
