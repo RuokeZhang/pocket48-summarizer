@@ -491,17 +491,17 @@ class FFmpegRunner:
 
     def build_extract_cover_source_command(
         self,
-        manifest_url: str,
+        segment_url: str,
         output_path: Path,
-        timestamp_ms: int,
+        offset_seconds: float,
     ) -> list[str]:
         validate_https_url(
-            manifest_url,
+            segment_url,
             MEDIA_HOSTS,
-            code="invalid_media_url",
-            label="回放媒体",
+            code="invalid_media_segment_url",
+            label="HLS 分片",
         )
-        if timestamp_ms < 0:
+        if offset_seconds < 0:
             raise AppError(
                 "ai_cover_timestamp_invalid",
                 "AI 封面标记时间无效",
@@ -529,13 +529,10 @@ class FFmpegRunner:
             "5",
             "-headers",
             "Origin: https://h5.48.cn\r\nReferer: https://h5.48.cn/\r\n",
-            "-i",
-            manifest_url,
-            # Output-side seek: some pocket48 HLS manifests start with
-            # #EXT-X-DISCONTINUITY, which breaks fast input-side seek
-            # (FFmpeg lands on a corrupt packet and writes an empty file).
             "-ss",
-            f"{timestamp_ms / 1000:.3f}",
+            f"{offset_seconds:.3f}",
+            "-i",
+            segment_url,
             "-frames:v",
             "1",
             "-an",
@@ -1070,9 +1067,9 @@ class FFmpegRunner:
 
     async def extract_cover_source_frame(
         self,
-        manifest_url: str,
+        segment_url: str,
         output_path: Path,
-        timestamp_ms: int,
+        offset_seconds: float,
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = output_path.with_suffix(".part.png")
@@ -1080,15 +1077,15 @@ class FFmpegRunner:
         try:
             await self._run_command(
                 self.build_extract_cover_source_command(
-                    manifest_url,
+                    segment_url,
                     temporary_path,
-                    timestamp_ms,
+                    offset_seconds,
                 ),
-                timeout_seconds=10 * 60,
+                timeout_seconds=60,
                 heartbeat=None,
                 error_code="ai_cover_source_failed",
                 error_message="提取 AI 封面参考画面失败",
-                redact_value=manifest_url,
+                redact_value=segment_url,
             )
             if (
                 not temporary_path.is_file()

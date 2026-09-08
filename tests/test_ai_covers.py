@@ -39,21 +39,38 @@ class FakeSeedreamProvider:
         self.closed = True
 
 
+class FakeCoverHLS:
+    def __init__(self):
+        self.calls = []
+
+    async def resolve_segment_at(self, manifest_url, timestamp_ms):
+        self.calls.append((manifest_url, timestamp_ms))
+        return (
+            "https://idol-vod.48.cn/fragments/seg.ts",
+            timestamp_ms / 1000,
+        )
+
+
 class FakeCoverFFmpeg:
     def __init__(self, *, fail_render_calls=()):
         self.ass_documents = []
         self.fail_render_calls = set(fail_render_calls)
         self.render_calls = 0
+        self.source_frame_calls = []
 
     async def supports_ass_filter(self):
         return True
 
     async def extract_cover_source_frame(
-        self, manifest_url, output_path, timestamp_ms
+        self, segment_url, output_path, offset_seconds
     ):
-        del manifest_url
+        self.source_frame_calls.append(
+            (segment_url, offset_seconds)
+        )
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(f"source-{timestamp_ms}".encode())
+        output_path.write_bytes(
+            f"source-{segment_url}@{offset_seconds}".encode()
+        )
         return output_path
 
     async def normalize_cover_image(
@@ -192,6 +209,7 @@ async def test_ai_cover_service_generates_pair_with_custom_prompt(
         repository,
         oss,  # type: ignore[arg-type]
         provider,
+        FakeCoverHLS(),  # type: ignore[arg-type]
         ffmpeg=ffmpeg,  # type: ignore[arg-type]
     )
     await service.startup()
@@ -260,6 +278,7 @@ async def test_ai_cover_default_prompt_is_used_and_regeneration_reuses_it(
         repository,
         oss,  # type: ignore[arg-type]
         provider,
+        FakeCoverHLS(),  # type: ignore[arg-type]
         ffmpeg=FakeCoverFFmpeg(),  # type: ignore[arg-type]
     )
 
@@ -317,6 +336,7 @@ async def test_ai_cover_service_records_moderation_failure_and_cleans_source(
         repository,
         oss,  # type: ignore[arg-type]
         provider,
+        FakeCoverHLS(),  # type: ignore[arg-type]
         ffmpeg=FakeCoverFFmpeg(),  # type: ignore[arg-type]
     )
 
@@ -364,6 +384,7 @@ async def test_ai_cover_service_preserves_successful_asset_on_partial_failure(
         repository,
         oss,  # type: ignore[arg-type]
         provider,
+        FakeCoverHLS(),  # type: ignore[arg-type]
         ffmpeg=FakeCoverFFmpeg(),  # type: ignore[arg-type]
     )
 

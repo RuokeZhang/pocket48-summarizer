@@ -90,3 +90,75 @@ segment.ts
             "https://idol-vod.48.cn/path/replay.m3u8"
         )
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_segment_at_finds_containing_segment(settings):
+    manifest = """#EXTM3U
+#EXT-X-DISCONTINUITY
+#EXTINF:6.000,
+/fragments/a.ts
+#EXTINF:6.000,
+/fragments/b.ts
+#EXTINF:6.000,
+/fragments/c.ts
+#EXT-X-ENDLIST
+"""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, text=manifest)
+        )
+    )
+    inspector = HLSInspector(settings, client)
+
+    segment_url, offset = await inspector.resolve_segment_at(
+        "https://idol-vod.48.cn/path/replay.m3u8", 13_500
+    )
+    assert segment_url == "https://idol-vod.48.cn/fragments/c.ts"
+    assert offset == pytest.approx(1.5, abs=1e-6)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_segment_at_zero_lands_on_first_segment(settings):
+    manifest = """#EXTM3U
+#EXTINF:6.000,
+/fragments/a.ts
+#EXTINF:6.000,
+/fragments/b.ts
+#EXT-X-ENDLIST
+"""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, text=manifest)
+        )
+    )
+    inspector = HLSInspector(settings, client)
+
+    segment_url, offset = await inspector.resolve_segment_at(
+        "https://idol-vod.48.cn/path/replay.m3u8", 0
+    )
+    assert segment_url == "https://idol-vod.48.cn/fragments/a.ts"
+    assert offset == 0.0
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_segment_at_rejects_out_of_range(settings):
+    manifest = """#EXTM3U
+#EXTINF:6.000,
+/fragments/a.ts
+#EXT-X-ENDLIST
+"""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, text=manifest)
+        )
+    )
+    inspector = HLSInspector(settings, client)
+
+    with pytest.raises(AppError, match="超过回放长度"):
+        await inspector.resolve_segment_at(
+            "https://idol-vod.48.cn/path/replay.m3u8", 30_000
+        )
+    await client.aclose()

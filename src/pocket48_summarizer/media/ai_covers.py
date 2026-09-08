@@ -15,6 +15,7 @@ from ..models import AICoverAssetRecord, AICoverGenerationRecord
 from ..repository import JobRepository
 from .cover_providers import CoverImageProvider
 from .ffmpeg import FFmpegRunner
+from .hls import HLSInspector
 from .overlays import (
     normalize_ai_cover_extra_text,
     normalize_ai_cover_highlight,
@@ -79,12 +80,14 @@ class AICoverService:
         repository: JobRepository,
         oss: OSSStore,
         provider: CoverImageProvider,
+        hls: HLSInspector,
         ffmpeg: FFmpegRunner | None = None,
     ) -> None:
         self.settings = settings
         self.repository = repository
         self.oss = oss
         self.provider = provider
+        self.hls = hls
         self.ffmpeg = ffmpeg or FFmpegRunner(settings)
         self.output_dir = settings.data_dir / "ai-covers"
         self.logger = logging.getLogger(__name__)
@@ -232,10 +235,17 @@ class AICoverService:
                     not asset.background_oss_object_key
                     for asset in assets
                 ):
-                    await self.ffmpeg.extract_cover_source_frame(
+                    (
+                        segment_url,
+                        segment_offset,
+                    ) = await self.hls.resolve_segment_at(
                         manifest_url,
-                        source_path,
                         generation.source_timestamp_ms,
+                    )
+                    await self.ffmpeg.extract_cover_source_frame(
+                        segment_url,
+                        source_path,
+                        segment_offset,
                     )
                     await self.oss.upload_ai_cover_image(
                         source_path, source_key

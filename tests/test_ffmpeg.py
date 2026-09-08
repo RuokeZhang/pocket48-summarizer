@@ -512,14 +512,16 @@ def test_ai_cover_source_command_extracts_clean_marked_frame(settings):
     runner = FFmpegRunner(settings)
 
     command = runner.build_extract_cover_source_command(
-        MANIFEST_URL,
+        "https://idol-vod.48.cn/fragments/seg.ts",
         Path("/tmp/source.png"),
-        timestamp_ms=12_300,
+        offset_seconds=2.988,
     )
 
-    assert command[command.index("-ss") + 1] == "12.300"
+    assert command[command.index("-ss") + 1] == "2.988"
     assert command[command.index("-frames:v") + 1] == "1"
-    assert command.index("-ss") > command.index("-i")
+    assert command[command.index("-i") + 1] == (
+        "https://idol-vod.48.cn/fragments/seg.ts"
+    )
     assert "-vf" not in command
     assert "-an" in command
 
