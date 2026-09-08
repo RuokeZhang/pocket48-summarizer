@@ -529,10 +529,14 @@ class FFmpegRunner:
             "5",
             "-headers",
             "Origin: https://h5.48.cn\r\nReferer: https://h5.48.cn/\r\n",
-            "-ss",
-            f"{offset_seconds:.3f}",
             "-i",
             segment_url,
+            # Output-side seek: pocket48 .ts segments carry non-zero
+            # start_time PTS (e.g. 114s), so input-side -ss aims at a
+            # container time that doesn't exist in the payload and writes
+            # an empty PNG. Decode-then-skip is cheap on a ~6s segment.
+            "-ss",
+            f"{offset_seconds:.3f}",
             "-frames:v",
             "1",
             "-an",
