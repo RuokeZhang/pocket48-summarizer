@@ -70,6 +70,7 @@ def create_app(
             repository,
             OSSStore(settings),
             SeedreamClient(settings),
+            services.hls,
         )
 
     @asynccontextmanager

@@ -40,7 +40,9 @@ class HLSInspector:
         if self._owns_client:
             await self.client.aclose()
 
-    async def inspect(self, url: str, depth: int = 0) -> HLSManifest:
+    async def _fetch_media_playlist(
+        self, url: str, depth: int = 0
+    ) -> tuple[str, list[str]]:
         if depth > 2:
             raise AppError(
                 "hls_nested_too_deep",
@@ -100,12 +102,18 @@ class HLSInspector:
                             code="invalid_media_url",
                             label="HLS 子播放列表",
                         )
-                        return await self.inspect(variant, depth + 1)
+                        return await self._fetch_media_playlist(
+                            variant, depth + 1
+                        )
                 raise AppError(
                     "invalid_hls_manifest",
                     "HLS 主播放列表缺少子播放列表地址",
                     False,
                 )
+        return url, lines
+
+    async def inspect(self, url: str, depth: int = 0) -> HLSManifest:
+        url, lines = await self._fetch_media_playlist(url, depth)
         if "#EXT-X-ENDLIST" not in lines:
             raise AppError(
                 "replay_not_complete",
@@ -167,4 +175,51 @@ class HLSInspector:
             url=url,
             duration_ms=round(duration_seconds * 1000),
             segment_count=segment_count,
+        )
+
+    async def resolve_segment_at(
+        self, url: str, timestamp_ms: int
+    ) -> tuple[str, float]:
+        if timestamp_ms < 0:
+            raise AppError(
+                "invalid_hls_timestamp",
+                "HLS 定位时间无效",
+                False,
+            )
+        base_url, lines = await self._fetch_media_playlist(url)
+        cumulative = 0.0
+        pending_duration: float | None = None
+        target = timestamp_ms / 1000
+        for line in lines:
+            if line.startswith("#EXTINF:"):
+                try:
+                    pending_duration = float(
+                        line.removeprefix("#EXTINF:").split(",", 1)[0]
+                    )
+                except ValueError as exc:
+                    raise AppError(
+                        "invalid_hls_manifest",
+                        "HLS 分片时长格式无效",
+                        False,
+                    ) from exc
+                continue
+            if line.startswith("#"):
+                continue
+            if pending_duration is None:
+                continue
+            if cumulative + pending_duration > target:
+                segment_url = urljoin(base_url, line)
+                validate_https_url(
+                    segment_url,
+                    MEDIA_HOSTS,
+                    code="invalid_media_segment_url",
+                    label="HLS 分片",
+                )
+                return segment_url, max(0.0, target - cumulative)
+            cumulative += pending_duration
+            pending_duration = None
+        raise AppError(
+            "hls_timestamp_out_of_range",
+            "HLS 定位时间超过回放长度",
+            False,
         )

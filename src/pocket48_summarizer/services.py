@@ -136,6 +136,7 @@ def build_services(
                 repository,
                 oss,
                 SeedreamClient(settings),
+                hls,
             )
             if not settings.missing_ai_cover_configuration()
             else None
