@@ -162,6 +162,10 @@ ECS 用低配跑处理管线（HLS、ASR、总结、翻译、成员目录），�
 
 推荐流程：动手剪辑前先 `sync-from-ecs.sh` 一次，剪完想让公开站点上的访客也能看到成片再 `sync-to-ecs.sh`。两个脚本都会在开头用 SQLite 备份 API 生成 `.pre-sync-<ts>` 快照。
 
+## 开发流程
+
+单人仓库，直接 push 到 `main`，不走 PR。上线用 `sudo /opt/pocket48-summarizer/scripts/deploy-release.sh`（默认拉 `origin/main`，蓝绿部署）。
+
 ## 官方成员目录与管理员词库
 
 官方成员资料来自
