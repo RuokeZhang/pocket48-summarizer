@@ -153,6 +153,15 @@ AUTH_REQUIRED=true pocket48-users create --username admin --admin
 
 再把 `.env` 中 `AUTH_REQUIRED` 设为 `true`。密码通过终端安全输入；重置密码或停用用户会撤销现有会话。
 
+## 本地与 ECS 双活
+
+ECS 用低配跑处理管线（HLS、ASR、总结、翻译、成员目录），本地 Mac 负责重活的剪辑与 AI 封面导出。OSS 是共享媒体存储，两端天然一致；SQLite 元数据通过两个脚本单向同步：
+
+- `scripts/sync-from-ecs.sh`：拉 ECS 数据库到本地，先备份并回填本地私有编辑表（`video_clips`、`video_clip_exports`、`ai_cover_generations`、`ai_cover_assets`），支持 `--dry-run`。
+- `scripts/sync-to-ecs.sh`：把本地那四张编辑表推回 ECS（`INSERT OR REPLACE`，只增不删），支持 `--dry-run`。
+
+推荐流程：动手剪辑前先 `sync-from-ecs.sh` 一次，剪完想让公开站点上的访客也能看到成片再 `sync-to-ecs.sh`。两个脚本都会在开头用 SQLite 备份 API 生成 `.pre-sync-<ts>` 快照。
+
 ## 官方成员目录与管理员词库
 
 官方成员资料来自
