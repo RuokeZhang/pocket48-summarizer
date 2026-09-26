@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     csrf_cookie_name: str = "p48_csrf"
 
     pocket_api_base_url: str = "https://pocketapi.48.cn"
+    replay_watch_member_id: int | None = Field(default=None, gt=0)
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
     external_retry_attempts: int = Field(default=3, ge=1, le=8)
     max_api_response_bytes: int = Field(default=2 * 1024 * 1024, ge=1024)

@@ -300,3 +300,78 @@ async def test_translation_pauses_without_consuming_retry_for_queued_job(
         settings.worker_lease_seconds,
     )
     assert claimed_queued_job and claimed_queued_job.id == queued_job.id
+
+
+@pytest.mark.asyncio
+async def test_daily_replay_watch_persists_schedule_and_deduplicates(
+    settings, repository, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    from pocket48_summarizer import replay_watch
+    from pocket48_summarizer.clients.pocket48 import ReplayListEntry
+
+    current_time = datetime(2026, 9, 26, tzinfo=UTC)
+
+    class Clock:
+        @staticmethod
+        def now(timezone):
+            return current_time
+
+    monkeypatch.setattr(replay_watch, "datetime", Clock)
+    settings.replay_watch_member_id = 407126
+    pocket = SimpleNamespace(
+        list_member_replays=AsyncMock(return_value=[]),
+        resolve_replay=AsyncMock(return_value=SimpleNamespace(member_id="407126")),
+    )
+    assert await replay_watch.poll_replays_if_due(settings, repository, pocket) == 0
+    baseline_ms = int(current_time.timestamp() * 1000)
+    pocket.list_member_replays.assert_awaited_once_with(407126, baseline_ms)
+    assert await replay_watch.poll_replays_if_due(settings, repository, pocket) == 0
+    assert pocket.list_member_replays.await_count == 1
+
+    current_time += timedelta(days=1)
+    replay = ReplayListEntry.model_validate({
+        "liveId": "1300000000000000000", "ctime": baseline_ms + 1000,
+        "userInfo": {"userId": "407126"},
+    })
+    pocket.list_member_replays.return_value = [replay]
+    pocket.resolve_replay.side_effect = AppError("replay_not_ready", "not ready", True)
+    assert await replay_watch.poll_replays_if_due(settings, repository, pocket) == 0
+    assert repository.get_job_by_live_id(replay.live_id) is None
+
+    current_time += timedelta(days=1)
+    pocket.resolve_replay.side_effect = None
+    assert await replay_watch.poll_replays_if_due(settings, repository, pocket) == 1
+    assert repository.get_job_by_live_id(replay.live_id).status == "queued"
+    current_time += timedelta(days=1)
+    assert await replay_watch.poll_replays_if_due(settings, repository, pocket) == 0
+    assert pocket.resolve_replay.await_count == 2
+    assert len(repository.list_jobs()) == 1
+    with repository.database.connect() as connection:
+        state = connection.execute("SELECT * FROM replay_watch_state").fetchone()
+    assert state["enabled_at_ms"] == baseline_ms
+    assert state["last_success_at_ms"] == int(current_time.timestamp() * 1000)
+
+
+@pytest.mark.asyncio
+async def test_daily_replay_watch_failure_does_not_stop_worker_or_retry_immediately(
+    settings, repository
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    settings.replay_watch_member_id = 407126
+    pocket = SimpleNamespace(list_member_replays=AsyncMock(
+        side_effect=AppError("network_failure", "failed", True)
+    ))
+    worker = DurableWorker(settings, repository, SimpleNamespace(pocket48=pocket))
+    await worker._poll_replays_if_due()
+    restarted_worker = DurableWorker(settings, repository, SimpleNamespace(pocket48=pocket))
+    await restarted_worker._poll_replays_if_due()
+    assert pocket.list_member_replays.await_count == 1
+    with repository.database.connect() as connection:
+        state = connection.execute("SELECT * FROM replay_watch_state").fetchone()
+    assert state["last_error_code"] == "network_failure"
+    assert state["last_success_at_ms"] is None

@@ -16,6 +16,7 @@ from .models import (
 )
 from .pipeline import ReplayPipeline
 from .repository import JobRepository
+from .replay_watch import poll_replays_if_due
 from .runtime_lock import shared_runtime_lock
 from .room_voice_processing import RoomVoiceProcessingService
 from .room_voice_messages import RoomVoiceMessageService
@@ -50,6 +51,7 @@ class DurableWorker:
         self._task: asyncio.Task | None = None
         self._last_cleanup = 0.0
         self._last_member_catalog_check: float | None = None
+        self._last_replay_watch_check: float | None = None
 
     async def start(self) -> None:
         if self._task is not None:
@@ -94,6 +96,7 @@ class DurableWorker:
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
+            await self._poll_replays_if_due()
             await self._refresh_terminology_if_due()
             await self._cleanup_expired_artifacts_if_due()
             if self.room_voice_processor is not None:
@@ -175,6 +178,23 @@ class DurableWorker:
                 )
             except TimeoutError:
                 pass
+
+    async def _poll_replays_if_due(self) -> None:
+        if self.settings.replay_watch_member_id is None:
+            return
+        now = monotonic()
+        if (self._last_replay_watch_check is not None
+                and now - self._last_replay_watch_check < 60):
+            return
+        self._last_replay_watch_check = now
+        try:
+            queued = await poll_replays_if_due(
+                self.settings, self.repository, self.pipeline.pocket48
+            )
+            if queued:
+                self.logger.info("Automatically queued %s new replays", queued)
+        except AppError as exc:
+            self.logger.warning("Daily replay check failed: %s", exc.code)
 
     async def _refresh_terminology_if_due(self) -> None:
         if self.member_catalog is None and self.vocabulary is None:

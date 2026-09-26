@@ -50,6 +50,27 @@ class PocketEnvelope(BaseModel):
     content: PocketLiveContent | None = None
 
 
+class ReplayListUser(BaseModel):
+    user_id: str = Field(alias="userId", pattern=r"^[0-9]+$")
+
+
+class ReplayListEntry(BaseModel):
+    live_id: str = Field(alias="liveId", pattern=r"^[0-9]+$")
+    started_at_ms: int = Field(alias="ctime", ge=0)
+    user: ReplayListUser = Field(alias="userInfo")
+
+
+class ReplayListContent(BaseModel):
+    entries: list[ReplayListEntry] = Field(alias="liveList")
+    next_cursor: str = Field(alias="next", pattern=r"^-?[0-9]+$")
+
+
+class ReplayListEnvelope(BaseModel):
+    status: int
+    success: bool
+    content: ReplayListContent | None = None
+
+
 class Pocket48Client:
     def __init__(
         self,
@@ -66,6 +87,56 @@ class Pocket48Client:
     async def close(self) -> None:
         if self._owns_client:
             await self.client.aclose()
+
+    async def list_member_replays(
+        self, member_id: int, since_ms: int
+    ) -> list[ReplayListEntry]:
+        endpoint = (
+            self.settings.pocket_api_base_url.rstrip("/")
+            + "/live/api/v1/live/getLiveList"
+        )
+        cursor = "0"
+        seen_cursors = {cursor}
+        replays: dict[str, ReplayListEntry] = {}
+        for _ in range(100):
+            response = await self._request_with_retry(
+                "POST", endpoint, headers=POCKET_HEADERS,
+                json={"userId": member_id, "record": True,
+                      "debug": True, "next": cursor},
+            )
+            try:
+                if len(response.content) > self.settings.max_api_response_bytes:
+                    raise ValueError("oversized replay list")
+                envelope = ReplayListEnvelope.model_validate(response.json())
+            except ValueError as exc:
+                raise ExternalServiceError(
+                    "pocket48_replay_list_invalid", "直播历史返回格式异常", True
+                ) from exc
+            if (response.status_code != 200 or not envelope.success
+                    or envelope.status != 200 or envelope.content is None):
+                raise ExternalServiceError(
+                    "pocket48_replay_list_failed", "获取直播历史失败", True
+                )
+            page = envelope.content
+            if any(entry.user.user_id != str(member_id) for entry in page.entries):
+                raise ExternalServiceError(
+                    "pocket48_replay_member_mismatch",
+                    "直播历史返回了其他成员的数据", True,
+                )
+            for entry in page.entries:
+                if entry.started_at_ms >= since_ms:
+                    replays[entry.live_id] = entry
+            if (not page.entries or int(page.next_cursor) <= 0
+                    or all(entry.started_at_ms < since_ms for entry in page.entries)):
+                return sorted(replays.values(), key=lambda entry: entry.started_at_ms)
+            if page.next_cursor in seen_cursors:
+                break
+            cursor = page.next_cursor
+            seen_cursors.add(cursor)
+            await asyncio.sleep(0.2)
+        raise ExternalServiceError(
+            "pocket48_replay_pagination_failed", "直播历史分页未能完成", True
+        )
 
     async def resolve_replay(self, live_id: str) -> ReplayMetadata:
         endpoint = (

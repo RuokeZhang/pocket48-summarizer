@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -35,6 +37,56 @@ async def test_resolves_public_replay(settings):
     assert metadata.media_url.endswith(".m3u8")
     assert metadata.danmaku_url.endswith(".lrc")
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_member_replay_history_paginates_filters_and_deduplicates(settings):
+    def entry(live_id, timestamp):
+        return {"liveId": live_id, "ctime": str(timestamp),
+                "userInfo": {"userId": "407126"}}
+
+    cursors = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["userId"] == 407126
+        assert body["record"] is True
+        cursors.append(body["next"])
+        entries = ([entry("300", 3000), entry("200", 2000)]
+                   if body["next"] == "0"
+                   else [entry("200", 2000), entry("100", 1000)])
+        return httpx.Response(200, json={
+            "status": 200, "success": True,
+            "content": {"liveList": entries,
+                        "next": "200" if body["next"] == "0" else "0"},
+        })
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        entries = await Pocket48Client(settings, client).list_member_replays(407126, 1500)
+    assert [entry.live_id for entry in entries] == ["200", "300"]
+    assert cursors == ["0", "200"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("member_id,next_cursor,expected_code", [
+    ("123", "0", "pocket48_replay_member_mismatch"),
+    ("407126", "10", "pocket48_replay_pagination_failed"),
+    ("407126", "bad", "pocket48_replay_list_invalid"),
+])
+async def test_replay_history_rejects_wrong_member_and_bad_pagination(
+    settings, member_id, next_cursor, expected_code
+):
+    payload = {"status": 200, "success": True, "content": {
+        "liveList": [{"liveId": "10", "ctime": "1000",
+                      "userInfo": {"userId": member_id}}],
+        "next": next_cursor,
+    }}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json=payload)
+    )) as client:
+        with pytest.raises(AppError) as error:
+            await Pocket48Client(settings, client).list_member_replays(407126, 0)
+    assert error.value.code == expected_code
 
 
 @pytest.mark.asyncio

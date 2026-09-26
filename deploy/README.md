@@ -189,6 +189,15 @@ Migration 必须采用 expand/contract：发布时只新增兼容字段或表，
 
 ## 7. 运维
 
+在 `/etc/pocket48-summarizer/app.env` 设置 `REPLAY_WATCH_MEMBER_ID=407126`
+并发布后，独立 Worker 会每 24 小时检查一次杨晔的公开回放。首次启用时间
+作为开播时间下限，不批量补跑旧历史；停机后的第一次到期检查会补查这一
+时间下限之后的回放。直播 ID 沿用全局去重，尚未就绪的回放次日再查。
+新任务自动执行原有 ASR、总结和英文翻译，会使用已配置的付费 API。
+检查在 Worker 任务间隙执行，长任务可能推迟检查；网络失败会记录错误码，
+下一次每日检查重试，不影响原有任务队列。`replay_watch_state` 保存启用、
+最近尝试、最近成功时间（UTC 毫秒）及错误码。取消环境变量可关闭自动检查。
+
 ```bash
 sudo systemctl status 'pocket48-web@*' pocket48-worker \
   pocket48-voice-monitor caddy
