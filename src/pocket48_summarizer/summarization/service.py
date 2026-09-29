@@ -330,10 +330,17 @@ class SummarizationService:
         require_evidence_overlap: bool,
         max_duration_ms: int | None = None,
     ) -> SummaryCandidate | TimelineItem:
-        span = cls._evidence_span(item, segment_windows)
-        if span is None:
+        evidence_windows = [
+            segment_windows[evidence_id]
+            for evidence_id in item.evidence_segment_ids
+            if evidence_id in segment_windows
+            and segment_windows[evidence_id][1] > bound_start_ms
+            and segment_windows[evidence_id][0] < bound_end_ms
+        ]
+        if not evidence_windows:
             return item
-        evidence_start, evidence_end = span
+        evidence_start = min(window[0] for window in evidence_windows)
+        evidence_end = max(window[1] for window in evidence_windows)
         sound = (
             item.end_ms > item.start_ms
             and item.start_ms >= bound_start_ms
@@ -352,6 +359,13 @@ class SummarizationService:
         if end <= start:
             end = min(start + 1000, bound_end_ms)
             start = max(bound_start_ms, end - 1000)
+        if require_evidence_overlap and not any(
+            window_end > start and window_start < end
+            for window_start, window_end in evidence_windows
+        ):
+            anchor_start, anchor_end = evidence_windows[0]
+            start = max(anchor_start, bound_start_ms)
+            end = min(anchor_end, bound_end_ms)
         return item.model_copy(update={"start_ms": start, "end_ms": end})
 
     @classmethod

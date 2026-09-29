@@ -554,6 +554,26 @@ def test_repair_clamps_overlong_evidence_span_to_max_duration():
     assert repaired.end_ms == MAX_TIMELINE_EVENT_DURATION_MS
 
 
+def test_repair_ignores_evidence_outside_the_current_chunk():
+    repaired = SummarizationService._repair_window(
+        SummaryCandidate(
+            start_ms=0,
+            end_ms=900_000,
+            title="跨分段证据",
+            detail="引用包含上一个分段和当前分段的字幕。",
+            evidence_segment_ids=[1, 2],
+        ),
+        {1: (0, 10_000), 2: (700_000, 710_000)},
+        bound_start_ms=100_000,
+        bound_end_ms=900_000,
+        require_evidence_overlap=True,
+        max_duration_ms=MAX_TIMELINE_EVENT_DURATION_MS,
+    )
+
+    assert repaired.start_ms == 700_000
+    assert repaired.end_ms == 710_000
+
+
 def test_repair_leaves_sound_windows_untouched():
     item = TimelineItem(
         start_ms=130_000,
