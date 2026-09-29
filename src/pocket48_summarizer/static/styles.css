@@ -961,30 +961,39 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .section-heading h2 { margin: 6px 0 0; }
 .member-tabs {
   display: flex;
-  gap: 8px;
+  gap: 28px;
   overflow-x: auto;
-  margin: 0 0 18px;
-  padding: 2px 2px 8px;
+  margin: 0 0 22px;
+  padding: 0;
+  border-bottom: 1px solid #252936;
   scrollbar-width: thin;
 }
 .member-tab {
+  position: relative;
   flex: none;
-  border: 1px solid #3a3f4d;
-  border-radius: 999px;
-  padding: 9px 14px;
-  background: #10131b;
-  color: #c6ccda;
-  font-size: 14px;
-  font-weight: 800;
+  padding: 0 1px 13px;
+  color: #8f96a8;
+  font-size: 15px;
+  font-weight: 700;
   text-decoration: none;
+  transition: color .18s ease;
 }
-.member-tab span { color: #858da0; font-size: 12px; }
-.member-tab:hover { border-color: #726b93; }
+.member-tab::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: transparent;
+}
+.member-tab span { margin-left: 4px; color: #646b7b; font-size: 11px; font-weight: 600; }
+.member-tab:hover { color: #d9ddea; }
 .member-tab.is-active {
-  border-color: #ff719b;
-  background: linear-gradient(135deg, #342031, #282247);
   color: #fff;
 }
+.member-tab.is-active::after { background: #ff6f9d; }
+.member-tab.is-active span { color: #c58da2; }
 .job-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
 .job-card { display: block; overflow: hidden; padding: 0 0 20px; text-decoration: none; transition: transform .18s ease, border-color .18s ease; }
 .job-card:hover { transform: translateY(-3px); border-color: #625b82; }

@@ -1343,6 +1343,14 @@ async def index(request: Request, member: str | None = None) -> Response:
     missing_configuration = settings.missing_processing_configuration()
     user_id = context.user.id if context else None
     member_filters = services.repository.list_visible_member_filters(user_id)
+    member_filters = sorted(
+        member_filters,
+        key=lambda item: (
+            item.member_id != DEFAULT_HOME_MEMBER_ID,
+            item.group_name.casefold(),
+            item.member_name.casefold(),
+        ),
+    )
     requested_member_id = (member or "").strip()
     visible_member_ids = {
         member_filter.member_id for member_filter in member_filters
