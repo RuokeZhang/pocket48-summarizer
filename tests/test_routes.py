@@ -1586,6 +1586,7 @@ def test_homepage_member_filter_respects_job_visibility(
                 member_id=member_id,
                 member_name=f"SNH48-{member_name}",
                 title=title,
+                cover_url=f"https://source.48.cn/{live_id}.jpg",
                 media_url="https://idol-vod.48.cn/replay.m3u8",
             ),
         )
@@ -1615,6 +1616,7 @@ def test_homepage_member_filter_respects_job_visibility(
         user_id=bob.id,
         completed=False,
     )
+    settings.preview_image_path(public_a.id).write_bytes(b"preview")
 
     with TestClient(app) as anonymous:
         home = anonymous.get("/")
@@ -1622,6 +1624,10 @@ def test_homepage_member_filter_respects_job_visibility(
         hidden_filter = anonymous.get("/?member=1003")
 
     assert 'class="member-tabs"' in home.text
+    assert f'src="/jobs/{public_a.id}/preview.jpg"' in home.text
+    assert "https://source.48.cn/810001.jpg" not in home.text
+    assert 'src="https://source.48.cn/810002.jpg"' in home.text
+    assert 'referrerpolicy="no-referrer"' in home.text
     assert "成员甲" in home.text
     assert "成员乙" in home.text
     assert "成员丙" not in home.text

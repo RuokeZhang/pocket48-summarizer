@@ -87,6 +87,8 @@
         <div class="job-card-image">
           {% if preview_image_exists(job) %}
             <img src="/jobs/{{ job.id }}/preview.jpg" alt="" loading="lazy">
+          {% elif job.cover_url %}
+            <img src="{{ job.cover_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">
           {% endif %}
         </div>
         <div class="job-card-top">
