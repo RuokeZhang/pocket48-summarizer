@@ -481,6 +481,13 @@ class Settings(BaseSettings):
         return self.data_dir / "tmp"
 
     @property
+    def preview_dir(self) -> Path:
+        return self.data_dir / "previews"
+
+    def preview_image_path(self, job_id: str) -> Path:
+        return self.preview_dir / f"{job_id}.jpg"
+
+    @property
     def clip_maintenance_path(self) -> Path:
         return (self.maintenance_dir or self.data_dir) / "clip-maintenance"
 
@@ -503,6 +510,7 @@ class Settings(BaseSettings):
     def prepare_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.preview_dir.mkdir(parents=True, exist_ok=True)
         self.room_voice_path.mkdir(parents=True, exist_ok=True)
         if self.maintenance_dir:
             self.maintenance_dir.mkdir(parents=True, exist_ok=True)

@@ -60,45 +60,52 @@
   </section>
 
   {% if member_filters %}
-    <form
-      class="member-filter-form"
-      action="/"
-      method="get"
+    <nav
+      class="member-tabs"
       aria-label="成员筛选"
       data-i18n-aria-label="memberFilter"
     >
-      <label class="member-filter-field" for="member-filter">
-        <span data-i18n="memberFilter">按成员筛选</span>
-        <select id="member-filter" name="member">
-          <option value="" data-i18n="allMembers">全部成员</option>
-          {% for member in member_filters %}
-            <option
-              value="{{ member.member_id }}"
-              {% if member.member_id == selected_member_id %}selected{% endif %}
-            >{{ member.member_name }}{% if member.group_name %} · {{ member.group_name }}{% endif %} ({{ member.job_count }})</option>
-          {% endfor %}
-        </select>
-      </label>
-      <button type="submit" data-i18n="applyFilter">筛选</button>
-      {% if selected_member_id %}
-        <a class="member-filter-clear" href="/" data-i18n="clearFilter">清除</a>
-      {% endif %}
-    </form>
+      {% for member in member_filters %}
+        <a
+          class="member-tab{% if member.member_id == selected_member_id %} is-active{% endif %}"
+          href="/?member={{ member.member_id }}"
+          {% if member.member_id == selected_member_id %}aria-current="page"{% endif %}
+        >{{ member.member_name }} <span>{{ member.job_count }}</span></a>
+      {% endfor %}
+      <a
+        class="member-tab{% if not selected_member_id %} is-active{% endif %}"
+        href="/?member=all"
+        {% if not selected_member_id %}aria-current="page"{% endif %}
+        data-i18n="allMembers"
+      >全部成员</a>
+    </nav>
   {% endif %}
 
   <section class="job-grid">
     {% for job in jobs %}
       <a class="job-card" href="/jobs/{{ job.id }}">
+        <div class="job-card-image">
+          {% if preview_image_exists(job) %}
+            <img src="/jobs/{{ job.id }}/preview.jpg" alt="" loading="lazy">
+          {% else %}
+            <span aria-hidden="true">48</span>
+          {% endif %}
+        </div>
         <div class="job-card-top">
-          <span class="status status-{{ job.status }}" data-job-status="{{ job.status }}">{{ job.status }}</span>
           <time datetime="{{ job.replay_started_at or '' }}">
             <span data-i18n="liveTime">直播时间</span> · {{ format_china_datetime(job.replay_started_at) }}
           </time>
         </div>
         <h3>{% if job.title %}{{ job.title }}{% else %}<span data-i18n="waitingReplay">等待解析回放</span>{% endif %}</h3>
-        <p>{% if job.member_name %}{{ job.member_name }}{% else %}<span data-i18n="unknownMember">未知主播</span>{% endif %} · {{ job.live_id }}</p>
-        <div class="progress-track"><span style="width: {{ job.progress_percent }}%"></span></div>
-        <small data-operational-message="{{ job.progress_message }}">{{ job.progress_message }}</small>
+        <p class="job-card-member">{% if job.member_name %}{{ job.member_name }}{% else %}<span data-i18n="unknownMember">未知主播</span>{% endif %}</p>
+        {% set card_summary = home_card_summary(job) %}
+        {% if card_summary %}
+          <p class="job-card-summary">{{ card_summary }}</p>
+        {% endif %}
+        {% if job.status != "completed" %}
+          <div class="progress-track"><span style="width: {{ job.progress_percent }}%"></span></div>
+          <small data-operational-message="{{ job.progress_message }}">{{ job.progress_message }}</small>
+        {% endif %}
       </a>
     {% else %}
       <div class="empty-state">

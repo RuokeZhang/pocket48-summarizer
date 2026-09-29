@@ -72,6 +72,7 @@ def final_prompt(
 ) -> str:
     schema = {
         "overview": "整场直播摘要",
+        "card_summary": "首页卡片一句话：地点或场景加主要内容",
         "timeline": [
             {
                 "start_ms": 0,
@@ -135,9 +136,12 @@ def final_prompt(
     return (
         "根据分段总结生成整场直播的中文结构化总结。弹幕只能证明观众在某个时段活跃，"
         "不能替代主播字幕成为事实来源。所有时间线和高光必须引用真实 segment id。\n"
-        "必须输出完整 JSON 对象，并包含 overview、timeline、topics、highlights、"
-        "danmaku_peak_summaries、verification_needed 六个顶层键；没有内容的数组也"
+        "必须输出完整 JSON 对象，并包含 overview、card_summary、timeline、topics、"
+        "highlights、danmaku_peak_summaries、verification_needed 七个顶层键；没有内容的数组也"
         "必须输出空数组。overview 保持精炼；timeline 不设固定条数上限，应保留整场"
+        "card_summary 必须是 25 至 70 个汉字的一句话，先写直播地点或场景，再概括主要内容；"
+        "只有主播或字幕明确说明时才能写公演后台、家里、生活中心寝室等具体地点，"
+        "无法确认时写直播场景未明确，禁止根据背景或常识猜测。"
         "直播中所有有意义且不重复的事件；topics 最多 10 条，highlights 最多 10 条，"
         "verification_needed 最多 20 条。timeline 必须按时间排序并覆盖整场直播的"
         "开头、中段和结尾，不能只选择前半段；每个连续字幕分段都至少保留一条代表"

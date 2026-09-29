@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -77,6 +79,25 @@ from .security import parse_share_url
 from .summarization.chunking import format_clock
 
 router = APIRouter()
+
+DEFAULT_HOME_MEMBER_ID = "407126"
+
+
+def home_card_summary(job: JobRecord) -> str:
+    if not job.summary_json:
+        return ""
+    try:
+        payload = json.loads(job.summary_json)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    text = str(payload.get("card_summary") or payload.get("overview") or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    sentence = re.split(r"(?<=[。！？!?])", text, maxsplit=1)[0].strip()
+    return sentence if len(sentence) <= 90 else sentence[:89].rstrip() + "…"
 
 
 class CreateJobRequest(BaseModel):
@@ -1326,11 +1347,14 @@ async def index(request: Request, member: str | None = None) -> Response:
     visible_member_ids = {
         member_filter.member_id for member_filter in member_filters
     }
-    selected_member_id = (
-        requested_member_id
-        if requested_member_id in visible_member_ids
-        else None
-    )
+    if requested_member_id == "all":
+        selected_member_id = None
+    elif requested_member_id in visible_member_ids:
+        selected_member_id = requested_member_id
+    elif DEFAULT_HOME_MEMBER_ID in visible_member_ids:
+        selected_member_id = DEFAULT_HOME_MEMBER_ID
+    else:
+        selected_member_id = None
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -1352,6 +1376,10 @@ async def index(request: Request, member: str | None = None) -> Response:
                 in settings.unlimited_job_username_set
             ),
             "format_china_datetime": format_china_datetime,
+            "home_card_summary": home_card_summary,
+            "preview_image_exists": lambda job: settings.preview_image_path(
+                job.id
+            ).is_file(),
         },
     )
 
@@ -1359,6 +1387,20 @@ async def index(request: Request, member: str | None = None) -> Response:
 @router.get("/en", response_class=RedirectResponse)
 async def english_home() -> RedirectResponse:
     return RedirectResponse("/?lang=en", status_code=307)
+
+
+@router.get("/jobs/{job_id}/preview.jpg", response_class=FileResponse)
+async def job_preview_image(request: Request, job_id: str) -> Response:
+    require_readable_job(request, job_id)
+    path = request.app.state.settings.preview_image_path(job_id)
+    if not path.is_file():
+        raise AppError("preview_image_not_found", "直播预览截图尚未生成", False)
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        filename=f"{job_id}.jpg",
+        content_disposition_type="inline",
+    )
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)

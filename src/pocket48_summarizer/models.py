@@ -251,6 +251,7 @@ class DanmakuPeakSummary(StrictSummaryModel):
 
 class FinalSummary(StrictSummaryModel):
     overview: str
+    card_summary: str = ""
     timeline: list[TimelineItem]
     topics: list[TopicItem]
     highlights: list[HighlightItem]

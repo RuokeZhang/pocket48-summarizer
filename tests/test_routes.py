@@ -36,6 +36,7 @@ from pocket48_summarizer.models import (
 from pocket48_summarizer.routes import (
     CreateClipExportRequest,
     format_china_datetime,
+    home_card_summary,
 )
 from pocket48_summarizer.services import ApplicationServices
 
@@ -52,6 +53,15 @@ class DummyWorker:
 
     def notify(self):
         self.notified += 1
+
+
+def test_home_card_summary_prefers_card_copy_and_falls_back_to_one_sentence():
+    job = type("Job", (), {
+        "summary_json": '{"overview":"第一句。第二句。","card_summary":"家里直播，聊最近的排练和生活。"}'
+    })()
+    assert home_card_summary(job) == "家里直播，聊最近的排练和生活。"
+    job.summary_json = '{"overview":"第一句。第二句。"}'
+    assert home_card_summary(job) == "第一句。"
 
 
 def test_clip_export_request_uses_vibrant_calm_defaults():
@@ -1511,7 +1521,7 @@ def test_completed_result_is_public_but_raw_asr_requires_login(
             f"/jobs/{job_id}/asr.json", follow_redirects=False
         )
 
-    assert "800010" in index.text
+    assert f'/jobs/{job_id}' in index.text
     assert 'data-i18n="liveTime">直播时间</span>' in index.text
     assert "2026-08-22 18:57" in index.text
     assert page.status_code == 200
@@ -1611,30 +1621,30 @@ def test_homepage_member_filter_respects_job_visibility(
         filtered = anonymous.get("/?member=1001")
         hidden_filter = anonymous.get("/?member=1003")
 
-    assert 'id="member-filter"' in home.text
-    assert "成员甲 · SNH48 (1)" in home.text
-    assert "成员乙 · SNH48 (1)" in home.text
+    assert 'class="member-tabs"' in home.text
+    assert "成员甲" in home.text
+    assert "成员乙" in home.text
     assert "成员丙" not in home.text
     assert "成员丁" not in home.text
-    assert public_a.live_id in filtered.text
-    assert public_b.live_id not in filtered.text
-    assert 'value="1001"' in filtered.text
-    assert "selected" in filtered.text
-    assert public_a.live_id in hidden_filter.text
-    assert public_b.live_id in hidden_filter.text
-    assert private_c.live_id not in hidden_filter.text
+    assert "甲的公开直播" in filtered.text
+    assert "乙的公开直播" not in filtered.text
+    assert 'href="/?member=1001"' in filtered.text
+    assert 'aria-current="page"' in filtered.text
+    assert "甲的公开直播" in hidden_filter.text
+    assert "乙的公开直播" in hidden_filter.text
+    assert "丙的私有任务" not in hidden_filter.text
 
     with TestClient(app) as alice_client:
         login(alice_client, "alice", "alice has a secure password")
         alice_home = alice_client.get("/")
         alice_filtered = alice_client.get("/?member=1003")
 
-    assert "成员丙 · SNH48 (1)" in alice_home.text
+    assert "成员丙" in alice_home.text
     assert "成员丁" not in alice_home.text
-    assert private_c.live_id in alice_filtered.text
-    assert public_a.live_id not in alice_filtered.text
-    assert public_b.live_id not in alice_filtered.text
-    assert private_d.live_id not in alice_filtered.text
+    assert "丙的私有任务" in alice_filtered.text
+    assert "甲的公开直播" not in alice_filtered.text
+    assert "乙的公开直播" not in alice_filtered.text
+    assert "丁的私有任务" not in alice_filtered.text
 
 
 def test_user_cannot_read_another_users_job(settings, repository):

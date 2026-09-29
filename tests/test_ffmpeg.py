@@ -232,6 +232,17 @@ def test_cover_frame_command_seeks_and_matches_landscape_canvas(settings):
     assert command[-1] == "/tmp/cover.png"
 
 
+def test_preview_frame_command_extracts_a_scaled_jpeg(settings):
+    command = FFmpegRunner(settings).build_preview_frame_command(
+        MANIFEST_URL, Path("/tmp/preview.jpg"), 45_250
+    )
+
+    assert command[command.index("-ss") + 1] == "45.250"
+    assert command[command.index("-frames:v") + 1] == "1"
+    assert command[command.index("-vf") + 1] == "scale='min(960,iw)':-2"
+    assert command[-1] == "/tmp/preview.jpg"
+
+
 def test_cover_frame_command_uses_selected_landscape_theme(settings):
     runner = FFmpegRunner(settings)
 

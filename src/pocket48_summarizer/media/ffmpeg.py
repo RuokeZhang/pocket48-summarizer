@@ -207,6 +207,34 @@ class FFmpegRunner:
             str(output_path),
         ]
 
+    def build_preview_frame_command(
+        self, manifest_url: str, output_path: Path, timestamp_ms: int
+    ) -> list[str]:
+        validate_https_url(
+            manifest_url,
+            MEDIA_HOSTS,
+            code="invalid_media_url",
+            label="回放媒体",
+        )
+        if timestamp_ms < 0:
+            raise AppError("preview_timestamp_invalid", "预览截图时间无效", False)
+        return [
+            self.require_executable(),
+            "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-user_agent", "pocket48-summarizer/0.1",
+            "-rw_timeout", "30000000",
+            "-reconnect", "1", "-reconnect_streamed", "1",
+            "-reconnect_on_network_error", "1",
+            "-reconnect_on_http_error", "4xx,5xx",
+            "-reconnect_delay_max", "5",
+            "-headers", "Origin: https://h5.48.cn\r\nReferer: https://h5.48.cn/\r\n",
+            "-ss", f"{timestamp_ms / 1000:.3f}",
+            "-i", manifest_url,
+            "-frames:v", "1", "-an",
+            "-vf", "scale='min(960,iw)':-2",
+            "-q:v", "3", "-y", str(output_path),
+        ]
+
     def build_clip_command(
         self,
         manifest_url: str,
@@ -1099,6 +1127,33 @@ class FFmpegRunner:
                     "ai_cover_source_missing",
                     "FFmpeg 未生成 AI 封面参考画面",
                     True,
+                )
+            temporary_path.replace(output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return output_path
+
+    async def extract_preview_frame(
+        self, manifest_url: str, output_path: Path, timestamp_ms: int
+    ) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = output_path.with_suffix(".part.jpg")
+        temporary_path.unlink(missing_ok=True)
+        try:
+            await self._run_command(
+                self.build_preview_frame_command(
+                    manifest_url, temporary_path, timestamp_ms
+                ),
+                timeout_seconds=120,
+                heartbeat=None,
+                error_code="preview_frame_failed",
+                error_message="提取直播预览截图失败",
+                redact_value=manifest_url,
+            )
+            if not temporary_path.is_file() or temporary_path.stat().st_size == 0:
+                raise AppError(
+                    "preview_frame_missing", "FFmpeg 未生成直播预览截图", True
                 )
             temporary_path.replace(output_path)
         except BaseException:

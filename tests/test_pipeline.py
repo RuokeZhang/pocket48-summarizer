@@ -36,6 +36,11 @@ class FakeHLS:
 
 
 class FakeFFmpeg:
+    async def extract_preview_frame(self, _url, output_path, _timestamp_ms):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"fake-preview")
+        return output_path
+
     async def extract_audio(self, _url, output_path, _duration):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake-audio")

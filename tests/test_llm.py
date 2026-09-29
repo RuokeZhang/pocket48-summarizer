@@ -63,6 +63,7 @@ async def test_sends_strict_json_schema_and_output_limit(settings):
     assert response_format["json_schema"]["name"] == "FinalSummary"
     assert set(response_format["json_schema"]["schema"]["required"]) == {
         "overview",
+        "card_summary",
         "timeline",
         "topics",
         "highlights",

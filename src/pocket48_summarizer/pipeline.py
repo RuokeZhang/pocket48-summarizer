@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from .clients.dashscope import DashScopeClient
@@ -42,6 +43,7 @@ class ReplayPipeline:
         self.dashscope = dashscope
         self.summarizer = summarizer
         self.vocabulary = vocabulary
+        self.logger = logging.getLogger(__name__)
 
     async def run(self, job_id: str) -> None:
         job = self._require_job(job_id)
@@ -52,6 +54,28 @@ class ReplayPipeline:
             metadata = await self.pocket48.resolve_replay(job.live_id)
             self.repository.save_replay_metadata(job_id, metadata)
             job = self._require_job(job_id)
+
+        preview_path = self.settings.preview_image_path(job_id)
+        if not preview_path.is_file() and job.media_url:
+            try:
+                if not job.duration_ms:
+                    manifest = await self.hls.inspect(job.media_url)
+                    self.repository.set_media_details(
+                        job_id, manifest.url, manifest.duration_ms
+                    )
+                    job = self._require_job(job_id)
+                timestamp_ms = max(0, min(
+                    round((job.duration_ms or 0) * 0.4),
+                    max(0, (job.duration_ms or 0) - 10_000),
+                ))
+                await self.ffmpeg.extract_preview_frame(
+                    job.media_url, preview_path, timestamp_ms
+                )
+            except AppError as exc:
+                self.logger.warning(
+                    "Replay preview frame was not generated",
+                    extra={"job_id": job_id, "error_code": exc.code},
+                )
 
         if not job.danmaku_loaded_at:
             self.repository.set_stage(
