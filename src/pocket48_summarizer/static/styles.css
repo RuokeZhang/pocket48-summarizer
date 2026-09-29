@@ -998,7 +998,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .member-tab.is-active::after { background: #ff6f9d; }
 .member-tab.is-active span { color: #c58da2; }
-.job-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .job-card { display: flex; flex-direction: column; overflow: hidden; padding: 0 0 20px; text-decoration: none; transition: transform .18s ease, border-color .18s ease; }
 .job-card:hover { transform: translateY(-3px); border-color: #625b82; }
 .job-card-image { position: relative; flex: none; min-height: 0; aspect-ratio: 4 / 3; overflow: hidden; background: linear-gradient(135deg, #332038, #23203f); }

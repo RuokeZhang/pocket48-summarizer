@@ -36,6 +36,7 @@ from pocket48_summarizer.models import (
 from pocket48_summarizer.routes import (
     CreateClipExportRequest,
     format_china_datetime,
+    format_replay_time_range,
     home_card_summary,
 )
 from pocket48_summarizer.services import ApplicationServices
@@ -287,6 +288,21 @@ def test_formats_replay_time_in_china_timezone():
     assert (
         format_china_datetime("2026-08-22T10:57:06+00:00")
         == "2026-08-22 18:57"
+    )
+
+
+def test_formats_replay_time_range_with_same_and_next_day_endings():
+    assert (
+        format_replay_time_range(
+            "2026-08-22T10:57:06+00:00", 3_600_000
+        )
+        == "2026-08-22 18:57–19:57"
+    )
+    assert (
+        format_replay_time_range(
+            "2026-08-22T15:30:00+00:00", 7_200_000
+        )
+        == "2026-08-22 23:30–2026-08-23 01:30"
     )
 
 
@@ -1522,7 +1538,7 @@ def test_completed_result_is_public_but_raw_asr_requires_login(
         )
 
     assert f'/jobs/{job_id}' in index.text
-    assert 'data-i18n="liveTime">直播时间</span>' in index.text
+    assert 'data-i18n="liveTime"' not in index.text
     assert "2026-08-22 18:57" in index.text
     assert page.status_code == 200
     assert summary.status_code == 200
@@ -1893,7 +1909,7 @@ def test_playback_track_is_public_and_user_can_request_translation(
     assert '<p class="eyebrow">Replay player</p>' in page.text
     assert '<p class="eyebrow">Synchronized replay</p>' not in page.text
     assert "i18n.js?v=20260904-26" in page.text
-    assert "styles.css?v=20260929-27" in page.text
+    assert "styles.css?v=20260929-28" in page.text
     assert "app.js?v=20260904-26" in page.text
     assert 'aria-keyshortcuts="Space"' in page.text
     assert 'id="danmaku-opacity"' not in page.text

@@ -25,7 +25,7 @@ from pydantic import (
 )
 
 from .auth import AuthContext
-from .datetimes import format_china_datetime as format_china_time
+from .datetimes import china_datetime, format_china_datetime as format_china_time
 from .errors import AppError
 from .media.ai_covers import (
     AI_COVER_PROMPT_MAX_LENGTH,
@@ -237,6 +237,24 @@ class RegenerateAICoverRequest(BaseModel):
 
 def format_china_datetime(value: str | None) -> str:
     return format_china_time(value, fallback="时间未知")
+
+
+def format_replay_time_range(
+    started_at: str | None, duration_ms: int | None
+) -> str:
+    started = china_datetime(started_at)
+    if started is None:
+        return "时间未知"
+    start_text = started.strftime("%Y-%m-%d %H:%M")
+    if not duration_ms or duration_ms <= 0:
+        return start_text
+    ended = started + timedelta(milliseconds=duration_ms)
+    end_text = (
+        ended.strftime("%H:%M")
+        if ended.date() == started.date()
+        else ended.strftime("%Y-%m-%d %H:%M")
+    )
+    return f"{start_text}–{end_text}"
 
 
 def require_auth(request: Request) -> AuthContext:
@@ -1384,6 +1402,7 @@ async def index(request: Request, member: str | None = None) -> Response:
                 in settings.unlimited_job_username_set
             ),
             "format_china_datetime": format_china_datetime,
+            "format_replay_time_range": format_replay_time_range,
             "home_card_summary": home_card_summary,
             "preview_image_exists": lambda job: settings.preview_image_path(
                 job.id
