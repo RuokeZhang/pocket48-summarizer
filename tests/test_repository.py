@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from pocket48_summarizer.models import ClipRange, JobStage, JobStatus
+from pocket48_summarizer.repository import JobRepository
 
 
 def test_job_claim_failure_and_retry(repository):
@@ -19,6 +20,67 @@ def test_job_claim_failure_and_retry(repository):
     retried = repository.retry_job(claimed.id)
     assert retried.status == JobStatus.QUEUED
     assert retried.retry_count == 1
+
+
+def test_failed_jobs_retry_with_backoff_and_resume_after_restart(
+    repository, monkeypatch
+):
+    current_time = datetime(2026, 10, 1, tzinfo=UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current_time
+
+    monkeypatch.setattr("pocket48_summarizer.repository.datetime", Clock)
+    job, _ = repository.create_or_get_job("https://example.com/123456", "123456")
+    repository.claim_next_job("worker", 120)
+    repository.set_stage(job.id, JobStage.SUMMARIZING_CHUNKS, 70, "总结中")
+    with repository.database.connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET asr_raw_json = ?, dashscope_task_id = ? WHERE id = ?",
+            ('{"transcripts": []}', "existing-task", job.id),
+        )
+
+    for retry_count, delay_minutes in enumerate((5, 15, 60), start=1):
+        repository.mark_failed(job.id, "llm_request_failed", "连接超时", True)
+        current_time += timedelta(minutes=delay_minutes, seconds=-1)
+        repository = JobRepository(repository.database)
+        assert repository.claim_next_job("worker", 120) is None
+        current_time += timedelta(seconds=1)
+        claimed = repository.claim_next_job("worker", 120)
+        assert claimed is not None
+        assert claimed.retry_count == retry_count
+        assert claimed.status == JobStatus.RUNNING
+        assert claimed.stage == JobStage.SUMMARIZING_CHUNKS
+        assert claimed.asr_raw_json == '{"transcripts": []}'
+        assert claimed.dashscope_task_id == "existing-task"
+        assert claimed.error_code is None
+        assert repository.claim_next_job("other-worker", 120) is None
+
+    repository.mark_failed(job.id, "llm_request_failed", "连接超时", True)
+    current_time += timedelta(days=1)
+    assert repository.claim_next_job("worker", 120) is None
+    assert repository.get_job(job.id).status == JobStatus.FAILED
+
+
+def test_automatic_retry_prioritizes_new_jobs_and_skips_permanent_errors(repository):
+    failed_job, _ = repository.create_or_get_job("https://example.com/123456", "123456")
+    permanent_job, _ = repository.create_or_get_job("https://example.com/234567", "234567")
+    repository.mark_failed(failed_job.id, "temporary", "暂时失败", True)
+    repository.mark_failed(permanent_job.id, "configuration_error", "配置错误", False)
+    with repository.database.connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET updated_at = ? WHERE status = ?",
+            ((datetime.now(UTC) - timedelta(days=1)).isoformat(), JobStatus.FAILED),
+        )
+    queued_job, _ = repository.create_or_get_job("https://example.com/345678", "345678")
+    claimed = repository.claim_next_job("worker", 120)
+    assert claimed.id == queued_job.id
+    assert claimed.retry_count == 0
+    assert repository.claim_next_job("other-worker", 120).id == failed_job.id
+    assert repository.claim_next_job("third-worker", 120) is None
+    assert repository.get_job(permanent_job.id).status == JobStatus.FAILED
 
 
 def test_recovers_expired_worker_lease(repository):

@@ -3218,13 +3218,26 @@ class JobRepository:
                 """
                 SELECT * FROM jobs
                 WHERE status = ?
-                ORDER BY created_at
+                   OR (status = ? AND error_retryable = 1 AND (
+                       (retry_count = 0 AND updated_at <= ?)
+                       OR (retry_count = 1 AND updated_at <= ?)
+                       OR (retry_count = 2 AND updated_at <= ?)
+                   ))
+                ORDER BY CASE WHEN status = ? THEN 0 ELSE 1 END, created_at
                 LIMIT 1
                 """,
-                (JobStatus.QUEUED,),
+                (
+                    JobStatus.QUEUED,
+                    JobStatus.FAILED,
+                    (now - timedelta(minutes=5)).isoformat(),
+                    (now - timedelta(minutes=15)).isoformat(),
+                    (now - timedelta(minutes=60)).isoformat(),
+                    JobStatus.QUEUED,
+                ),
             ).fetchone()
             if row is None:
                 return None
+            automatic_retry = row["status"] == JobStatus.FAILED
             stage = (
                 JobStage.RESOLVING
                 if row["stage"] == JobStage.QUEUED
@@ -3236,7 +3249,8 @@ class JobRepository:
                 SET status = ?, stage = ?, worker_id = ?,
                     lease_expires_at = ?, started_at = COALESCE(started_at, ?),
                     error_code = NULL, error_message = NULL,
-                    error_retryable = 0, updated_at = ?
+                    error_retryable = 0, updated_at = ?,
+                    retry_count = retry_count + ?
                 WHERE id = ? AND status = ?
                 """,
                 (
@@ -3246,10 +3260,20 @@ class JobRepository:
                     lease,
                     now_text,
                     now_text,
+                    int(automatic_retry),
                     row["id"],
-                    JobStatus.QUEUED,
+                    row["status"],
                 ),
             )
+            if automatic_retry:
+                self._event(
+                    connection,
+                    row["id"],
+                    stage,
+                    "info",
+                    f"暂时性错误后自动重试（第 {row['retry_count'] + 1}/3 次）",
+                    now_text,
+                )
             claimed = connection.execute(
                 "SELECT * FROM jobs WHERE id = ?", (row["id"],)
             ).fetchone()
