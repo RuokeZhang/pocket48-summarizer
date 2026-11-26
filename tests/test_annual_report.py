@@ -14,6 +14,7 @@ from pocket48_summarizer.annual_report import (
     pixelate_avatar,
 )
 from pocket48_summarizer.annual_report_stats import (
+    REPORT_VERSION,
     Replay,
     RoomMessage,
     build_alias_windows,
@@ -245,7 +246,7 @@ def test_report_page_and_api(settings, repository, reports):
         assert 'id="report-member-search"' in page.text
         assert 'id="report-sample"' in page.text
         sample = client.get("/static/report-sample.json").json()
-        assert sample["version"] == 1 and sample["totals"]["danmaku"] > 0
+        assert sample["version"] == REPORT_VERSION and sample["totals"]["danmaku"] > 0
         assert 'href="/report"' in client.get("/").text
         unknown = client.post("/api/reports", json={"uid": "367554", "member_pocket_id": "1", "scope": "2026"})
         assert unknown.status_code == 400
