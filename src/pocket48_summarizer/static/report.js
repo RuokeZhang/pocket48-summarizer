@@ -191,7 +191,7 @@
     }));
     let cursor = y + avatarsBottom + 24;
     comboLines.forEach((line) => { text(p, line, W / 2, cursor, size, C.light, "center"); cursor += size * 1.25; });
-    text(p, `${fmt(total)}句话，说给${member}和大家`, W / 2, cursor + 12, 36, C.pink, "center");
+    text(p, `${fmt(total)}句话，说给${member}`, W / 2, cursor + 12, 36, C.pink, "center");
     text(p, `口袋48年度报告 · ${scopeLabel(report.scope)}`, W / 2, cursor + 72, 24, C.lightMuted, "center");
     return Math.ceil(top + height);
   };
@@ -200,9 +200,9 @@
     const t = report.totals;
     const tiles = [
       [fmt(t.danmaku), "句直播弹幕", C.danmaku],
-      [fmt(t.room), "句房间留言", C.room],
+      [fmt(t.room), `句在${report.member_name}房间的留言`, C.room],
       [t.lives ? `${t.attended}/${t.lives}` : "—", `场${report.member_name}直播里有你`, null],
-      [`${t.active_days}`, `天有发言（共${t.total_days}天）`, null]
+      [`${t.active_days}`, `天和她说过话（共${t.total_days}天）`, null]
     ];
     const height = 2 * 120 + 28 + 68;
     background(p, y, height, C.navy);
@@ -510,7 +510,7 @@
     section(false, (q, sy) => {
       let yy = chapter(q, sy, false, "CH.1", "CHAT LOG", "每个月，你说了多少话？",
         peak && peak.room + peak.danmaku ? `最热闹的是${peak.month.slice(0, 4)}年${Number(peak.month.slice(5))}月：${peak.room + peak.danmaku}句` : "这段时间还没有发言",
-        `房间留言${fmt(t.room)}句，直播弹幕${fmt(t.danmaku)}句。`);
+        `在${report.member_name}房间留言${fmt(t.room)}句，在她的直播里发弹幕${fmt(t.danmaku)}句。`);
       return monthlyChart(q, yy + 24, report);
     });
     if (t.lives && t.attended) {
@@ -570,7 +570,7 @@
     if (report.other_rooms.length || report.small_rooms.rooms) {
       section(true, (q, sy) => {
         const visited = report.other_rooms.reduce((sum, room) => sum + room.count, 0) + report.small_rooms.messages;
-        let yy = chapter(q, sy, true, "CH.9", "VISITING", "在别人的房间", `串门${visited}句`, "只统计房间留言。");
+        let yy = chapter(q, sy, true, "CH.9", "VISITING", "在别人的房间", `串门${visited}句`, `${report.member_name}以外的成员房间留言，不计入前面的统计。`);
         return roomsSection(q, yy + 16, report);
       });
     }

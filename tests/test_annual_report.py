@@ -116,8 +116,8 @@ def build_sample_report(scope="2025-2026"):
 def test_build_report_counts_spoken_messages_and_attendance():
     report = build_sample_report()
     assert report["totals"] == {
-        "room": 9, "danmaku": 4, "lives": 3, "attended": 2,
-        "active_days": 9, "total_days": 485,
+        "room": 5, "danmaku": 4, "lives": 3, "attended": 2,
+        "active_days": 5, "total_days": 485,
     }
     january = report["monthly"][0]
     assert january == {"month": "2025-01", "room": 3, "danmaku": 3, "lives": 2, "attended": 1}
@@ -341,3 +341,20 @@ def test_public_navigation_hides_glossary(settings, repository):
         home = client.get("/")
     assert 'href="/" data-i18n="summaryNav"' in home.text
     assert 'href="/glossary"' not in home.text
+
+
+def test_other_rooms_do_not_count_towards_the_chosen_member():
+    room_messages = [
+        room(ms(2025, 2, 1), "在杨晔房间说话"),
+        room(ms(2025, 2, 2), "也是杨晔房间"),
+        room(ms(2025, 3, 1), "刘力菲房间的一句", owner="刘力菲"),
+    ]
+    report = build_report(
+        member_name="刘力菲", scope="2025-2026", data_end=date(2026, 11, 26),
+        archive_nicknames=[], room_messages=room_messages, replays=[], extra_nicknames=[],
+    )
+    assert report["totals"]["room"] == 1
+    assert report["totals"]["active_days"] == 1
+    assert report["other_rooms"] == []
+    assert report["small_rooms"] == {"rooms": 1, "messages": 2}
+    assert sum(month["room"] for month in report["monthly"] if month["month"].startswith("2026")) == 0

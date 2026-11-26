@@ -25,6 +25,7 @@ from pathlib import Path
 from PIL import Image
 
 from .annual_report_stats import (
+    REPORT_VERSION,
     Replay,
     RoomMessage,
     build_report,
@@ -130,7 +131,7 @@ class AnnualReportRepository:
         unlimited: bool = False,
     ) -> AnnualReportJob:
         cache_key = self._hash(
-            json.dumps([uid, member.pocket_id, scope, sorted(extra_nicknames)])
+            json.dumps([REPORT_VERSION, uid, member.pocket_id, scope, sorted(extra_nicknames)])
         )
         requester_hash = self._hash(f"requester:{requester}")
         now = _now()

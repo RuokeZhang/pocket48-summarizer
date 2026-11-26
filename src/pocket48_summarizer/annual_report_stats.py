@@ -33,6 +33,8 @@ DANMAKU_EVENT_RE = re.compile(
     r"为主播点了赞|给主播点了赞|\[礼物\])"
 )
 SPOKEN_ROOM_TYPES = {"TEXT", "REPLY"}
+# Bump when the statistics change meaning, so cached results are not reused.
+REPORT_VERSION = 2
 
 
 @dataclass(slots=True)
@@ -191,10 +193,16 @@ def build_report(
     scoped_replays = [replay for replay in replays if in_scope(replay.started_at_ms)]
     matched = match_danmaku(scoped_replays, windows)
 
+    # The poster is about one fan and one member: only her room and her
+    # lives count towards the main numbers. Other rooms are listed separately.
     spoken: list[dict] = []
+    other_rooms: Counter = Counter()
     for message in room_messages:
         text = room_message_text(message)
         if text is None or not in_scope(message.timestamp_ms):
+            continue
+        if message.room_owner != member_name:
+            other_rooms[message.room_owner] += 1
             continue
         spoken.append({"ms": message.timestamp_ms, "kind": "room", "room": message.room_owner,
                        "nickname": message.nickname, "text": text})
@@ -294,7 +302,6 @@ def build_report(
         if entry["name"]
     ]
 
-    other_rooms = Counter(item["room"] for item in spoken if item["kind"] == "room" and item["room"] != member_name)
     listed_rooms = [{"name": name, "count": count} for name, count in other_rooms.most_common() if count >= 3]
     small_rooms = [count for count in other_rooms.values() if count < 3]
 
@@ -303,7 +310,7 @@ def build_report(
     display_name = nickname_list[-1]["name"] if nickname_list else (
         sorted(archive_nicknames, key=lambda item: item[1])[-1][0] if archive_nicknames else "")
     return {
-        "version": 1,
+        "version": REPORT_VERSION,
         "member_name": member_name,
         "scope": scope,
         "years": list(years),
