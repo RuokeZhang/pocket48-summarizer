@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -9,6 +11,7 @@ from pocket48_summarizer.annual_report import (
     AnnualReportRepository,
     AnnualReportWorker,
     ReportMember,
+    pixelate_avatar,
 )
 from pocket48_summarizer.annual_report_stats import (
     Replay,
@@ -20,14 +23,22 @@ from pocket48_summarizer.annual_report_stats import (
 )
 from pocket48_summarizer.app import create_app
 from pocket48_summarizer.auth import AuthRepository, hash_password
-from pocket48_summarizer.clients.msg48 import ArchiveMessage, ArchiveNickname
+from pocket48_summarizer.clients.msg48 import ArchiveMessage, ArchiveNickname, Msg48Client
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.models import ReplayMetadata
 from pocket48_summarizer.parsing.lrc import parse_lrc_timestamp
 from pocket48_summarizer.services import ApplicationServices
 
 CHINA = ZoneInfo("Asia/Shanghai")
-MEMBER = ReportMember("407126", "杨晔", "SNH48", "TEAM X", True, "YangYe", "社长 二毛 日华")
+MEMBER = ReportMember("407126", "杨晔", "SNH48", "TEAM X", True, "YangYe", "社长 二毛 日华",
+                      "https://www.snh48.com/images/member/zp_10247.jpg")
+
+
+def png_bytes(width=100, height=60):
+    from PIL import Image
+    output = io.BytesIO()
+    Image.new("RGB", (width, height), (200, 80, 120)).save(output, format="PNG")
+    return output.getvalue()
 
 
 def ms(year, month, day, hour=20, minute=0):
@@ -171,7 +182,11 @@ class FakeMsg48:
 
     async def user_messages(self, uid):
         return [ArchiveMessage(user_id=int(uid), nickname="小明", timestamp=ms(2026, 1, 2), msg_type="TEXT",
-                               content="你好呀", room_info={"ownerName": "杨晔"})], False
+                               content="你好呀", avatar="/avatar/2026/0101/me.jpg",
+                               room_info={"ownerName": "杨晔"})], False
+
+    async def fetch_avatar(self, url):
+        return png_bytes()
 
     async def member_index(self):
         return []
@@ -212,6 +227,8 @@ async def test_worker_pipeline_generates_and_caches_danmaku(settings, reports):
     assert result["totals"]["danmaku"] == 1
     assert result["totals"]["attended"] == 1
     assert result["top_lives"][0]["title"] == "开播啦"
+    assert result["fan_avatar"].startswith("data:image/png;base64,")
+    assert result["member_avatar"].startswith("data:image/png;base64,")
     second = reports.enqueue(uid="1", member=MEMBER, scope="2026", extra_nicknames=[], requester="y")
     await worker._process(reports.claim_next(worker.worker_id, 60))
     assert reports.get(second.id).status == "completed"
@@ -301,3 +318,26 @@ async def test_member_list_without_search_fields_is_refreshed_from_snapshot(sett
     yang_ye = reports.get_member("407126")
     assert yang_ye.pinyin == "YangYe"
     assert "二毛" in yang_ye.aliases
+
+
+def test_avatars_are_shrunk_to_small_pixel_squares():
+    from PIL import Image
+    data_url = pixelate_avatar(png_bytes(120, 80))
+    image = Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1])))
+    assert image.size == (32, 32)
+
+
+async def test_avatar_download_only_allows_official_hosts(settings):
+    client = Msg48Client(settings)
+    with pytest.raises(AppError) as error:
+        await client.fetch_avatar("https://evil.example/avatar.png")
+    assert error.value.code == "avatar_host_not_allowed"
+    await client.close()
+
+
+def test_public_navigation_hides_glossary(settings, repository):
+    app = create_app(settings.model_copy(update={"auth_required": True}), ApplicationServices(repository=repository))
+    with TestClient(app) as client:
+        home = client.get("/")
+    assert 'href="/" data-i18n="summaryNav"' in home.text
+    assert 'href="/glossary"' not in home.text

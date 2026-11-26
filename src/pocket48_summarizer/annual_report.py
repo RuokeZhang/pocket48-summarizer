@@ -9,7 +9,9 @@ renders images and never calls a model.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import io
 import hmac
 import json
 import logging
@@ -19,6 +21,8 @@ import zlib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+from PIL import Image
 
 from .annual_report_stats import (
     Replay,
@@ -67,11 +71,12 @@ class ReportMember:
     in_group: bool
     pinyin: str = ""
     aliases: str = ""
+    avatar: str = ""
 
     @classmethod
     def from_index(cls, entry: MemberIndexEntry) -> "ReportMember":
         return cls(str(entry.pocket_id), entry.name, entry.group_name, entry.team_name,
-                   entry.in_group, entry.pinyin, entry.aliases)
+                   entry.in_group, entry.pinyin, entry.aliases, entry.avatar)
 
     @property
     def search_text(self) -> str:
@@ -310,11 +315,12 @@ class AnnualReportRepository:
             connection.executemany(
                 """
                 INSERT INTO annual_report_member_index (
-                    pocket_id, name, group_name, team_name, in_group, pinyin, aliases, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    pocket_id, name, group_name, team_name, in_group, pinyin, aliases, avatar, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [(member.pocket_id, member.name, member.group_name, member.team_name,
-                  int(member.in_group), member.pinyin, member.aliases, now) for member in members],
+                  int(member.in_group), member.pinyin, member.aliases, member.avatar, now)
+                 for member in members],
             )
 
     def list_members(self) -> list[ReportMember]:
@@ -327,7 +333,7 @@ class AnnualReportRepository:
             ).fetchall()
         return [
             ReportMember(row["pocket_id"], row["name"], row["group_name"], row["team_name"],
-                         bool(row["in_group"]), row["pinyin"], row["aliases"])
+                         bool(row["in_group"]), row["pinyin"], row["aliases"], row["avatar"])
             for row in rows
         ]
 
@@ -347,6 +353,24 @@ class AnnualReportRepository:
                 "INSERT OR REPLACE INTO annual_report_state (key, value, updated_at) VALUES (?, ?, ?)",
                 (key, value, _now().isoformat()),
             )
+
+
+def pixelate_avatar(image_bytes: bytes, size: int = 32) -> str:
+    """Shrink a profile picture to a small square PNG data URL.
+
+    Embedding the image keeps the browser canvas exportable (remote images
+    would taint it) and the tiny size matches the pixel-art poster.
+    """
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        if image.width * image.height > 25_000_000:
+            raise ValueError("avatar too large")
+        image = image.convert("RGB")
+        side = min(image.size)
+        left, top = (image.width - side) // 2, (image.height - side) // 2
+        square = image.crop((left, top, left + side, top + side)).resize((size, size), Image.Resampling.BOX)
+        output = io.BytesIO()
+        square.save(output, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode()
 
 
 def load_member_snapshot() -> list[ReportMember]:
@@ -378,7 +402,7 @@ class AnnualReportWorker:
         if self._task is None:
             await asyncio.to_thread(self.repository.recover_expired)
             members = await asyncio.to_thread(self.repository.list_members)
-            if not members or not any(member.pinyin for member in members):
+            if not members or not any(member.avatar for member in members):
                 await asyncio.to_thread(self.repository.replace_member_index, load_member_snapshot())
             self._task = asyncio.create_task(self._run(), name="pocket48-annual-report-worker")
 
@@ -492,8 +516,21 @@ class AnnualReportWorker:
             extra_nicknames=job.extra_nicknames,
         )
         result["notes"] = {"archive_truncated": truncated, "unreadable_lives": failed}
+        latest_avatar = next((message.avatar for message in reversed(messages) if message.avatar), "")
+        member = await asyncio.to_thread(self.repository.get_member, job.member_pocket_id)
+        result["fan_avatar"] = await self._pixel_avatar(latest_avatar)
+        result["member_avatar"] = await self._pixel_avatar(member.avatar if member else "")
         result["generated_at"] = _now().isoformat()
         return result
+
+    async def _pixel_avatar(self, url: str) -> str | None:
+        if not url:
+            return None
+        try:
+            return await asyncio.to_thread(pixelate_avatar, await self.msg48.fetch_avatar(url))
+        except Exception as exc:
+            self.logger.info("Avatar skipped: %s", getattr(exc, "code", type(exc).__name__))
+            return None
 
     async def _member_replays(self, member_pocket_id: str) -> list[tuple[str, int]]:
         key = f"lives:{member_pocket_id}"

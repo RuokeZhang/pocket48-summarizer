@@ -149,24 +149,50 @@
     return y;
   };
 
+  const AVATAR = 96;
+  const avatarFrame = (p, image, cx, y, label) => {
+    const x = Math.round(cx - AVATAR / 2);
+    frame(p, x, y, AVATAR, AVATAR, C.navyPanel, C.pink);
+    if (p.draw && image) {
+      p.ctx.imageSmoothingEnabled = false;
+      p.ctx.drawImage(image, x, y, AVATAR, AVATAR);
+    } else {
+      // Pixel silhouette when the profile picture is missing.
+      rect(p, x + 36, y + 18, 24, 24, C.lightMuted);
+      rect(p, x + 30, y + 24, 36, 12, C.lightMuted);
+      rect(p, x + 18, y + 54, 60, 30, C.lightMuted);
+      rect(p, x + 24, y + 48, 48, 6, C.lightMuted);
+    }
+    const lines = wrap(p, label, 260, 24).slice(0, 2);
+    lines.forEach((line, index) => text(p, line, cx, y + AVATAR + 16 + index * 32, 24, C.light, "center"));
+    return y + AVATAR + 16 + lines.length * 32;
+  };
+
   const header = (p, y, report) => {
     const top = y;
     const total = report.totals.room + report.totals.danmaku;
-    const name = report.display_name || "口袋48的你";
-    let size = 72;
-    while (size > 36 && measure(p, name, size) > CW) size -= 12;
-    const nameLines = wrap(p, name, CW, size);
-    const height = 24 + 36 + 24 + nameLines.length * size * 1.15 + 12 + 48 + 12 + 36 + 16;
+    const fan = report.display_name || "口袋48的你";
+    const member = report.member_name;
+    const combo = `${fan} × ${member}`;
+    let size = 48;
+    while (size > 24 && measure(p, combo, size) > CW) size -= 12;
+    const comboLines = wrap(p, combo, CW, size);
+    const fanLines = Math.min(2, wrap(p, fan, 260, 24).length);
+    const avatarsBottom = 84 + AVATAR + 16 + fanLines * 32;
+    const height = avatarsBottom + 24 + comboLines.length * size * 1.25 + 12 + 48 + 48 + 24;
     background(p, top, height, C.navy);
-    y += 24;
-    text(p, "POCKET48 · 年度报告", PAD, y, 24, C.lightMuted);
-    text(p, scopeLabel(report.scope), W - PAD, y, 24, C.lightMuted, "right");
-    y += 60;
-    nameLines.forEach((line, index) => text(p, line, PAD, y + index * size * 1.15, size, C.light));
-    y += nameLines.length * size * 1.15 + 12;
-    text(p, `${fmt(total)}句话，说给${report.member_name}和大家`, PAD, y, 36, C.pink);
-    y += 60;
-    text(p, `口袋48年度报告 · ${scopeLabel(report.scope)}`, PAD, y, 24, C.lightMuted);
+    text(p, "POCKET48 · 年度报告", PAD, y + 24, 24, C.lightMuted);
+    text(p, scopeLabel(report.scope), W - PAD, y + 24, 24, C.lightMuted, "right");
+    const avatarTop = y + 84;
+    avatarFrame(p, p.images && p.images.fan, W / 2 - 150, avatarTop, fan);
+    avatarFrame(p, p.images && p.images.member, W / 2 + 150, avatarTop, member);
+    HEART.forEach((row, ry) => Array.from(row).forEach((char, rx) => {
+      if (char !== ".") rect(p, W / 2 - 21 + rx * 6, avatarTop + 30 + ry * 6, 6, 6, C.accent);
+    }));
+    let cursor = y + avatarsBottom + 24;
+    comboLines.forEach((line) => { text(p, line, W / 2, cursor, size, C.light, "center"); cursor += size * 1.25; });
+    text(p, `${fmt(total)}句话，说给${member}和大家`, W / 2, cursor + 12, 36, C.pink, "center");
+    text(p, `口袋48年度报告 · ${scopeLabel(report.scope)}`, W / 2, cursor + 72, 24, C.lightMuted, "center");
     return Math.ceil(top + height);
   };
 
@@ -560,16 +586,25 @@
     document.fonts.add(face);
   };
 
+  const loadImage = (src) => new Promise((resolve) => {
+    if (!src) { resolve(null); return; }
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+
   const renderPoster = async (canvas, report) => {
     await loadFont();
+    const images = { fan: await loadImage(report.fan_avatar), member: await loadImage(report.member_avatar) };
     const measureCanvas = document.createElement("canvas");
-    const height = Math.ceil(layout({ ctx: measureCanvas.getContext("2d"), draw: false }, report));
+    const height = Math.ceil(layout({ ctx: measureCanvas.getContext("2d"), draw: false, images }, report));
     canvas.width = W * SCALE;
     canvas.height = height * SCALE;
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.scale(SCALE, SCALE);
-    layout({ ctx, draw: true }, report);
+    layout({ ctx, draw: true, images }, report);
   };
 
   // ---------- page wiring ----------

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -15,6 +16,11 @@ ARCHIVE_HEADERS = {
     "User-Agent": "pocket48-summarizer/0.1",
 }
 SEARCH_LIMIT = 10_000
+AVATAR_HOSTS = {
+    "source.48.cn", "www.snh48.com", "www.bej48.com", "www.gnz48.com",
+    "www.shy48.com", "www.ckg48.com",
+}
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
 
 
 class ArchiveNickname(BaseModel):
@@ -38,7 +44,13 @@ class ArchiveMessage(BaseModel):
     timestamp_ms: int = Field(alias="timestamp", ge=0)
     msg_type: str = Field(default="", max_length=64)
     content: str = Field(default="", max_length=20_000)
+    avatar: str = Field(default="", max_length=300)
     room_info: ArchiveRoomInfo = Field(default_factory=ArchiveRoomInfo)
+
+    @field_validator("avatar", mode="before")
+    @classmethod
+    def blank_avatar(cls, value):
+        return "" if value is None else value
 
 
 class MemberIndexEntry(BaseModel):
@@ -51,8 +63,9 @@ class MemberIndexEntry(BaseModel):
     in_group: bool = Field(default=True, alias="isInGroup")
     pinyin: str = Field(default="", max_length=64)
     aliases: str = Field(default="", alias="nickname", max_length=200)
+    avatar: str = Field(default="", max_length=300)
 
-    @field_validator("group_name", "team_name", "pinyin", "aliases", mode="before")
+    @field_validator("group_name", "team_name", "pinyin", "aliases", "avatar", mode="before")
     @classmethod
     def blank_when_missing(cls, value):
         return "" if value is None else value
@@ -163,6 +176,24 @@ class Msg48Client:
                 "member_index_invalid", "成员名单返回格式异常", True
             )
         return list(entries.values())
+
+    async def fetch_avatar(self, url: str) -> bytes:
+        """Download a profile picture from an official 48 Group image host."""
+        if url.startswith("/"):
+            url = "https://source.48.cn" + url
+        parsed = urlparse(url)
+        if parsed.scheme not in {"https", "http"} or parsed.hostname not in AVATAR_HOSTS:
+            raise ExternalServiceError("avatar_host_not_allowed", "头像地址不在允许范围内", False)
+        url = parsed._replace(scheme="https").geturl()
+        async with self.client.stream("GET", url, headers={"User-Agent": ARCHIVE_HEADERS["User-Agent"]}) as response:
+            if response.status_code != 200:
+                raise ExternalServiceError("avatar_download_failed", "头像下载失败", True)
+            content = bytearray()
+            async for chunk in response.aiter_bytes():
+                content.extend(chunk)
+                if len(content) > MAX_AVATAR_BYTES:
+                    raise ExternalServiceError("avatar_too_large", "头像文件过大", False)
+        return bytes(content)
 
     async def _json(
         self, method: str, url: str, limit: int, *, json_body: dict | None = None
