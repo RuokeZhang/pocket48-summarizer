@@ -377,10 +377,13 @@ def test_gifts_count_live_and_room_gifts_for_the_chosen_member_only():
         member_name="杨晔", scope="2025-2026", data_end=date(2026, 11, 26),
         archive_nicknames=[], room_messages=room_messages, replays=replays, extra_nicknames=[],
     )
-    assert report["gifts"] == {
+    gifts = report["gifts"]
+    assert {key: gifts[key] for key in ("room_times", "room_items", "live_times", "live_items", "top")} == {
         "room_times": 1, "room_items": 2, "live_times": 2, "live_items": 100,
         "top": [{"name": "荧光棒", "count": 100}, {"name": "高级马卡龙", "count": 2}],
     }
+    march = next(month for month in gifts["monthly"] if month["month"] == "2025-03")
+    assert march["items"] == 102
     assert report["totals"]["danmaku"] == 1
 
 
@@ -389,7 +392,29 @@ def test_share_link_shows_only_the_poster(settings, repository, reports):
     with TestClient(app) as client:
         page = client.get("/report?job=" + "a" * 32)
     assert 'data-share="true"' in page.text
-    assert 'class="button-link report-cta" href="/report"' in page.text
+    assert 'id="report-poster-wrap"' in page.text
+    assert 'id="report-download"' not in page.text
     assert 'id="report-form"' not in page.text
     assert 'id="report-sample"' not in page.text
     assert 'id="report-history"' not in page.text
+
+
+def test_gift_chicken_legs_use_the_price_table(tmp_path, monkeypatch):
+    import pocket48_summarizer.annual_report_stats as stats_module
+    prices = tmp_path / "prices.json"
+    prices.write_text(json.dumps({"荧光棒-X": 1, "高级马卡龙": 52}), encoding="utf-8")
+    monkeypatch.setattr(stats_module, "GIFT_PRICES_PATH", prices)
+    stats_module.gift_prices.cache_clear()
+    gift = json.dumps({"giftInfo": {"giftName": "高级马卡龙", "giftNum": 2}})
+    report = build_report(
+        member_name="杨晔", scope="2025-2026", data_end=date(2026, 11, 26), archive_nicknames=[],
+        room_messages=[room(ms(2025, 4, 1), gift, msg_type="GIFT_TEXT"),
+                       room(ms(2025, 4, 2), json.dumps({"giftInfo": {"giftName": "神秘礼物", "giftNum": 3}}), msg_type="GIFT_TEXT")],
+        replays=[Replay("a", ms(2025, 5, 1), "直播", [(1_000, "成早Ruoke", "送给SNH48-杨晔 99个荧光棒-X")])],
+        extra_nicknames=["成早Ruoke"],
+    )
+    stats_module.gift_prices.cache_clear()
+    gifts = report["gifts"]
+    assert gifts["chicken_total"] == 2 * 52 + 99
+    assert gifts["unpriced_items"] == 3
+    assert next(m for m in gifts["monthly"] if m["month"] == "2025-04")["chicken"] == 104

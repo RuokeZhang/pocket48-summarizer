@@ -14,6 +14,8 @@ import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 CHINA = ZoneInfo("Asia/Shanghai")
@@ -34,7 +36,8 @@ DANMAKU_EVENT_RE = re.compile(
 )
 SPOKEN_ROOM_TYPES = {"TEXT", "REPLY"}
 # Bump when the statistics change meaning, so cached results are not reused.
-REPORT_VERSION = 4
+REPORT_VERSION = 5
+GIFT_PRICES_PATH = Path(__file__).with_name("annual_report_gift_prices.json")
 LIVE_GIFT_RE = re.compile(r"^送给\S+\s*(\d+)个(.+)$")
 
 
@@ -170,6 +173,19 @@ def match_live_gifts(
         if match:
             gifts.append((sent_ms, gift_name(match.group(2)), int(match.group(1))))
     return gifts
+
+
+@lru_cache(maxsize=1)
+def gift_prices() -> dict[str, int]:
+    """Gift name -> price in 鸡腿, exported from the logged-in gift list.
+
+    Prices are not public, so the table is bundled and refreshed by hand.
+    Gifts missing from it are counted but not priced.
+    """
+    if not GIFT_PRICES_PATH.exists():
+        return {}
+    rows = json.loads(GIFT_PRICES_PATH.read_text(encoding="utf-8"))
+    return {gift_name(name): int(price) for name, price in rows.items() if int(price) >= 0}
 
 
 def room_gift(message: RoomMessage) -> tuple[str, int] | None:
@@ -330,18 +346,34 @@ def build_report(
 
     gift_counts: Counter = Counter()
     gifts = {"room_times": 0, "room_items": 0, "live_times": 0, "live_items": 0}
+    gift_events = []
     for message in room_messages:
         gift = room_gift(message)
         if gift and message.room_owner == member_name and in_scope(message.timestamp_ms):
             gifts["room_times"] += 1
             gifts["room_items"] += gift[1]
-            gift_counts[gift[0]] += gift[1]
+            gift_events.append((message.timestamp_ms, gift[0], gift[1]))
     for sent_ms, name, count in match_live_gifts(scoped_replays, windows):
         if in_scope(sent_ms):
             gifts["live_times"] += 1
             gifts["live_items"] += count
-            gift_counts[name] += count
+            gift_events.append((sent_ms, name, count))
+    prices = gift_prices()
+    gift_months = {month: {"month": month, "items": 0, "chicken": 0} for month in months}
+    priced_items = 0
+    for sent_ms, name, count in gift_events:
+        gift_counts[name] += count
+        month = gift_months.get(china_time(sent_ms).strftime("%Y-%m"))
+        if month is None:
+            continue
+        month["items"] += count
+        if name in prices:
+            month["chicken"] += prices[name] * count
+            priced_items += count
     gifts["top"] = [{"name": name, "count": count} for name, count in gift_counts.most_common(6)]
+    gifts["monthly"] = list(gift_months.values())
+    gifts["chicken_total"] = sum(month["chicken"] for month in gift_months.values()) if prices else None
+    gifts["unpriced_items"] = sum(gift_counts.values()) - priced_items if prices else None
 
     attended_counts = [len(lines) for lines in matched.values()]
     total_lives = len(scoped_replays)

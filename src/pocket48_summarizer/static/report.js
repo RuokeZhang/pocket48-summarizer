@@ -411,7 +411,33 @@
     return y;
   };
 
+  const giftMonthChart = (p, y, report) => {
+    const gifts = report.gifts;
+    const useChicken = gifts.chicken_total !== null && gifts.chicken_total !== undefined;
+    const months = gifts.monthly;
+    const values = months.map((month) => (useChicken ? month.chicken : month.items));
+    const max = Math.max(1, ...values);
+    const columnWidth = CW / months.length;
+    const barWidth = Math.max(8, Math.min(22, Math.floor(columnWidth * 0.7)));
+    const plotHeight = 160, baseline = y + 48 + plotHeight;
+    text(p, useChicken ? "每月送出的鸡腿" : "每月送出的礼物（份）", PAD, y + 4, 24, C.inkMuted);
+    let peak = 0;
+    values.forEach((value, index) => { if (value > values[peak]) peak = index; });
+    months.forEach((month, index) => {
+      const x = Math.round(PAD + index * columnWidth + (columnWidth - barWidth) / 2);
+      const h = values[index] ? Math.max(4, Math.round(values[index] / max * plotHeight / 4) * 4) : 0;
+      rect(p, x, baseline - h, barWidth, h, C.accent);
+      if (index === peak && values[index]) text(p, fmt(values[index]), x + barWidth / 2, baseline - h - 30, 24, C.ink, "center");
+      const monthNumber = Number(month.month.slice(5));
+      if ([1, 4, 7, 10].includes(monthNumber)) text(p, String(monthNumber), x + barWidth / 2, baseline + 10, 24, C.inkMuted, "center");
+      if (monthNumber === 1) text(p, month.month.slice(0, 4), x, baseline + 44, 24, C.ink);
+    });
+    rect(p, PAD, baseline + 2, CW, 2, C.ink);
+    return baseline + 88;
+  };
+
   const giftSection = (p, y, report) => {
+    if (report.gifts.monthly) y = giftMonthChart(p, y, report);
     const top = report.gifts.top;
     const max = Math.max(1, ...top.map((gift) => gift.count));
     top.forEach((gift) => {
@@ -461,18 +487,29 @@
     if (report.notes && report.notes.unreadable_lives) notes.push(`有${report.notes.unreadable_lives}场回放的弹幕暂时读不到，没有计入。`);
     const noteText = notes.join("");
     const lines = wrap(p, noteText, CW, 24);
-    const h = 300 + lines.length * 36 + 48;
+    const extra = p.interactive ? 84 : 0;
+    const h = 300 + extra + lines.length * 36 + 48;
     background(p, y, h, C.navy);
     text(p, "下一句，明年见", W / 2, y + 40, 48, C.light, "center");
     // A pixel "button" so people who only see the PNG know where to make their own.
+    // On the share page the same spots become clickable (see addHotspots).
     const cta = "▶ 生成你的口袋48年度报告";
     const buttonWidth = Math.ceil(measure(p, cta, 36) + 64);
     const buttonX = Math.round((W - buttonWidth) / 2);
     frame(p, buttonX, y + 120, buttonWidth, 64, C.pink, C.light);
     text(p, cta, W / 2, y + 134, 36, C.navy, "center");
+    if (p.draw && p.hotspots) p.hotspots.push({ action: "create", x: buttonX - 4, y: y + 116, w: buttonWidth + 8, h: 72 });
     text(p, "p48.ruokezhang.com/report", W / 2, y + 208, 24, C.pink, "center");
-    rect(p, PAD, y + 268, CW, 2, C.navyLine);
-    lines.forEach((line, index) => text(p, line, PAD, y + 284 + index * 36, 24, C.lightMuted));
+    if (p.interactive) {
+      const download = "⬇ 下载这张海报";
+      const downloadWidth = Math.ceil(measure(p, download, 24) + 48);
+      const downloadX = Math.round((W - downloadWidth) / 2);
+      frame(p, downloadX, y + 256, downloadWidth, 48, C.navyPanel, C.lightMuted);
+      text(p, download, W / 2, y + 268, 24, C.light, "center");
+      if (p.draw && p.hotspots) p.hotspots.push({ action: "download", x: downloadX - 4, y: y + 252, w: downloadWidth + 8, h: 56 });
+    }
+    rect(p, PAD, y + 268 + extra, CW, 2, C.navyLine);
+    lines.forEach((line, index) => text(p, line, PAD, y + 284 + extra + index * 36, 24, C.lightMuted));
     return y + h;
   };
 
@@ -545,9 +582,11 @@
     const gifts = report.gifts;
     if (gifts && gifts.top.length) {
       section(false, (q, sy) => {
+        const chicken = gifts.chicken_total !== null && gifts.chicken_total !== undefined;
         let yy = chapter(q, sy, false, "CH.7", "GIFTS", `送给${report.member_name}的礼物`,
-          `一共${fmt(gifts.live_items + gifts.room_items)}份`,
-          `直播里送礼${gifts.live_times}次，房间里送礼${gifts.room_times}次。下面是送得最多的礼物。`);
+          chicken ? `一共${fmt(gifts.chicken_total)}个鸡腿` : `一共${fmt(gifts.live_items + gifts.room_items)}份`,
+          `${fmt(gifts.live_items + gifts.room_items)}份礼物：直播里送礼${gifts.live_times}次，房间里送礼${gifts.room_times}次。`
+            + (chicken && gifts.unpriced_items ? `有${gifts.unpriced_items}份礼物没有查到价格，没算进鸡腿。` : ""));
         return giftSection(q, yy + 20, report);
       });
     }
@@ -577,17 +616,54 @@
     image.src = src;
   });
 
-  const renderPoster = async (canvas, report) => {
+  const renderPoster = async (canvas, report, options = {}) => {
     await loadFont();
     const images = { fan: await loadImage(report.fan_avatar), member: await loadImage(report.member_avatar) };
+    const interactive = Boolean(options.interactive);
     const measureCanvas = document.createElement("canvas");
-    const height = Math.ceil(layout({ ctx: measureCanvas.getContext("2d"), draw: false, images }, report));
+    const height = Math.ceil(layout({ ctx: measureCanvas.getContext("2d"), draw: false, images, interactive }, report));
     canvas.width = W * SCALE;
     canvas.height = height * SCALE;
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.scale(SCALE, SCALE);
-    layout({ ctx, draw: true, images }, report);
+    const hotspots = [];
+    layout({ ctx, draw: true, images, interactive, hotspots }, report);
+    return { height, hotspots };
+  };
+
+  // The exported PNG never contains the "download" button.
+  const downloadPoster = async (report) => {
+    const exportCanvas = document.createElement("canvas");
+    await renderPoster(exportCanvas, report);
+    exportCanvas.toBlob((blob) => {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `口袋48年度报告-${report.display_name || "我"}-${report.member_name}.png`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+    }, "image/png");
+  };
+
+  const addHotspots = (wrap, hotspots, height, report) => {
+    wrap.querySelectorAll(".report-hotspot").forEach((element) => element.remove());
+    hotspots.forEach((spot) => {
+      const element = document.createElement(spot.action === "create" ? "a" : "button");
+      element.className = "report-hotspot";
+      if (spot.action === "create") {
+        element.href = "/report";
+        element.setAttribute("aria-label", "生成你的口袋48年度报告");
+      } else {
+        element.type = "button";
+        element.setAttribute("aria-label", "下载这张海报");
+        element.addEventListener("click", () => downloadPoster(report));
+      }
+      Object.assign(element.style, {
+        left: `${spot.x / W * 100}%`, top: `${spot.y / height * 100}%`,
+        width: `${spot.w / W * 100}%`, height: `${spot.h / height * 100}%`
+      });
+      wrap.append(element);
+    });
   };
 
   // ---------- page wiring ----------
@@ -709,7 +785,9 @@
         if (statusBox.dataset.share) statusBox.hidden = true;
         currentReport = job.result;
         output.hidden = false;
-        await renderPoster(canvas, job.result);
+        const shareWrap = document.querySelector("#report-poster-wrap");
+        const rendered = await renderPoster(canvas, job.result, { interactive: Boolean(shareWrap) });
+        if (shareWrap) addHotspots(shareWrap, rendered.hotspots, rendered.height, job.result);
         if (submit) submit.disabled = false;
         return;
       }
@@ -761,14 +839,7 @@
   });
 
   document.querySelector("#report-download")?.addEventListener("click", () => {
-    if (!currentReport) return;
-    canvas.toBlob((blob) => {
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `口袋48年度报告-${currentReport.display_name || "我"}-${currentReport.scope}.png`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(link.href), 10000);
-    }, "image/png");
+    if (currentReport) downloadPoster(currentReport);
   });
 
   document.querySelector("#report-copy-link")?.addEventListener("click", async () => {

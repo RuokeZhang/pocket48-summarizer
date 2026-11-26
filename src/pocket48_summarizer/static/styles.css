@@ -3276,9 +3276,11 @@ code { color: #d4c8ff; }
 .report-sample { margin: 20px 0 0; padding: 16px 20px; border: 1px solid #2b303d; border-radius: 18px; background: rgba(255, 255, 255, .03); }
 .report-sample summary { cursor: pointer; font-weight: 700; color: #ff8bad; }
 .report-sample[open] summary { margin-bottom: 8px; }
-.report-share .report-canvas { max-width: 720px; }
-.report-share-actions { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 20px auto 8px; }
-.report-cta { font-size: 18px; padding: 15px 28px; }
+.report-poster-wrap { position: relative; max-width: 720px; margin: 0 auto; }
+.report-poster-wrap .report-canvas { max-width: 100%; }
+.report-hotspot { position: absolute; display: block; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; }
+.report-hotspot:hover { background: rgba(255, 255, 255, .12); }
+.report-hotspot:focus-visible { outline: 3px solid #ff8bad; outline-offset: 2px; }
 .report-history { margin: 20px 0 0; padding: 16px 20px; border: 1px solid #2b303d; border-radius: 18px; background: rgba(255, 255, 255, .03); }
 .report-history h2 { margin: 0 0 8px; font-size: 18px; }
 .report-history ul { margin: 0; padding-left: 18px; }

@@ -1,17 +1,15 @@
 {% extends "base.html" %}
 {% block title %}年度报告 · 口袋48直播总结{% endblock %}
 {% block head_scripts %}
-  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-11"></script>
+  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-12"></script>
 {% endblock %}
 {% block content %}
 <section class="report-page">
 {% if share_job_id %}
   <div id="report-status" class="report-status" role="status" data-share="true">正在读取报告……</div>
   <div id="report-output" class="report-output report-share" hidden>
-    <canvas id="report-canvas" class="report-canvas"></canvas>
-    <div class="report-share-actions">
-      <a class="button-link report-cta" href="/report" data-i18n="reportShareCta">生成我的口袋48年度报告 →</a>
-      <button id="report-download" class="secondary-button" type="button" data-i18n="reportDownload">下载 PNG</button>
+    <div id="report-poster-wrap" class="report-poster-wrap">
+      <canvas id="report-canvas" class="report-canvas"></canvas>
     </div>
   </div>
 {% else %}
