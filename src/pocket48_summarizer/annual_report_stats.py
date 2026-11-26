@@ -14,8 +14,6 @@ import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from functools import lru_cache
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 CHINA = ZoneInfo("Asia/Shanghai")
@@ -36,8 +34,7 @@ DANMAKU_EVENT_RE = re.compile(
 )
 SPOKEN_ROOM_TYPES = {"TEXT", "REPLY"}
 # Bump when the statistics change meaning, so cached results are not reused.
-REPORT_VERSION = 5
-GIFT_PRICES_PATH = Path(__file__).with_name("annual_report_gift_prices.json")
+REPORT_VERSION = 6
 LIVE_GIFT_RE = re.compile(r"^送给\S+\s*(\d+)个(.+)$")
 
 
@@ -175,19 +172,6 @@ def match_live_gifts(
     return gifts
 
 
-@lru_cache(maxsize=1)
-def gift_prices() -> dict[str, int]:
-    """Gift name -> price in 鸡腿, exported from the logged-in gift list.
-
-    Prices are not public, so the table is bundled and refreshed by hand.
-    Gifts missing from it are counted but not priced.
-    """
-    if not GIFT_PRICES_PATH.exists():
-        return {}
-    rows = json.loads(GIFT_PRICES_PATH.read_text(encoding="utf-8"))
-    return {gift_name(name): int(price) for name, price in rows.items() if int(price) >= 0}
-
-
 def room_gift(message: RoomMessage) -> tuple[str, int] | None:
     if message.msg_type != "GIFT_TEXT":
         return None
@@ -227,7 +211,9 @@ def build_report(
     room_messages: list[RoomMessage],
     replays: list[Replay],
     extra_nicknames: list[str],
+    gift_table: dict | None = None,
 ) -> dict:
+    """gift_table: {"prices": {gift name: 鸡腿}, "scores": {gift name: 分 per piece}}."""
     years = SCOPES[scope]
     scope_start = date(years[0], 1, 1)
     scope_end = min(date(years[-1], 12, 31), data_end)
@@ -358,9 +344,12 @@ def build_report(
             gifts["live_times"] += 1
             gifts["live_items"] += count
             gift_events.append((sent_ms, name, count))
-    prices = gift_prices()
+    prices = (gift_table or {}).get("prices") or {}
+    scores = (gift_table or {}).get("scores") or {}
     gift_months = {month: {"month": month, "items": 0, "chicken": 0} for month in months}
-    priced_items = 0
+    unpriced_items = 0
+    score_counts: Counter = Counter()
+    score_by_day: Counter = Counter()
     for sent_ms, name, count in gift_events:
         gift_counts[name] += count
         month = gift_months.get(china_time(sent_ms).strftime("%Y-%m"))
@@ -369,11 +358,29 @@ def build_report(
         month["items"] += count
         if name in prices:
             month["chicken"] += prices[name] * count
-            priced_items += count
-    gifts["top"] = [{"name": name, "count": count} for name, count in gift_counts.most_common(6)]
+        elif name in scores:
+            score_counts[name] += count
+            score_by_day[china_time(sent_ms).date().isoformat()] += scores[name] * count
+        else:
+            unpriced_items += count
+    # Score gifts get their own card, so the list ranks the 鸡腿 gifts by what they cost.
+    regular = [
+        {"name": name, "count": count, "chicken": prices[name] * count if name in prices else None}
+        for name, count in gift_counts.items() if name not in scores
+    ]
+    gifts["top"] = sorted(regular, key=lambda gift: (-(gift["chicken"] or 0), -gift["count"], gift["name"]))[:6]
     gifts["monthly"] = list(gift_months.values())
     gifts["chicken_total"] = sum(month["chicken"] for month in gift_months.values()) if prices else None
-    gifts["unpriced_items"] = sum(gift_counts.values()) - priced_items if prices else None
+    gifts["score_items"] = sorted(
+        ({"name": name, "count": count, "score": round(scores[name] * count, 1)} for name, count in score_counts.items()),
+        key=lambda item: -item["score"],
+    )
+    gifts["score_total"] = round(sum(item["score"] for item in gifts["score_items"]), 1)
+    peak_day = max(score_by_day, key=lambda day: (score_by_day[day], day), default=None)
+    gifts["score_peak_day"] = (
+        {"date": peak_day, "score": round(score_by_day[peak_day], 1)} if peak_day else None
+    )
+    gifts["unpriced_items"] = unpriced_items if prices else None
 
     attended_counts = [len(lines) for lines in matched.values()]
     total_lives = len(scoped_replays)

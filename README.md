@@ -75,6 +75,7 @@ https://h5.48.cn/2019appshare/memberLiveShare/index.html?id=1297967327104274432
   同一 IP 每小时最多 3 次，排队超过 20 个时拒绝新请求。
 - UID 只在任务排队和运行时保存，完成后清空，仅保留加盐哈希用于复用结果；结果保留 7 天。
 - 成员名单每天从 `data.gnz.hk/members.json` 同步一次（口袋48用户 ID 与官方成员编号不同）。
+- 礼物鸡腿价格每天从 `gnz.hk/api/gift/prices`（[牙牙消息 yaya_msg](https://github.com/yk1z/yaya_msg) 维护的公开价格表）同步，失败时用仓库内快照；同名不同价的礼物不计价，总选积分礼物单独按分统计。
 - 翻牌需要登录且内容分析依赖模型，页面只展示示例并提示联系管理员。
 - 像素字体为 [Fusion Pixel Font](https://github.com/TakWolf/fusion-pixel-font)（SIL OFL 1.1，见 `static/fusion-pixel-OFL.txt`）。
 

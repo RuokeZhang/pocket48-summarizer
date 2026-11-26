@@ -439,14 +439,34 @@
   const giftSection = (p, y, report) => {
     if (report.gifts.monthly) y = giftMonthChart(p, y, report);
     const top = report.gifts.top;
-    const max = Math.max(1, ...top.map((gift) => gift.count));
+    const byChicken = top.some((gift) => gift.chicken);
+    const value = (gift) => (byChicken ? gift.chicken || 0 : gift.count);
+    const max = Math.max(1, ...top.map(value));
+    if (top.length) {
+      text(p, byChicken ? "花鸡腿最多的礼物" : "送得最多的礼物", PAD, y, 24, C.inkMuted);
+      y += 44;
+    }
     top.forEach((gift) => {
-      const name = wrap(p, gift.name, 168, 24)[0];
+      const name = wrap(p, gift.name, 150, 24)[0];
       text(p, name, PAD, y + 4, 24, C.ink);
-      rect(p, PAD + 180, y + 12, Math.max(4, Math.round(gift.count / max * 300 / 4) * 4), 18, C.accent);
-      text(p, `×${fmt(gift.count)}`, PAD + 500, y + 4, 24, C.ink);
+      rect(p, PAD + 160, y + 12, Math.max(4, Math.round(value(gift) / max * 240 / 4) * 4), 18, C.accent);
+      text(p, `×${fmt(gift.count)}${gift.chicken ? ` · ${fmt(gift.chicken)}鸡腿` : ""}`, PAD + 416, y + 4, 24, C.ink);
       y += 44;
     });
+    const items = report.gifts.score_items || [];
+    if (report.gifts.score_total && items.length) {
+      // Election score gifts are counted in 分, not 鸡腿, so they get their own card.
+      const lines = items.map((item) => `${item.name} ×${fmt(item.count)}　${fmt(item.score)}分`);
+      const peak = report.gifts.score_peak_day;
+      if (peak) lines.push(`送积分最多的一天：${chinaDate(peak.date)}，${fmt(peak.score)}分`);
+      const h = 132 + lines.length * 36;
+      frame(p, PAD + 4, y + 24, CW - 8, h, C.creamPanel, C.ink);
+      text(p, "积分礼物", PAD + 24, y + 40, 24, C.inkMuted);
+      text(p, `${fmt(report.gifts.score_total)}分`, PAD + 24, y + 72, 48, C.accent);
+      text(p, "总选积分，不计入鸡腿", W - PAD - 24, y + 88, 24, C.inkMuted, "right");
+      lines.forEach((line, index) => text(p, line, PAD + 24, y + 140 + index * 36, 24, C.ink));
+      y += h + 40;
+    }
     return y + 8;
   };
 
@@ -586,7 +606,7 @@
         let yy = chapter(q, sy, false, "CH.7", "GIFTS", `送给${report.member_name}的礼物`,
           chicken ? `一共${fmt(gifts.chicken_total)}个鸡腿` : `一共${fmt(gifts.live_items + gifts.room_items)}份`,
           `${fmt(gifts.live_items + gifts.room_items)}份礼物：直播里送礼${gifts.live_times}次，房间里送礼${gifts.room_times}次。`
-            + (chicken && gifts.unpriced_items ? `有${gifts.unpriced_items}份礼物没有查到价格，没算进鸡腿。` : ""));
+            + (chicken && gifts.unpriced_items ? `有${gifts.unpriced_items}份礼物没查到价格，没算进鸡腿。` : ""));
         return giftSection(q, yy + 20, report);
       });
     }

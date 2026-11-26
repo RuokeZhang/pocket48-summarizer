@@ -271,6 +271,7 @@ class Settings(BaseSettings):
     annual_report_enabled: bool = True
     msg48_base_url: str = "https://msg48.org"
     member_index_url: str = "https://data.gnz.hk/members.json"
+    gift_price_url: str = "https://gnz.hk/api/gift/prices"
     max_msg48_response_bytes: int = Field(default=40 * 1024 * 1024, ge=1024)
     max_member_index_bytes: int = Field(default=8 * 1024 * 1024, ge=1024)
     annual_report_queue_limit: int = Field(default=20, ge=1, le=500)

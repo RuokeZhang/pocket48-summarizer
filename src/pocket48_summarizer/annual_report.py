@@ -44,6 +44,8 @@ LIVE_LIST_TTL = timedelta(hours=6)
 MEMBER_INDEX_TTL = timedelta(hours=24)
 MEMBER_INDEX_RETRY = timedelta(minutes=15)
 MEMBER_SNAPSHOT_PATH = Path(__file__).with_name("annual_report_members.json")
+GIFT_PRICE_SNAPSHOT_PATH = Path(__file__).with_name("annual_report_gift_prices.json")
+GIFT_PRICE_TTL = timedelta(hours=24)
 
 
 @dataclass(slots=True)
@@ -517,6 +519,7 @@ class AnnualReportWorker:
             ],
             replays=replays,
             extra_nicknames=job.extra_nicknames,
+            gift_table=await self._gift_table(),
         )
         result["notes"] = {"archive_truncated": truncated, "unreadable_lives": failed}
         latest_avatar = next((message.avatar for message in reversed(messages) if message.avatar), "")
@@ -525,6 +528,22 @@ class AnnualReportWorker:
         result["member_avatar"] = await self._avatar(member.avatar if member else "")
         result["generated_at"] = _now().isoformat()
         return result
+
+    async def _gift_table(self) -> dict:
+        """Daily copy of the public gift price list, falling back to the bundled snapshot."""
+        state = await asyncio.to_thread(self.repository.get_state, "gift_prices")
+        if state is not None and _now() - state[1] < GIFT_PRICE_TTL and state[0] != "failed":
+            return json.loads(state[0])
+        try:
+            table = await self.msg48.gift_price_table()
+            await asyncio.to_thread(self.repository.set_state, "gift_prices", json.dumps(table, ensure_ascii=False))
+            return table
+        except Exception as exc:
+            self.logger.info("Gift prices from snapshot: %s", getattr(exc, "code", type(exc).__name__))
+            if state is not None and state[0] != "failed":
+                return json.loads(state[0])
+            snapshot = json.loads(GIFT_PRICE_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+            return {"prices": snapshot["prices"], "scores": snapshot["scores"]}
 
     async def _avatar(self, url: str) -> str | None:
         if not url:

@@ -177,6 +177,15 @@ class Msg48Client:
             )
         return list(entries.values())
 
+    async def gift_price_table(self) -> dict:
+        """Public gift price list maintained by the yaya_msg project."""
+        payload = await self._json(
+            "GET", self.settings.gift_price_url, self.settings.max_member_index_bytes
+        )
+        if not isinstance(payload, dict) or not isinstance(payload.get("prices"), list) or not payload["prices"]:
+            raise ExternalServiceError("gift_prices_invalid", "礼物价格返回格式异常", True)
+        return build_gift_price_table(payload)
+
     async def fetch_avatar(self, url: str) -> bytes:
         """Download a profile picture from an official 48 Group image host."""
         if url.startswith("/"):
@@ -241,3 +250,28 @@ class Msg48Client:
         raise ExternalServiceError(
             "archive_request_failed", "连接公开存档失败", True
         ) from last_error
+
+
+def build_gift_price_table(payload: dict) -> dict:
+    """Reduce the public price list to {"prices": {name: 鸡腿}, "scores": {name: 分}}.
+
+    Names that map to more than one price are left out because the danmaku
+    only carries the name. Election (score) gifts are kept apart.
+    """
+    costs: dict[str, set[int]] = {}
+    for row in payload.get("prices") or []:
+        if not isinstance(row, dict):
+            continue
+        name, cost = str(row.get("name") or "").strip(), row.get("cost")
+        if name and isinstance(cost, int) and cost >= 0:
+            key = "荧光棒" if name.startswith("荧光棒") else name
+            costs.setdefault(key, set()).add(cost)
+    scores = {}
+    for rule in payload.get("rules") or []:
+        if isinstance(rule, dict) and rule.get("scorePerUnit") and rule.get("name"):
+            try:
+                scores[str(rule["name"]).strip()] = float(rule["scorePerUnit"])
+            except ValueError:
+                continue
+    prices = {name: next(iter(values)) for name, values in costs.items() if len(values) == 1 and name not in scores}
+    return {"prices": prices, "scores": scores}

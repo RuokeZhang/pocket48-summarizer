@@ -188,6 +188,9 @@ class FakeMsg48:
     async def fetch_avatar(self, url):
         return png_bytes()
 
+    async def gift_price_table(self):
+        return {"prices": {"荧光棒": 5}, "scores": {}}
+
     async def member_index(self):
         return []
 
@@ -380,7 +383,7 @@ def test_gifts_count_live_and_room_gifts_for_the_chosen_member_only():
     gifts = report["gifts"]
     assert {key: gifts[key] for key in ("room_times", "room_items", "live_times", "live_items", "top")} == {
         "room_times": 1, "room_items": 2, "live_times": 2, "live_items": 100,
-        "top": [{"name": "荧光棒", "count": 100}, {"name": "高级马卡龙", "count": 2}],
+        "top": [{"name": "荧光棒", "count": 100, "chicken": None}, {"name": "高级马卡龙", "count": 2, "chicken": None}],
     }
     march = next(month for month in gifts["monthly"] if month["month"] == "2025-03")
     assert march["items"] == 102
@@ -399,22 +402,33 @@ def test_share_link_shows_only_the_poster(settings, repository, reports):
     assert 'id="report-history"' not in page.text
 
 
-def test_gift_chicken_legs_use_the_price_table(tmp_path, monkeypatch):
-    import pocket48_summarizer.annual_report_stats as stats_module
-    prices = tmp_path / "prices.json"
-    prices.write_text(json.dumps({"荧光棒-X": 1, "高级马卡龙": 52}), encoding="utf-8")
-    monkeypatch.setattr(stats_module, "GIFT_PRICES_PATH", prices)
-    stats_module.gift_prices.cache_clear()
+def test_gift_chicken_legs_use_the_price_table():
     gift = json.dumps({"giftInfo": {"giftName": "高级马卡龙", "giftNum": 2}})
     report = build_report(
         member_name="杨晔", scope="2025-2026", data_end=date(2026, 11, 26), archive_nicknames=[],
         room_messages=[room(ms(2025, 4, 1), gift, msg_type="GIFT_TEXT"),
-                       room(ms(2025, 4, 2), json.dumps({"giftInfo": {"giftName": "神秘礼物", "giftNum": 3}}), msg_type="GIFT_TEXT")],
+                       room(ms(2025, 4, 2), json.dumps({"giftInfo": {"giftName": "神秘礼物", "giftNum": 3}}), msg_type="GIFT_TEXT"),
+                       room(ms(2025, 4, 3), json.dumps({"giftInfo": {"giftName": "命定水晶", "giftNum": 2}}), msg_type="GIFT_TEXT")],
         replays=[Replay("a", ms(2025, 5, 1), "直播", [(1_000, "成早Ruoke", "送给SNH48-杨晔 99个荧光棒-X")])],
         extra_nicknames=["成早Ruoke"],
+        gift_table={"prices": {"荧光棒": 5, "高级马卡龙": 1048}, "scores": {"命定水晶": 9.0}},
     )
-    stats_module.gift_prices.cache_clear()
     gifts = report["gifts"]
-    assert gifts["chicken_total"] == 2 * 52 + 99
+    assert gifts["chicken_total"] == 2 * 1048 + 99 * 5
+    assert gifts["score_total"] == 18
+    assert gifts["score_items"] == [{"name": "命定水晶", "count": 2, "score": 18.0}]
+    assert gifts["score_peak_day"] == {"date": "2025-04-03", "score": 18.0}
+    assert [gift["name"] for gift in gifts["top"]] == ["高级马卡龙", "荧光棒", "神秘礼物"]
     assert gifts["unpriced_items"] == 3
-    assert next(m for m in gifts["monthly"] if m["month"] == "2025-04")["chicken"] == 104
+    assert next(m for m in gifts["monthly"] if m["month"] == "2025-04")["chicken"] == 2096
+
+
+def test_gift_price_table_drops_ambiguous_names_and_keeps_score_gifts_apart():
+    from pocket48_summarizer.clients.msg48 import build_gift_price_table
+    table = build_gift_price_table({
+        "prices": [{"name": "荧光棒-X", "cost": 5}, {"name": "荧光棒-SII", "cost": 5},
+                   {"name": "圣诞树", "cost": 48}, {"name": "圣诞树", "cost": 1200},
+                   {"name": "高级马卡龙", "cost": 1048}],
+        "rules": [{"name": "命定水晶", "scorePerUnit": "9"}, {"name": "娃娃机", "historicalCost": 1200}],
+    })
+    assert table == {"prices": {"荧光棒": 5, "高级马卡龙": 1048}, "scores": {"命定水晶": 9.0}}
