@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}年度报告 · 口袋48直播总结{% endblock %}
+{% block head_scripts %}
+  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-1"></script>
+{% endblock %}
+{% block content %}
+<section class="report-page">
+  <div class="report-intro">
+    <h1 data-i18n="reportTitle">口袋48年度报告</h1>
+    <p data-i18n="reportLede">输入口袋48 UID、选一位主推成员，自动统计你在成员房间和直播间的发言，生成一张像素风长海报。全程按固定规则计算，不使用大模型。</p>
+  </div>
+
+  {% if not enabled %}
+    <p class="report-notice" data-i18n="reportDisabled">年度报告暂未开放。</p>
+  {% elif not members %}
+    <p class="report-notice" data-i18n="reportMembersSyncing">成员名单正在同步，请稍后刷新页面。</p>
+  {% else %}
+    <form id="report-form" class="report-form" novalidate>
+      <label for="report-uid" data-i18n="reportUidLabel">口袋48 UID</label>
+      <input id="report-uid" name="uid" inputmode="numeric" autocomplete="off" maxlength="12" pattern="[0-9]{1,12}" required>
+      <p class="report-hint" data-i18n="reportUidHint">UID 是口袋48账号的数字 ID，不是昵称。</p>
+
+      <label for="report-member" data-i18n="reportMemberLabel">主推成员（统计她的直播弹幕）</label>
+      <select id="report-member" name="member_pocket_id" required>
+        {% for member in members %}
+          <option value="{{ member.pocket_id }}"{% if member.pocket_id == default_member_id %} selected{% endif %}>
+            {{ member.name }} · {{ member.group_name }} {{ member.team_name }}{% if not member.in_group %}（已离团）{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+
+      <fieldset class="report-scope">
+        <legend data-i18n="reportScopeLabel">统计范围</legend>
+        <label><input type="radio" name="scope" value="2025-2026" checked> <span data-i18n="reportScopeBoth">2025—2026 两年</span></label>
+        <label><input type="radio" name="scope" value="2026"> <span data-i18n="reportScope2026">只看 2026</span></label>
+      </fieldset>
+
+      <details class="report-advanced">
+        <summary data-i18n="reportAdvanced">高级选项</summary>
+        <label for="report-nicknames" data-i18n="reportNicknamesLabel">补充用过的昵称（每行一个，最多 5 个）</label>
+        <textarea id="report-nicknames" rows="3" maxlength="200"></textarea>
+        <p class="report-hint" data-i18n="reportNicknamesHint">系统会先从公开存档读取你的历史昵称。如果你有只在直播间用过的昵称，可以写在这里。</p>
+      </details>
+
+      <button id="report-submit" class="primary-button" type="submit" data-i18n="reportSubmit">生成海报</button>
+      <p class="report-hint">
+        <span data-i18n="reportPrivacy">数据来自口袋48公开回放弹幕和 msg48.org 公开房间存档，不需要登录，也不会保存你的 UID。生成结果保留 7 天。</span>
+        <span data-i18n-runtime="reportLimit" data-i18n-runtime-params='{"limit": {{ hourly_limit }}}'>同一网络每小时最多生成 {{ hourly_limit }} 次。</span>
+      </p>
+    </form>
+  {% endif %}
+
+  <div id="report-status" class="report-status" role="status" hidden></div>
+  <div id="report-output" class="report-output" hidden>
+    <div class="report-actions">
+      <button id="report-download" class="primary-button" type="button" data-i18n="reportDownload">下载 PNG</button>
+      <button id="report-copy-link" class="secondary-button" type="button" data-i18n="reportCopyLink">复制分享链接</button>
+    </div>
+    <canvas id="report-canvas" class="report-canvas"></canvas>
+  </div>
+
+  <section class="report-flip">
+    <h2 data-i18n="reportFlipTitle">翻牌海报</h2>
+    <p data-i18n="reportFlipBody">翻牌需要登录口袋48账号才能读取，内容分析还要用到语音转写和模型，所以暂不开放自助生成。想做一张自己的翻牌海报，请联系管理员。下面是一张示例。</p>
+    <img class="report-flip-sample" src="{{ url_for('static', path='/report-flip-sample.png') }}" alt="翻牌海报示例" loading="lazy">
+  </section>
+</section>
+{% endblock %}

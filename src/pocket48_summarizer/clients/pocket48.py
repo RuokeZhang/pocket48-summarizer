@@ -139,6 +139,37 @@ class Pocket48Client:
         )
 
     async def resolve_replay(self, live_id: str) -> ReplayMetadata:
+        content = await self._live_content(live_id)
+        if not content.review or not content.play_stream_path:
+            raise AppError(
+                "replay_not_ready",
+                "该链接不是可处理的已结束公开回放",
+                True,
+            )
+        media_url = validate_https_url(
+            content.play_stream_path,
+            MEDIA_HOSTS,
+            code="invalid_media_url",
+            label="回放媒体",
+        )
+        return self._replay_metadata(content, media_url)
+
+    async def resolve_replay_danmaku(self, live_id: str) -> ReplayMetadata:
+        """Like resolve_replay, but only the danmaku file has to be valid.
+
+        Older replays live on media hosts the player does not allow; their
+        comment files are still usable for statistics.
+        """
+        content = await self._live_content(live_id)
+        if not content.review:
+            raise AppError(
+                "replay_not_ready",
+                "该链接不是可处理的已结束公开回放",
+                True,
+            )
+        return self._replay_metadata(content, "")
+
+    async def _live_content(self, live_id: str) -> PocketLiveContent:
         endpoint = (
             self.settings.pocket_api_base_url.rstrip("/")
             + "/live/api/v1/live/getLiveOne"
@@ -181,18 +212,11 @@ class Pocket48Client:
                 "口袋48返回的直播 ID 与请求不一致",
                 False,
             )
-        if not content.review or not content.play_stream_path:
-            raise AppError(
-                "replay_not_ready",
-                "该链接不是可处理的已结束公开回放",
-                True,
-            )
-        media_url = validate_https_url(
-            content.play_stream_path,
-            MEDIA_HOSTS,
-            code="invalid_media_url",
-            label="回放媒体",
-        )
+        return content
+
+    def _replay_metadata(
+        self, content: PocketLiveContent, media_url: str
+    ) -> ReplayMetadata:
         danmaku_url = None
         if content.msg_file_path:
             danmaku_url = validate_https_url(

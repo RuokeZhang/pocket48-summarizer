@@ -279,7 +279,7 @@ def test_additional_targets_parse_and_clone_with_safe_paths(tmp_path):
         yang.room_voice_monitor_status_path
         == tmp_path / "room-voice-monitor-yang-bingyi-status.json"
     )
-def test_production_target_file_configures_additional_members():
+def test_production_target_file_monitors_only_yang_ye():
     target_env = (
         Path(__file__).parents[1] / "deploy" / "room-voice-target.env"
     )
@@ -289,18 +289,7 @@ def test_production_target_file_configures_additional_members():
     assert configured.pocket48_voice_member_name == "杨晔"
     assert configured.pocket48_voice_channel_id == "7587624"
     assert configured.pocket48_voice_server_id == "6227955"
-    assert configured.pocket48_voice_additional_targets_json == (
-        AdditionalRoomVoiceTarget(
-            id="wang-ruiqi",
-            name="王睿琦",
-            member_id=530390,
-        ),
-        AdditionalRoomVoiceTarget(
-            id="yang-bingyi",
-            name="杨冰怡",
-            member_id=6744,
-        ),
-    )
+    assert configured.pocket48_voice_additional_targets_json == ()
 
 
 @pytest.mark.parametrize(

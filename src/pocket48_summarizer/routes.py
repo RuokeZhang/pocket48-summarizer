@@ -75,7 +75,7 @@ from .room_voice_admin import (
     safe_capture_segment_path,
 )
 from .runtime_lock import shared_runtime_lock
-from .security import parse_share_url
+from .security import parse_share_url, strip_control_chars
 from .summarization.chunking import format_clock
 
 router = APIRouter()
@@ -885,6 +885,7 @@ async def room_voice_page(request: Request) -> Response:
             "monitor_id": target["monitor_id"],
             "name": target["name"],
             "sessions": [],
+            "monitored": True,
         }
         for target in monitor_targets
     ]
@@ -898,6 +899,7 @@ async def room_voice_page(request: Request) -> Response:
                 "monitor_id": session["monitor_id"],
                 "name": session["member_name"] or "未知监控目标",
                 "sessions": [],
+                "monitored": False,
             }
             history_groups.append(group)
             groups_by_id[session["monitor_id"]] = group
@@ -2367,6 +2369,97 @@ async def download_summary(request: Request, job_id: str) -> Response:
             )
         },
     )
+
+
+class CreateAnnualReportRequest(BaseModel):
+    uid: str = Field(pattern=r"^[0-9]{1,12}$")
+    member_pocket_id: str = Field(pattern=r"^[0-9]{1,12}$")
+    scope: Literal["2025-2026", "2026"] = "2025-2026"
+    extra_nicknames: list[str] = Field(default_factory=list, max_length=5)
+
+    @field_validator("extra_nicknames")
+    @classmethod
+    def clean_nicknames(cls, values: list[str]) -> list[str]:
+        cleaned = []
+        for value in values:
+            nickname = strip_control_chars(value).strip()
+            if len(nickname) > 24:
+                raise ValueError("nickname too long")
+            if nickname and nickname not in cleaned:
+                cleaned.append(nickname)
+        return cleaned
+
+
+def public_report_payload(job) -> dict:
+    return {
+        "id": job.id,
+        "status": job.status,
+        "progress": job.progress_text,
+        "queue_position": job.queue_position,
+        "member_name": job.member_name,
+        "scope": job.scope,
+        "error": (
+            {"code": job.error_code, "message": job.error_message}
+            if job.status == "failed"
+            else None
+        ),
+        "result": job.result if job.status == "completed" else None,
+    }
+
+
+@router.get("/report", response_class=HTMLResponse)
+async def annual_report_page(request: Request) -> Response:
+    context = optional_auth(request)
+    settings = request.app.state.settings
+    members = request.app.state.annual_reports.list_members()
+    return request.app.state.templates.TemplateResponse(
+        request=request,
+        name="report.html",
+        context={
+            "current_user": context.user if context else None,
+            "csrf_token": context.csrf_token if context else "",
+            "enabled": settings.annual_report_enabled,
+            "members": members,
+            "default_member_id": DEFAULT_HOME_MEMBER_ID,
+            "hourly_limit": settings.annual_report_hourly_limit,
+        },
+    )
+
+
+@router.post("/api/reports")
+async def create_annual_report(
+    request: Request, payload: CreateAnnualReportRequest
+) -> Response:
+    settings = request.app.state.settings
+    if not settings.annual_report_enabled:
+        raise AppError("worker_unavailable", "年度报告暂未开放", True)
+    reports = request.app.state.annual_reports
+    member = reports.get_member(payload.member_pocket_id)
+    if member is None:
+        raise AppError("report_member_unknown", "成员不在名单里，请刷新页面后重选", False)
+    job = reports.enqueue(
+        uid=payload.uid,
+        member=member,
+        scope=payload.scope,
+        extra_nicknames=payload.extra_nicknames,
+        requester=request.client.host if request.client else "unknown",
+    )
+    worker = request.app.state.services.annual_report_worker
+    if worker:
+        worker.notify()
+    return JSONResponse(public_report_payload(job), status_code=202)
+
+
+@router.get("/api/reports/{job_id}")
+async def annual_report_status(request: Request, job_id: str) -> dict:
+    job = (
+        request.app.state.annual_reports.get(job_id)
+        if re.fullmatch(r"[0-9a-f]{32}", job_id)
+        else None
+    )
+    if job is None:
+        raise AppError("report_not_found", "报告不存在或已过期", False)
+    return public_report_payload(job)
 
 
 @router.get("/healthz")

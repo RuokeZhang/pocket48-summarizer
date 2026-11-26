@@ -46,8 +46,14 @@
       </div>
     </div>
     {% for group in history_groups %}
-      <section class="room-voice-history-group">
-        <h3>{% if group.name %}{{ group.name }}{% else %}<span data-i18n="roomVoiceUnknownTarget">未知监控目标</span>{% endif %}</h3>
+      <details class="room-voice-history-group"{% if group.monitored %} open{% endif %}>
+        <summary>
+          <h3>{% if group.name %}{{ group.name }}{% else %}<span data-i18n="roomVoiceUnknownTarget">未知监控目标</span>{% endif %}</h3>
+          <small>
+            <span data-i18n-runtime="roomVoiceSessionCount" data-i18n-runtime-params='{"count": {{ group.sessions | length }}}'>{{ group.sessions | length }} 个会话</span>
+            {% if not group.monitored %}· <span data-i18n="roomVoiceMonitorStopped">已停止监控</span>{% endif %}
+          </small>
+        </summary>
         <div class="room-voice-session-list">
           {% for session in group.sessions %}
             <article class="room-voice-session-card">
@@ -128,7 +134,7 @@
             <p class="muted" data-i18n="roomVoiceNoSessions">还没有可安全显示的采集会话。</p>
           {% endfor %}
         </div>
-      </section>
+      </details>
     {% endfor %}
   </section>
 

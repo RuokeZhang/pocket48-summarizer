@@ -1175,3 +1175,26 @@ def test_route_challenge_and_login_never_render_secrets(
     for secret in (phone, code, token, "reviewed-seed"):
         assert secret not in combined
         assert secret not in page.text
+
+
+def test_stopped_monitor_history_stays_visible_but_collapsed(
+    settings, repository
+):
+    app = make_admin_app(settings, repository)
+    configured = app.state.settings
+    configured.prepare_directories()
+    write_capture_session(
+        configured, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        monitor_id="retired-target", member_name="停播成员",
+    )
+
+    with TestClient(app) as visitor:
+        page = visitor.get("/room-voice")
+
+    assert page.status_code == 200
+    assert '<details class="room-voice-history-group" open>' in page.text
+    assert "停播成员</h3>" in page.text
+    stopped_group = page.text.split("停播成员</h3>")[0].rsplit("<details", 1)[1]
+    assert " open" not in stopped_group
+    assert "已停止监控" in page.text
+    assert "/room-voice/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/segments/" in page.text

@@ -268,6 +268,17 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=30)
     worker_lease_seconds: int = Field(default=120, ge=30, le=900)
 
+    annual_report_enabled: bool = True
+    msg48_base_url: str = "https://msg48.org"
+    member_index_url: str = "https://data.gnz.hk/members.json"
+    max_msg48_response_bytes: int = Field(default=40 * 1024 * 1024, ge=1024)
+    max_member_index_bytes: int = Field(default=8 * 1024 * 1024, ge=1024)
+    annual_report_queue_limit: int = Field(default=20, ge=1, le=500)
+    annual_report_hourly_limit: int = Field(default=3, ge=1, le=100)
+    annual_report_cache_hours: int = Field(default=24, ge=1, le=720)
+    annual_report_retention_days: int = Field(default=7, ge=1, le=90)
+    annual_report_danmaku_concurrency: int = Field(default=3, ge=1, le=8)
+
     @model_validator(mode="after")
     def validate_bind_address(self) -> "Settings":
         if not VOICE_MONITOR_ID_RE.fullmatch(
@@ -413,6 +424,10 @@ class Settings(BaseSettings):
     @property
     def pocket48_voice_credentials_path(self) -> Path:
         return self.data_dir / "private" / "room-voice-credentials.json"
+
+    @property
+    def annual_report_secret_path(self) -> Path:
+        return self.data_dir / "private" / "annual-report-secret"
 
     @property
     def pocket48_pa_signing_seed_path(self) -> Path:

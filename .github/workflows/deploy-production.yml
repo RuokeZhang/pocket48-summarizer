@@ -55,6 +55,7 @@ jobs:
           python -m compileall -q src
           node --check src/pocket48_summarizer/static/app.js
           node --check src/pocket48_summarizer/static/i18n.js
+          node --check src/pocket48_summarizer/static/report.js
           bash -n \
             scripts/deploy-common.sh \
             scripts/deploy-release.sh \

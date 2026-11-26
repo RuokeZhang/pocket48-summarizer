@@ -13,6 +13,7 @@ from .clients.member_catalog import MemberCatalogClient
 from .clients.oss_store import OSSStore
 from .clients.seedream import SeedreamClient
 from .config import Settings
+from .annual_report import AnnualReportRepository
 from .auth import AuthRepository, AuthService
 from .db import Database
 from .errors import AppError
@@ -84,6 +85,8 @@ def create_app(
             await services.ai_covers.startup()
         if services.worker:
             await services.worker.start()
+        if services.annual_report_worker:
+            await services.annual_report_worker.start()
         yield
         await services.close()
 
@@ -103,6 +106,7 @@ def create_app(
     app.state.services = services
     app.state.auth = services.auth
     app.state.room_voice_admin = RoomVoiceAdminService(settings)
+    app.state.annual_reports = AnnualReportRepository(database, settings)
     app.state.templates = Jinja2Templates(directory=f"{package_dir}/templates")
     app.mount(
         "/static",
@@ -132,6 +136,10 @@ def create_app(
             status = 429
         if exc.code == "room_voice_sms_cooldown":
             status = 429
+        if exc.code in {"report_rate_limited", "report_queue_full"}:
+            status = 429
+        if exc.code == "report_not_found":
+            status = 404
         if exc.retryable and exc.code.endswith("_not_ready"):
             status = 409
         if exc.code in {

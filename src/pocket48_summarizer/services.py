@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .annual_report import AnnualReportRepository, AnnualReportWorker
 from .auth import AuthService
 from .clients.dashscope import DashScopeClient
 from .clients.llm import OpenAICompatibleClient
 from .clients.member_catalog import MemberCatalogClient
+from .clients.msg48 import Msg48Client
 from .clients.oss_store import OSSStore
 from .clients.pocket48 import Pocket48Client
 from .clients.seedream import SeedreamClient
@@ -45,10 +47,13 @@ class ApplicationServices:
     member_catalog_client: MemberCatalogClient | None = None
     member_catalog: MemberCatalogService | None = None
     vocabulary: VocabularyManager | None = None
+    annual_report_worker: AnnualReportWorker | None = None
 
     async def close(self) -> None:
         if self.worker:
             await self.worker.stop()
+        if self.annual_report_worker:
+            await self.annual_report_worker.stop()
         if self.clipper:
             await self.clipper.close()
         if self.ai_covers:
@@ -151,4 +156,14 @@ def build_services(
         member_catalog_client=member_catalog_client,
         member_catalog=member_catalog,
         vocabulary=vocabulary,
+        annual_report_worker=(
+            AnnualReportWorker(
+                settings,
+                AnnualReportRepository(repository.database, settings),
+                pocket48,
+                Msg48Client(settings),
+            )
+            if settings.annual_report_enabled
+            else None
+        ),
     )

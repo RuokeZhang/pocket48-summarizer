@@ -31,6 +31,8 @@ async def run_worker(settings: Settings | None = None) -> None:
         loop.add_signal_handler(signum, stop_event.set)
 
     await services.worker.start()
+    if services.annual_report_worker is not None:
+        await services.annual_report_worker.start()
     ready_value = str(Path.cwd().resolve())
     ready_temporary = settings.worker_ready_path.with_suffix(".tmp")
     ready_temporary.write_text(ready_value, encoding="utf-8")

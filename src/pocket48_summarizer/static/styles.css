@@ -172,6 +172,19 @@ button, input, select, textarea { font: inherit; }
 .room-voice-history-group + .room-voice-history-group {
   margin-top: 2rem;
 }
+.room-voice-history-group > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 0.85rem;
+  cursor: pointer;
+  list-style: none;
+}
+.room-voice-history-group > summary::-webkit-details-marker { display: none; }
+.room-voice-history-group > summary::before { content: "▸"; color: #9299aa; }
+.room-voice-history-group[open] > summary::before { content: "▾"; }
+.room-voice-history-group > summary h3 { margin: 0; }
+.room-voice-history-group > summary small { color: #9299aa; }
 
 .room-voice-session-list {
   display: grid;
@@ -3234,3 +3247,28 @@ code { color: #d4c8ff; }
     right: calc(min(43%, 190px) + 10px);
   }
 }
+
+/* Annual report */
+.report-page { max-width: 760px; margin: 0 auto; }
+.report-intro h1 { margin: 0 0 10px; }
+.report-intro p, .report-hint { color: #aab0bf; }
+.report-hint { font-size: 14px; margin: 6px 0 18px; }
+.report-notice { padding: 18px 20px; border: 1px solid #2b303d; border-radius: 16px; background: rgba(255, 255, 255, .03); }
+.report-form { display: grid; gap: 6px; padding: 26px; margin: 24px 0; border: 1px solid #2b303d; border-radius: 22px; background: rgba(255, 255, 255, .03); }
+.report-form label { font-weight: 700; }
+.report-form select,
+.report-form textarea { width: 100%; padding: 12px 14px; border: 1px solid #343949; border-radius: 12px; background: #11141c; color: #fff; }
+.report-scope { display: flex; gap: 18px; flex-wrap: wrap; margin: 12px 0; padding: 12px 14px; border: 1px solid #343949; border-radius: 12px; }
+.report-scope legend { padding: 0 6px; font-weight: 700; }
+.report-scope label { font-weight: 400; }
+.report-advanced { margin: 6px 0 14px; }
+.report-advanced summary { cursor: pointer; color: #c5cad6; margin-bottom: 10px; }
+.report-status { padding: 14px 18px; margin: 0 0 18px; border: 1px solid #3a4050; border-radius: 14px; background: #161a24; color: #dfe3ec; }
+.report-status.is-error { border-color: #7a2e43; background: rgba(92, 27, 48, .28); color: #ffc2d2; }
+.report-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.report-canvas { display: block; width: 100%; max-width: 720px; height: auto; margin: 0 auto; image-rendering: pixelated; border-radius: 8px; }
+.report-flip { margin-top: 42px; padding: 26px; border: 1px solid #2b303d; border-radius: 22px; background: rgba(255, 255, 255, .03); }
+.report-flip h2 { margin-top: 0; }
+.report-flip p { color: #c5cad6; }
+.report-flip-sample { display: block; width: 100%; max-width: 480px; height: auto; margin: 18px auto 0; border-radius: 8px; }
+.report-scope input[type="radio"] { flex: none; width: auto; min-width: 0; padding: 0; border: 0; accent-color: #ff5f8f; }
