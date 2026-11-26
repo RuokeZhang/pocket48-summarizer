@@ -28,7 +28,9 @@ from .annual_report_stats import (
     REPORT_VERSION,
     Replay,
     RoomMessage,
+    build_alias_windows,
     build_report,
+    normalize_nickname,
     china_today,
     parse_lrc_lines,
     scope_start_ms,
@@ -279,16 +281,22 @@ class AnnualReportRepository:
                 (cutoff,),
             ).rowcount
 
-    def cached_replays(self, member_pocket_id: str) -> dict[str, tuple[str, str, int, list]]:
+    def cached_replays(
+        self, member_pocket_id: str, keep_author
+    ) -> dict[str, tuple[str, str, int, list]]:
+        """Read cached lives one row at a time, keeping only lines whose author
+        passes keep_author, so a popular member never sits in memory whole."""
+        cached = {}
         with self.database.connect() as connection:
-            rows = connection.execute(
+            cursor = connection.execute(
                 "SELECT * FROM annual_report_live_cache WHERE member_pocket_id = ?",
                 (member_pocket_id,),
-            ).fetchall()
-        cached = {}
-        for row in rows:
-            lines = json.loads(zlib.decompress(row["lines_blob"])) if row["lines_blob"] else []
-            cached[row["live_id"]] = (row["status"], row["title"], row["started_at_ms"], lines)
+            )
+            for row in cursor:
+                lines = []
+                if row["lines_blob"]:
+                    lines = [line for line in json.loads(zlib.decompress(row["lines_blob"])) if keep_author(line[1])]
+                cached[row["live_id"]] = (row["status"], row["title"], row["started_at_ms"], lines)
         return cached
 
     def store_replay(
@@ -504,7 +512,15 @@ class AnnualReportWorker:
         live_list = await self._member_replays(job.member_pocket_id)
         since_ms = scope_start_ms(job.scope)
         scoped = [(live_id, started) for live_id, started in live_list if started >= since_ms]
-        replays, failed = await self._load_danmaku(job.member_pocket_id, scoped)
+        author_keys = {
+            window.key for window in build_alias_windows(
+                [(item.nickname, item.first_used_ms) for item in nicknames],
+                [RoomMessage(message.timestamp_ms, message.room_info.owner_name,
+                             message.nickname, message.msg_type, message.content) for message in messages],
+                job.extra_nicknames,
+            )
+        }
+        replays, failed = await self._load_danmaku(job.member_pocket_id, scoped, author_keys)
         self._set_progress("正在统计")
         result = await asyncio.to_thread(
             build_report,
@@ -567,9 +583,12 @@ class AnnualReportWorker:
         return live_list
 
     async def _load_danmaku(
-        self, member_pocket_id: str, live_list: list[tuple[str, int]]
+        self, member_pocket_id: str, live_list: list[tuple[str, int]], author_keys: set[str]
     ) -> tuple[list[Replay], int]:
-        cached = await asyncio.to_thread(self.repository.cached_replays, member_pocket_id)
+        def keep_author(author: str) -> bool:
+            return normalize_nickname(author) in author_keys
+
+        cached = await asyncio.to_thread(self.repository.cached_replays, member_pocket_id, keep_author)
         replays: list[Replay] = []
         missing = []
         for live_id, started_at_ms in live_list:
@@ -597,7 +616,9 @@ class AnnualReportWorker:
                         started_at_ms, metadata.title, lines,
                     )
                     if lines is not None:
-                        replays.append(Replay(live_id, started_at_ms, metadata.title, lines))
+                        own_lines = [line for line in lines if keep_author(line[1])]
+                        del lines
+                        replays.append(Replay(live_id, started_at_ms, metadata.title, own_lines))
                 except AppError as exc:
                     if exc.code != "replay_not_ready":
                         failed += 1

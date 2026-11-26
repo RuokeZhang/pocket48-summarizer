@@ -278,7 +278,7 @@ class Settings(BaseSettings):
     annual_report_hourly_limit: int = Field(default=3, ge=1, le=100)
     annual_report_cache_hours: int = Field(default=24, ge=1, le=720)
     annual_report_retention_days: int = Field(default=7, ge=1, le=90)
-    annual_report_danmaku_concurrency: int = Field(default=3, ge=1, le=8)
+    annual_report_danmaku_concurrency: int = Field(default=2, ge=1, le=8)
 
     @model_validator(mode="after")
     def validate_bind_address(self) -> "Settings":

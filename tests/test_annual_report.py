@@ -432,3 +432,8 @@ def test_gift_price_table_drops_ambiguous_names_and_keeps_score_gifts_apart():
         "rules": [{"name": "命定水晶", "scorePerUnit": "9"}, {"name": "娃娃机", "historicalCost": 1200}],
     })
     assert table == {"prices": {"荧光棒": 5, "高级马卡龙": 1048}, "scores": {"命定水晶": 9.0}}
+
+def test_cached_danmaku_is_filtered_while_reading(reports):
+    reports.store_replay("407126", "1", ms(2026, 1, 1), "直播", [(1, "小明", "来了"), (2, "路人", "你好")])
+    cached = reports.cached_replays("407126", lambda author: author == "小明")
+    assert cached["1"][3] == [[1, "小明", "来了"]]

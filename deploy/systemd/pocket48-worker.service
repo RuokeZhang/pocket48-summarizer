@@ -17,6 +17,14 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/pocket48-summarizer-worker/.venv/bin/pocket48-worker
 Restart=on-failure
 RestartSec=5
+# A runaway job must not freeze the whole box: cap the worker (and its ffmpeg
+# children), keep it out of swap, give the web slots CPU priority, and make it
+# the first thing the kernel OOM killer picks.
+MemoryHigh=800M
+MemoryMax=1G
+MemorySwapMax=0
+CPUWeight=50
+OOMScoreAdjust=500
 TimeoutStopSec=30
 KillSignal=SIGINT
 UMask=0077
