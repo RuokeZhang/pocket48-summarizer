@@ -244,6 +244,7 @@ def test_report_page_and_api(settings, repository, reports):
         assert 'data-search="杨晔 yangye 社长 二毛 日华 snh48 team x"' in page.text
         assert 'id="report-member-search"' in page.text
         assert 'id="report-sample"' in page.text
+        assert 'id="report-history"' in page.text
         sample = client.get("/static/report-sample.json").json()
         assert sample["version"] == REPORT_VERSION and sample["totals"]["danmaku"] > 0
         assert 'href="/report"' in client.get("/").text
@@ -391,3 +392,4 @@ def test_share_link_shows_only_the_poster(settings, repository, reports):
     assert 'class="button-link report-cta" href="/report"' in page.text
     assert 'id="report-form"' not in page.text
     assert 'id="report-sample"' not in page.text
+    assert 'id="report-history"' not in page.text

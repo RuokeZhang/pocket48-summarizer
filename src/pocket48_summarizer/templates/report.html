@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}年度报告 · 口袋48直播总结{% endblock %}
 {% block head_scripts %}
-  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-10"></script>
+  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-11"></script>
 {% endblock %}
 {% block content %}
 <section class="report-page">
@@ -25,6 +25,11 @@
     <p class="report-hint" data-i18n="reportSampleCaption">示例来自站长“花果山大当家RUOKE”，主推杨晔，统计 2025—2026。</p>
     <canvas id="report-sample-canvas" class="report-canvas"></canvas>
   </details>
+
+  <div id="report-history" class="report-history" hidden>
+    <h2 data-i18n="reportHistoryTitle">我最近生成的报告</h2>
+    <ul id="report-history-list"></ul>
+  </div>
 
   {% if not enabled %}
     <p class="report-notice" data-i18n="reportDisabled">年度报告暂未开放。</p>

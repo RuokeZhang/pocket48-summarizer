@@ -600,6 +600,30 @@
   let currentReport = null;
   let copyLinkUrl = "";
 
+  const showLinkBox = (jobId) => {
+    let box = document.querySelector("#report-link-box");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "report-link-box";
+      box.className = "report-link-box";
+      statusBox.after(box);
+    }
+    box.replaceChildren();
+    const caption = document.createElement("span");
+    caption.textContent = "你的专属链接（7 天内有效，只有拿到链接的人能看）：";
+    const link = document.createElement("a");
+    link.href = `/report?job=${jobId}`;
+    link.textContent = shareUrl(jobId);
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "secondary-button";
+    copy.textContent = "复制";
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(shareUrl(jobId)); copy.textContent = "已复制"; } catch { copy.textContent = "请手动复制"; }
+    });
+    box.append(caption, link, copy);
+  };
+
   const showStatus = (message, isError = false) => {
     statusBox.hidden = false;
     statusBox.textContent = message;
@@ -608,9 +632,61 @@
 
   const errorMessage = (body, fallback) => (body && body.error && body.error.message) || (body && body.detail ? "输入有误，请检查 UID 和昵称" : fallback);
 
+  // Recent reports live only in this browser; the random job link is the key.
+  const HISTORY_KEY = "p48-report-jobs";
+  const HISTORY_DAYS = 7;
+  const readHistory = () => {
+    try {
+      const cutoff = Date.now() - HISTORY_DAYS * 86400000;
+      return JSON.parse(window.localStorage.getItem(HISTORY_KEY) || "[]").filter((item) => item.created > cutoff);
+    } catch {
+      return [];
+    }
+  };
+  const writeHistory = (items) => {
+    try { window.localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, 10))); } catch { /* storage may be disabled */ }
+  };
+  const rememberJob = (job) => writeHistory([
+    { id: job.id, member: job.member_name, scope: job.scope, created: Date.now() },
+    ...readHistory().filter((item) => item.id !== job.id)
+  ]);
+  const shareUrl = (jobId) => `${window.location.origin}/report?job=${jobId}`;
+
+  const showHistory = async () => {
+    const box = document.querySelector("#report-history");
+    const list = document.querySelector("#report-history-list");
+    if (!box || !list) return;
+    const items = readHistory();
+    const kept = [];
+    list.replaceChildren();
+    for (const item of items) {
+      let label = "";
+      try {
+        const response = await fetch(`/api/reports/${item.id}`, { headers: { Accept: "application/json" } });
+        if (response.status === 404) continue;
+        const job = await response.json();
+        label = { completed: "已完成", failed: "生成失败", queued: "排队中", running: "生成中" }[job.status] || "";
+      } catch {
+        label = "";
+      }
+      kept.push(item);
+      const row = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = `/report?job=${item.id}`;
+      link.textContent = `${item.member} · ${item.scope === "2026" ? "2026" : "2025—2026"}`;
+      const meta = document.createElement("small");
+      meta.textContent = ` ${new Date(item.created).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}${label ? ` · ${label}` : ""}`;
+      row.append(link, meta);
+      list.append(row);
+    }
+    writeHistory(kept);
+    box.hidden = kept.length === 0;
+  };
+
   const describe = (job) => {
-    if (job.status === "queued") return `排队中，前面还有${Math.max(0, job.queue_position - 1)}位。`;
-    if (job.status === "running") return `${job.progress}……第一次查询某位成员需要下载回放弹幕，可能要几分钟。`;
+    const later = "可以先关掉页面，7 天内打开这个链接就能看到结果。";
+    if (job.status === "queued") return `排队中，前面还有${Math.max(0, job.queue_position - 1)}位。${later}`;
+    if (job.status === "running") return `${job.progress}……第一次查询某位成员需要下载回放弹幕，可能要一两分钟。${later}`;
     return job.progress;
   };
 
@@ -674,7 +750,9 @@
       const job = await response.json();
       if (!response.ok) { showStatus(errorMessage(job, "提交失败，请检查输入"), true); submit.disabled = false; return; }
       history.replaceState(null, "", `/report?job=${job.id}`);
-      copyLinkUrl = `${window.location.origin}/report?job=${job.id}`;
+      copyLinkUrl = shareUrl(job.id);
+      rememberJob(job);
+      showLinkBox(job.id);
       poll(job.id);
     } catch {
       showStatus("提交失败，请稍后再试", true);
@@ -736,6 +814,8 @@
       memberSelect.value = matches.some((member) => member.value === previous) ? previous : (matches[0] || { value: "" }).value;
     });
   }
+
+  showHistory();
 
   const initialJob = new URLSearchParams(window.location.search).get("job");
   if (initialJob && /^[0-9a-f]{32}$/.test(initialJob)) {
