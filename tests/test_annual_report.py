@@ -235,3 +235,30 @@ def test_report_page_and_api(settings, repository, reports):
         status = client.get(f"/api/reports/{body['id']}")
         assert status.json()["queue_position"] == 1
         assert client.get("/api/reports/not-a-job").status_code == 404
+
+
+class FailingIndexMsg48(FakeMsg48):
+    def __init__(self):
+        self.index_calls = 0
+
+    async def member_index(self):
+        self.index_calls += 1
+        raise AppError("archive_request_failed", "blocked", True)
+
+
+async def test_member_list_falls_back_to_snapshot_and_retries_soon(settings, repository, monkeypatch):
+    reports = AnnualReportRepository(repository.database, settings)
+    msg48 = FailingIndexMsg48()
+    worker = AnnualReportWorker(settings, reports, FakePocket48(), msg48)
+    await worker.start()
+    await worker.stop()
+    assert reports.get_member("407126").name == "杨晔"
+    assert len(reports.list_members()) > 500
+
+    await worker._refresh_member_index_if_due()
+    await worker._refresh_member_index_if_due()
+    assert msg48.index_calls == 1
+    import pocket48_summarizer.annual_report as annual_report
+    monkeypatch.setattr(annual_report, "MEMBER_INDEX_RETRY", annual_report.timedelta(0))
+    await worker._refresh_member_index_if_due()
+    assert msg48.index_calls == 2

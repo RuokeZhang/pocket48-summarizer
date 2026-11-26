@@ -18,6 +18,7 @@ import uuid
 import zlib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from .annual_report_stats import (
     Replay,
@@ -27,7 +28,7 @@ from .annual_report_stats import (
     parse_lrc_lines,
     scope_start_ms,
 )
-from .clients.msg48 import Msg48Client
+from .clients.msg48 import MemberIndexEntry, Msg48Client
 from .clients.pocket48 import Pocket48Client
 from .config import Settings
 from .db import Database
@@ -36,6 +37,8 @@ from .parsing.lrc import parse_lrc_timestamp
 
 LIVE_LIST_TTL = timedelta(hours=6)
 MEMBER_INDEX_TTL = timedelta(hours=24)
+MEMBER_INDEX_RETRY = timedelta(minutes=15)
+MEMBER_SNAPSHOT_PATH = Path(__file__).with_name("annual_report_members.json")
 
 
 @dataclass(slots=True)
@@ -334,6 +337,17 @@ class AnnualReportRepository:
             )
 
 
+def load_member_snapshot() -> list[ReportMember]:
+    """Bundled copy of the public member index, used until the first
+    successful refresh so the page never starts with an empty list."""
+    rows = json.loads(MEMBER_SNAPSHOT_PATH.read_text(encoding="utf-8"))["roomId"]
+    entries = [MemberIndexEntry.model_validate(row) for row in rows]
+    return [
+        ReportMember(str(entry.pocket_id), entry.name, entry.group_name, entry.team_name, entry.in_group)
+        for entry in entries
+    ]
+
+
 class AnnualReportWorker:
     def __init__(
         self,
@@ -355,6 +369,8 @@ class AnnualReportWorker:
     async def start(self) -> None:
         if self._task is None:
             await asyncio.to_thread(self.repository.recover_expired)
+            if not await asyncio.to_thread(self.repository.list_members):
+                await asyncio.to_thread(self.repository.replace_member_index, load_member_snapshot())
             self._task = asyncio.create_task(self._run(), name="pocket48-annual-report-worker")
 
     async def stop(self) -> None:
@@ -396,8 +412,10 @@ class AnnualReportWorker:
 
     async def _refresh_member_index_if_due(self) -> None:
         state = await asyncio.to_thread(self.repository.get_state, "member_index")
-        if state is not None and _now() - state[1] < MEMBER_INDEX_TTL:
-            return
+        if state is not None:
+            wait = MEMBER_INDEX_RETRY if state[0] == "failed" else MEMBER_INDEX_TTL
+            if _now() - state[1] < wait:
+                return
         try:
             entries = await self.msg48.member_index()
         except AppError as exc:

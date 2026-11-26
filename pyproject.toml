@@ -38,6 +38,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 pocket48_summarizer = [
+  "annual_report_members.json",
   "migrations/*.sql",
   "static/*",
   "templates/*.html",
