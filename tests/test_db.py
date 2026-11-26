@@ -54,6 +54,7 @@ def test_concurrent_database_initialization_is_serialized(tmp_path):
         "027_drop_maintenance_actions.sql",
         "028_replay_watch.sql",
         "029_annual_reports.sql",
+        "030_annual_report_member_search.sql",
     ]
 
 

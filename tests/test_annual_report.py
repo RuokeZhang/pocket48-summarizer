@@ -27,7 +27,7 @@ from pocket48_summarizer.parsing.lrc import parse_lrc_timestamp
 from pocket48_summarizer.services import ApplicationServices
 
 CHINA = ZoneInfo("Asia/Shanghai")
-MEMBER = ReportMember("407126", "杨晔", "SNH48", "TEAM X", True)
+MEMBER = ReportMember("407126", "杨晔", "SNH48", "TEAM X", True, "YangYe", "社长 二毛 日华")
 
 
 def ms(year, month, day, hour=20, minute=0):
@@ -224,6 +224,8 @@ def test_report_page_and_api(settings, repository, reports):
         page = client.get("/report")
         assert page.status_code == 200
         assert "杨晔 · SNH48 TEAM X" in page.text
+        assert 'data-search="杨晔 yangye 社长 二毛 日华 snh48 team x"' in page.text
+        assert 'id="report-member-search"' in page.text
         assert 'href="/report"' in client.get("/").text
         unknown = client.post("/api/reports", json={"uid": "367554", "member_pocket_id": "1", "scope": "2026"})
         assert unknown.status_code == 400
@@ -285,3 +287,14 @@ def test_admins_are_not_rate_limited(settings, repository, reports):
             for uid in range(20, 25)
         ]
         assert codes == [202] * 5
+
+
+async def test_member_list_without_search_fields_is_refreshed_from_snapshot(settings, repository):
+    reports = AnnualReportRepository(repository.database, settings)
+    reports.replace_member_index([ReportMember("407126", "杨晔", "SNH48", "TEAM X", True)])
+    worker = AnnualReportWorker(settings, reports, FakePocket48(), FailingIndexMsg48())
+    await worker.start()
+    await worker.stop()
+    yang_ye = reports.get_member("407126")
+    assert yang_ye.pinyin == "YangYe"
+    assert "二毛" in yang_ye.aliases

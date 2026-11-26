@@ -4,7 +4,7 @@ import asyncio
 import json
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..config import Settings
 from ..errors import ExternalServiceError
@@ -49,6 +49,13 @@ class MemberIndexEntry(BaseModel):
     group_name: str = Field(default="", alias="groupName", max_length=32)
     team_name: str = Field(default="", alias="team", max_length=32)
     in_group: bool = Field(default=True, alias="isInGroup")
+    pinyin: str = Field(default="", max_length=64)
+    aliases: str = Field(default="", alias="nickname", max_length=200)
+
+    @field_validator("group_name", "team_name", "pinyin", "aliases", mode="before")
+    @classmethod
+    def blank_when_missing(cls, value):
+        return "" if value is None else value
 
 
 class Msg48Client:

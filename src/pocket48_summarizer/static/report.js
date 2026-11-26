@@ -630,6 +630,7 @@
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const uid = form.querySelector("#report-uid").value.trim();
+    if (!form.querySelector("#report-member").value) { showStatus("请先选一位成员。", true); return; }
     if (!/^[0-9]{1,12}$/.test(uid)) { showStatus("UID 应该是 1 到 12 位数字。", true); return; }
     const nicknames = form.querySelector("#report-nicknames").value.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 5);
     submit.disabled = true;
@@ -679,6 +680,27 @@
       showStatus(window.location.href);
     }
   });
+
+  // Rebuild the option list instead of hiding options: Safari ignores hidden <option>s.
+  const memberSearch = document.querySelector("#report-member-search");
+  const memberSelect = document.querySelector("#report-member");
+  if (memberSearch && memberSelect) {
+    const allMembers = Array.from(memberSelect.options).map((option) => ({
+      value: option.value, label: option.textContent.trim(), search: option.dataset.search || ""
+    }));
+    memberSearch.addEventListener("input", () => {
+      const terms = memberSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const previous = memberSelect.value;
+      const matches = allMembers.filter((member) => terms.every((term) => member.search.includes(term)));
+      memberSelect.replaceChildren(...matches.map((member) => new Option(member.label, member.value)));
+      if (!matches.length) {
+        const empty = new Option("没有找到这位成员", "");
+        empty.disabled = true;
+        memberSelect.append(empty);
+      }
+      memberSelect.value = matches.some((member) => member.value === previous) ? previous : (matches[0] || { value: "" }).value;
+    });
+  }
 
   const initialJob = new URLSearchParams(window.location.search).get("job");
   if (initialJob && /^[0-9a-f]{32}$/.test(initialJob)) {

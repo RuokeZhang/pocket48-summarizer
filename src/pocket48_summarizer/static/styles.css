@@ -3272,3 +3272,4 @@ code { color: #d4c8ff; }
 .report-flip p { color: #c5cad6; }
 .report-flip-sample { display: block; width: 100%; max-width: 480px; height: auto; margin: 18px auto 0; border-radius: 8px; }
 .report-scope input[type="radio"] { flex: none; width: auto; min-width: 0; padding: 0; border: 0; accent-color: #ff5f8f; }
+#report-member-search { margin-bottom: 8px; }

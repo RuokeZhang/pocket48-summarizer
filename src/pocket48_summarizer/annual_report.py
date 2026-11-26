@@ -65,6 +65,17 @@ class ReportMember:
     group_name: str
     team_name: str
     in_group: bool
+    pinyin: str = ""
+    aliases: str = ""
+
+    @classmethod
+    def from_index(cls, entry: MemberIndexEntry) -> "ReportMember":
+        return cls(str(entry.pocket_id), entry.name, entry.group_name, entry.team_name,
+                   entry.in_group, entry.pinyin, entry.aliases)
+
+    @property
+    def search_text(self) -> str:
+        return " ".join([self.name, self.pinyin, self.aliases, self.group_name, self.team_name]).casefold()
 
 
 def _now() -> datetime:
@@ -299,11 +310,11 @@ class AnnualReportRepository:
             connection.executemany(
                 """
                 INSERT INTO annual_report_member_index (
-                    pocket_id, name, group_name, team_name, in_group, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    pocket_id, name, group_name, team_name, in_group, pinyin, aliases, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [(member.pocket_id, member.name, member.group_name, member.team_name,
-                  int(member.in_group), now) for member in members],
+                  int(member.in_group), member.pinyin, member.aliases, now) for member in members],
             )
 
     def list_members(self) -> list[ReportMember]:
@@ -315,8 +326,8 @@ class AnnualReportRepository:
                 """
             ).fetchall()
         return [
-            ReportMember(row["pocket_id"], row["name"], row["group_name"],
-                         row["team_name"], bool(row["in_group"]))
+            ReportMember(row["pocket_id"], row["name"], row["group_name"], row["team_name"],
+                         bool(row["in_group"]), row["pinyin"], row["aliases"])
             for row in rows
         ]
 
@@ -342,11 +353,7 @@ def load_member_snapshot() -> list[ReportMember]:
     """Bundled copy of the public member index, used until the first
     successful refresh so the page never starts with an empty list."""
     rows = json.loads(MEMBER_SNAPSHOT_PATH.read_text(encoding="utf-8"))["roomId"]
-    entries = [MemberIndexEntry.model_validate(row) for row in rows]
-    return [
-        ReportMember(str(entry.pocket_id), entry.name, entry.group_name, entry.team_name, entry.in_group)
-        for entry in entries
-    ]
+    return [ReportMember.from_index(MemberIndexEntry.model_validate(row)) for row in rows]
 
 
 class AnnualReportWorker:
@@ -370,7 +377,8 @@ class AnnualReportWorker:
     async def start(self) -> None:
         if self._task is None:
             await asyncio.to_thread(self.repository.recover_expired)
-            if not await asyncio.to_thread(self.repository.list_members):
+            members = await asyncio.to_thread(self.repository.list_members)
+            if not members or not any(member.pinyin for member in members):
                 await asyncio.to_thread(self.repository.replace_member_index, load_member_snapshot())
             self._task = asyncio.create_task(self._run(), name="pocket48-annual-report-worker")
 
@@ -423,10 +431,7 @@ class AnnualReportWorker:
             self.logger.warning("Member index refresh failed: %s", exc.code)
             await asyncio.to_thread(self.repository.set_state, "member_index", "failed")
             return
-        members = [
-            ReportMember(str(entry.pocket_id), entry.name, entry.group_name, entry.team_name, entry.in_group)
-            for entry in entries
-        ]
+        members = [ReportMember.from_index(entry) for entry in entries]
         await asyncio.to_thread(self.repository.replace_member_index, members)
         await asyncio.to_thread(self.repository.set_state, "member_index", str(len(members)))
 

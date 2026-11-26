@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}年度报告 · 口袋48直播总结{% endblock %}
 {% block head_scripts %}
-  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-2"></script>
+  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-3"></script>
 {% endblock %}
 {% block content %}
 <section class="report-page">
@@ -20,10 +20,12 @@
       <input id="report-uid" name="uid" inputmode="numeric" autocomplete="off" maxlength="12" pattern="[0-9]{1,12}" required>
       <p class="report-hint" data-i18n="reportUidHint">UID 是口袋48账号的数字 ID，不是昵称。</p>
 
-      <label for="report-member" data-i18n="reportMemberLabel">主推成员（统计她的直播弹幕）</label>
+      <label for="report-member-search" data-i18n="reportMemberLabel">主推成员（统计她的直播弹幕）</label>
+      <input id="report-member-search" type="search" autocomplete="off" maxlength="40"
+        placeholder="搜索名字、拼音、昵称或队伍，比如 yangye、二毛" data-i18n-placeholder="reportMemberSearch">
       <select id="report-member" name="member_pocket_id" required>
         {% for member in members %}
-          <option value="{{ member.pocket_id }}"{% if member.pocket_id == default_member_id %} selected{% endif %}>
+          <option value="{{ member.pocket_id }}" data-search="{{ member.search_text }}"{% if member.pocket_id == default_member_id %} selected{% endif %}>
             {{ member.name }} · {{ member.group_name }} {{ member.team_name }}{% if not member.in_group %}（已离团）{% endif %}
           </option>
         {% endfor %}
