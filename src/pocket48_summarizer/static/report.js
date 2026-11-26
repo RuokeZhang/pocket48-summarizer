@@ -632,14 +632,54 @@
     return { height, hotspots };
   };
 
+  // In-app browsers (WeChat, QQ, Weibo…) and some mobile browsers ignore
+  // <a download>, so mobile users get the share sheet or a long-press image.
+  const IN_APP_BROWSER = /MicroMessenger|QQ\/|MQQBrowser|Weibo|DingTalk|AlipayClient|XiaoHongShu|aweme|Douyin|Bytedance/i;
+  const MOBILE = /Android|iPhone|iPad|iPod|Mobile/i;
+
+  const showLongPressImage = (dataUrl) => {
+    const overlay = document.createElement("div");
+    overlay.className = "report-save-overlay";
+    const bar = document.createElement("div");
+    bar.className = "report-save-bar";
+    const hint = document.createElement("span");
+    hint.textContent = "长按图片，选择「保存图片」";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "关闭";
+    close.addEventListener("click", () => overlay.remove());
+    bar.append(hint, close);
+    const image = document.createElement("img");
+    image.src = dataUrl;
+    image.alt = "口袋48年度报告海报";
+    overlay.append(bar, image);
+    document.body.append(overlay);
+  };
+
   // The exported PNG never contains the "download" button.
   const downloadPoster = async (report) => {
     const exportCanvas = document.createElement("canvas");
     await renderPoster(exportCanvas, report);
+    const fileName = `口袋48年度报告-${report.display_name || "我"}-${report.member_name}.png`;
+    const agent = navigator.userAgent || "";
+    if (MOBILE.test(agent) || IN_APP_BROWSER.test(agent)) {
+      const blob = await new Promise((resolve) => exportCanvas.toBlob(resolve, "image/png"));
+      const file = blob && new File([blob], fileName, { type: "image/png" });
+      if (file && !IN_APP_BROWSER.test(agent) && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: "口袋48年度报告" });
+          return;
+        } catch (error) {
+          if (error && error.name === "AbortError") return;
+        }
+      }
+      showLongPressImage(exportCanvas.toDataURL("image/png"));
+      return;
+    }
     exportCanvas.toBlob((blob) => {
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = `口袋48年度报告-${report.display_name || "我"}-${report.member_name}.png`;
+      link.download = fileName;
       link.click();
       setTimeout(() => URL.revokeObjectURL(link.href), 10000);
     }, "image/png");
@@ -895,5 +935,5 @@
     poll(initialJob);
   }
 
-  window.P48Report = { renderPoster };
+  window.P48Report = { renderPoster, downloadPoster };
 })();
