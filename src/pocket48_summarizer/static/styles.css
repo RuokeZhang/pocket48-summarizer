@@ -3273,3 +3273,6 @@ code { color: #d4c8ff; }
 .report-flip-sample { display: block; width: 100%; max-width: 480px; height: auto; margin: 18px auto 0; border-radius: 8px; }
 .report-scope input[type="radio"] { flex: none; width: auto; min-width: 0; padding: 0; border: 0; accent-color: #ff5f8f; }
 #report-member-search { margin-bottom: 8px; }
+.report-sample { margin: 20px 0 0; padding: 16px 20px; border: 1px solid #2b303d; border-radius: 18px; background: rgba(255, 255, 255, .03); }
+.report-sample summary { cursor: pointer; font-weight: 700; color: #ff8bad; }
+.report-sample[open] summary { margin-bottom: 8px; }

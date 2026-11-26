@@ -681,6 +681,19 @@
     }
   });
 
+  const sample = document.querySelector("#report-sample");
+  let sampleRendered = false;
+  sample?.addEventListener("toggle", async () => {
+    if (!sample.open || sampleRendered) return;
+    sampleRendered = true;
+    try {
+      const response = await fetch(sample.dataset.sampleUrl, { headers: { Accept: "application/json" } });
+      await renderPoster(document.querySelector("#report-sample-canvas"), await response.json());
+    } catch {
+      sampleRendered = false;
+    }
+  });
+
   // Rebuild the option list instead of hiding options: Safari ignores hidden <option>s.
   const memberSearch = document.querySelector("#report-member-search");
   const memberSelect = document.querySelector("#report-member");
