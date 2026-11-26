@@ -2412,12 +2412,14 @@ async def annual_report_page(request: Request) -> Response:
     context = optional_auth(request)
     settings = request.app.state.settings
     members = request.app.state.annual_reports.list_members()
+    shared_job = request.query_params.get("job", "")
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="report.html",
         context={
             "current_user": context.user if context else None,
             "csrf_token": context.csrf_token if context else "",
+            "share_job_id": shared_job if re.fullmatch(r"[0-9a-f]{32}", shared_job) else "",
             "enabled": settings.annual_report_enabled,
             "members": members,
             "default_member_id": DEFAULT_HOME_MEMBER_ID,

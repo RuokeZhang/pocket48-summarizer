@@ -411,27 +411,17 @@
     return y;
   };
 
-  const nicknameSection = (p, y, report) => {
-    const start = Date.parse(`${report.years[0]}-01-01T00:00:00Z`);
-    const end = Date.parse(`${report.data_end}T00:00:00Z`) + 86400000;
-    report.nicknames.forEach((entry) => {
-      y += 16;
-      let size = 36;
-      while (size > 24 && measure(p, entry.name, size) > CW - 140) size -= 12;
-      text(p, entry.name, PAD, y, size, C.ink);
-      text(p, `${fmt(entry.count)}句`, W - PAD, y + 8, 24, C.inkMuted, "right");
-      y += 52;
-      rect(p, PAD, y, CW, 16, C.creamPanel);
-      const left = Math.max(0, (Date.parse(`${entry.first}T00:00:00Z`) - start) / (end - start));
-      const right = Math.min(1, (Date.parse(`${entry.last}T00:00:00Z`) + 86400000 - start) / (end - start));
-      rect(p, PAD + Math.round(left * CW / 4) * 4, y, Math.max(4, Math.round((right - left) * CW / 4) * 4), 16, C.accent);
-      y += 24;
-      text(p, entry.first === entry.last ? chinaDate(entry.first) : `${chinaDate(entry.first)}—${chinaDate(entry.last)}`, PAD, y, 24, C.inkMuted);
-      y += 36;
+  const giftSection = (p, y, report) => {
+    const top = report.gifts.top;
+    const max = Math.max(1, ...top.map((gift) => gift.count));
+    top.forEach((gift) => {
+      const name = wrap(p, gift.name, 168, 24)[0];
+      text(p, name, PAD, y + 4, 24, C.ink);
+      rect(p, PAD + 180, y + 12, Math.max(4, Math.round(gift.count / max * 300 / 4) * 4), 18, C.accent);
+      text(p, `×${fmt(gift.count)}`, PAD + 500, y + 4, 24, C.ink);
+      y += 44;
     });
-    text(p, `${report.years[0]}.01`, PAD, y + 4, 24, C.inkMuted);
-    text(p, chinaDate(report.data_end), W - PAD, y + 4, 24, C.inkMuted, "right");
-    return y + 48;
+    return y + 8;
   };
 
   const topLivesSection = (p, y, report) => {
@@ -464,19 +454,25 @@
 
   const footer = (p, y, report) => {
     const notes = [
-      `数据：口袋48公开回放弹幕、msg48.org 公开房间存档。只统计你在${report.member_name}房间的留言和她直播里的弹幕，时间按北京时间，不含表情、礼物和翻牌。`,
+      `数据：口袋48公开回放弹幕、msg48.org 公开房间存档。只统计你在${report.member_name}房间的留言和她直播里的弹幕，时间按北京时间，发言不含表情、礼物和翻牌。`,
       "弹幕按你用过的昵称在对应时间段内匹配，可能有遗漏。"
     ];
     if (report.notes && report.notes.archive_truncated) notes.push("你的房间留言超过1万条，只统计了最早的1万条。");
     if (report.notes && report.notes.unreadable_lives) notes.push(`有${report.notes.unreadable_lives}场回放的弹幕暂时读不到，没有计入。`);
     const noteText = notes.join("");
     const lines = wrap(p, noteText, CW, 24);
-    const h = 220 + lines.length * 36 + 48;
+    const h = 300 + lines.length * 36 + 48;
     background(p, y, h, C.navy);
-    text(p, "下一句，明年见", W / 2, y + 48, 48, C.light, "center");
-    text(p, "p48.ruokezhang.com/report", W / 2, y + 124, 24, C.pink, "center");
-    rect(p, PAD, y + 188, CW, 2, C.navyLine);
-    lines.forEach((line, index) => text(p, line, PAD, y + 204 + index * 36, 24, C.lightMuted));
+    text(p, "下一句，明年见", W / 2, y + 40, 48, C.light, "center");
+    // A pixel "button" so people who only see the PNG know where to make their own.
+    const cta = "▶ 生成你的口袋48年度报告";
+    const buttonWidth = Math.ceil(measure(p, cta, 36) + 64);
+    const buttonX = Math.round((W - buttonWidth) / 2);
+    frame(p, buttonX, y + 120, buttonWidth, 64, C.pink, C.light);
+    text(p, cta, W / 2, y + 134, 36, C.navy, "center");
+    text(p, "p48.ruokezhang.com/report", W / 2, y + 208, 24, C.pink, "center");
+    rect(p, PAD, y + 268, CW, 2, C.navyLine);
+    lines.forEach((line, index) => text(p, line, PAD, y + 284 + index * 36, 24, C.lightMuted));
     return y + h;
   };
 
@@ -546,10 +542,13 @@
         return phraseSection(q, yy, report);
       });
     }
-    if (report.nicknames.length) {
+    const gifts = report.gifts;
+    if (gifts && gifts.top.length) {
       section(false, (q, sy) => {
-        let yy = chapter(q, sy, false, "CH.7", "NAME HISTORY", "昵称进化史", `用过${report.nicknames.length}个昵称`, "句数包含房间留言和弹幕。");
-        return nicknameSection(q, yy, report);
+        let yy = chapter(q, sy, false, "CH.7", "GIFTS", `送给${report.member_name}的礼物`,
+          `一共${fmt(gifts.live_items + gifts.room_items)}份`,
+          `直播里送礼${gifts.live_times}次，房间里送礼${gifts.room_times}次。下面是送得最多的礼物。`);
+        return giftSection(q, yy + 20, report);
       });
     }
     if (report.top_lives.length) {
@@ -599,6 +598,7 @@
   const submit = document.querySelector("#report-submit");
   let currentJob = null;
   let currentReport = null;
+  let copyLinkUrl = "";
 
   const showStatus = (message, isError = false) => {
     statusBox.hidden = false;
@@ -630,6 +630,7 @@
       }
       if (job.status === "completed") {
         showStatus("生成好了！可以下载 PNG，或者复制链接分享（7 天内有效）。");
+        if (statusBox.dataset.share) statusBox.hidden = true;
         currentReport = job.result;
         output.hidden = false;
         await renderPoster(canvas, job.result);
@@ -673,6 +674,7 @@
       const job = await response.json();
       if (!response.ok) { showStatus(errorMessage(job, "提交失败，请检查输入"), true); submit.disabled = false; return; }
       history.replaceState(null, "", `/report?job=${job.id}`);
+      copyLinkUrl = `${window.location.origin}/report?job=${job.id}`;
       poll(job.id);
     } catch {
       showStatus("提交失败，请稍后再试", true);
@@ -692,11 +694,12 @@
   });
 
   document.querySelector("#report-copy-link")?.addEventListener("click", async () => {
+    const url = copyLinkUrl || window.location.href;
     try {
-      await navigator.clipboard.writeText(window.location.href);
-      showStatus("链接已复制，7 天内有效。");
+      await navigator.clipboard.writeText(url);
+      showStatus("链接已复制，7 天内有效。打开后只显示这张海报。");
     } catch {
-      showStatus(window.location.href);
+      showStatus(url);
     }
   });
 

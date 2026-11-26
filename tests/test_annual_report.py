@@ -357,3 +357,37 @@ def test_other_rooms_do_not_count_towards_the_chosen_member():
     assert report["totals"]["room"] == 1
     assert report["totals"]["active_days"] == 1
     assert sum(month["room"] for month in report["monthly"] if month["month"].startswith("2026")) == 0
+
+
+def test_gifts_count_live_and_room_gifts_for_the_chosen_member_only():
+    gift = lambda name, count: json.dumps({"giftInfo": {"giftName": name, "giftNum": count}})
+    room_messages = [
+        room(ms(2025, 3, 1), "晚上好"),
+        room(ms(2025, 3, 2), gift("高级马卡龙", 2), msg_type="GIFT_TEXT"),
+        room(ms(2025, 3, 3), gift("玫瑰花", 5), msg_type="GIFT_TEXT", owner="刘力菲"),
+    ]
+    replays = [Replay("a", ms(2025, 3, 5), "直播", [
+        (1_000, "成早Ruoke", "送给SNH48-杨晔 99个荧光棒-X"),
+        (2_000, "成早Ruoke", "送给SNH48-杨晔 1个荧光棒-SII"),
+        (3_000, "路人", "送给SNH48-杨晔 520个心锁"),
+        (4_000, "成早Ruoke", "今天好看"),
+    ])]
+    report = build_report(
+        member_name="杨晔", scope="2025-2026", data_end=date(2026, 11, 26),
+        archive_nicknames=[], room_messages=room_messages, replays=replays, extra_nicknames=[],
+    )
+    assert report["gifts"] == {
+        "room_times": 1, "room_items": 2, "live_times": 2, "live_items": 100,
+        "top": [{"name": "荧光棒", "count": 100}, {"name": "高级马卡龙", "count": 2}],
+    }
+    assert report["totals"]["danmaku"] == 1
+
+
+def test_share_link_shows_only_the_poster(settings, repository, reports):
+    app = create_app(settings, ApplicationServices(repository=repository))
+    with TestClient(app) as client:
+        page = client.get("/report?job=" + "a" * 32)
+    assert 'data-share="true"' in page.text
+    assert 'class="button-link report-cta" href="/report"' in page.text
+    assert 'id="report-form"' not in page.text
+    assert 'id="report-sample"' not in page.text

@@ -1,10 +1,20 @@
 {% extends "base.html" %}
 {% block title %}年度报告 · 口袋48直播总结{% endblock %}
 {% block head_scripts %}
-  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-8"></script>
+  <script defer src="{{ url_for('static', path='/report.js') }}?v=20261126-10"></script>
 {% endblock %}
 {% block content %}
 <section class="report-page">
+{% if share_job_id %}
+  <div id="report-status" class="report-status" role="status" data-share="true">正在读取报告……</div>
+  <div id="report-output" class="report-output report-share" hidden>
+    <canvas id="report-canvas" class="report-canvas"></canvas>
+    <div class="report-share-actions">
+      <a class="button-link report-cta" href="/report" data-i18n="reportShareCta">生成我的口袋48年度报告 →</a>
+      <button id="report-download" class="secondary-button" type="button" data-i18n="reportDownload">下载 PNG</button>
+    </div>
+  </div>
+{% else %}
   <div class="report-intro">
     <h1 data-i18n="reportTitle">口袋48年度报告</h1>
     <p data-i18n="reportLede">输入口袋48 UID、选一位主推成员，自动统计你在成员房间和直播间的发言，生成一张像素风长海报。全程按固定规则计算，不使用大模型。</p>
@@ -72,5 +82,6 @@
     <p data-i18n="reportFlipBody">翻牌需要登录口袋48账号才能读取，内容分析还要用到语音转写和模型，所以暂不开放自助生成。想做一张自己的翻牌海报，请联系管理员。下面是一张示例。</p>
     <img class="report-flip-sample" src="{{ url_for('static', path='/report-flip-sample.png') }}" alt="翻牌海报示例" loading="lazy">
   </section>
+{% endif %}
 </section>
 {% endblock %}

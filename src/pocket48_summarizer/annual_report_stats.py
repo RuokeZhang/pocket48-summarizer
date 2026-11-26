@@ -34,7 +34,8 @@ DANMAKU_EVENT_RE = re.compile(
 )
 SPOKEN_ROOM_TYPES = {"TEXT", "REPLY"}
 # Bump when the statistics change meaning, so cached results are not reused.
-REPORT_VERSION = 3
+REPORT_VERSION = 4
+LIVE_GIFT_RE = re.compile(r"^送给\S+\s*(\d+)个(.+)$")
 
 
 @dataclass(slots=True)
@@ -129,28 +130,57 @@ def build_alias_windows(
     return windows
 
 
-def match_danmaku(
-    replays: list[Replay], windows: list[AliasWindow]
-) -> dict[str, list[tuple[int, str, str]]]:
+def _own_lines(replays: list[Replay], windows: list[AliasWindow]):
+    """Yield (replay, sent_ms, author, text) for lines the fan wrote."""
     by_key: dict[str, list[AliasWindow]] = defaultdict(list)
     for window in windows:
         by_key[window.key].append(window)
-    matched: dict[str, list[tuple[int, str, str]]] = {}
     for replay in replays:
-        lines = []
         for offset_ms, author, text in replay.lines:
             candidates = by_key.get(normalize_nickname(author))
             if not candidates:
                 continue
             sent_ms = replay.started_at_ms + offset_ms
-            if not any(window.start_ms <= sent_ms <= window.end_ms for window in candidates):
-                continue
-            if DANMAKU_EVENT_RE.match(text.strip()):
-                continue
-            lines.append((sent_ms, author, text))
-        if lines:
-            matched[replay.live_id] = lines
-    return matched
+            if any(window.start_ms <= sent_ms <= window.end_ms for window in candidates):
+                yield replay, sent_ms, author, text
+
+
+def match_danmaku(
+    replays: list[Replay], windows: list[AliasWindow]
+) -> dict[str, list[tuple[int, str, str]]]:
+    matched: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    for replay, sent_ms, author, text in _own_lines(replays, windows):
+        if not DANMAKU_EVENT_RE.match(text.strip()):
+            matched[replay.live_id].append((sent_ms, author, text))
+    return dict(matched)
+
+
+def gift_name(value: str) -> str:
+    name = value.strip()
+    # Team glow sticks ("荧光棒-X", "荧光棒-SII") are one gift for the poster.
+    return "荧光棒" if name.startswith("荧光棒") else name
+
+
+def match_live_gifts(
+    replays: list[Replay], windows: list[AliasWindow]
+) -> list[tuple[int, str, int]]:
+    gifts = []
+    for _, sent_ms, _, text in _own_lines(replays, windows):
+        match = LIVE_GIFT_RE.match(text.strip())
+        if match:
+            gifts.append((sent_ms, gift_name(match.group(2)), int(match.group(1))))
+    return gifts
+
+
+def room_gift(message: RoomMessage) -> tuple[str, int] | None:
+    if message.msg_type != "GIFT_TEXT":
+        return None
+    try:
+        info = json.loads(message.content).get("giftInfo") or {}
+        name, count = gift_name(str(info.get("giftName") or "")), int(info.get("giftNum") or 1)
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return (name, max(1, count)) if name else None
 
 
 def _quote_candidates(lines: list[tuple[int, str, str]], count: int) -> list[str]:
@@ -298,6 +328,21 @@ def build_report(
         if entry["name"]
     ]
 
+    gift_counts: Counter = Counter()
+    gifts = {"room_times": 0, "room_items": 0, "live_times": 0, "live_items": 0}
+    for message in room_messages:
+        gift = room_gift(message)
+        if gift and message.room_owner == member_name and in_scope(message.timestamp_ms):
+            gifts["room_times"] += 1
+            gifts["room_items"] += gift[1]
+            gift_counts[gift[0]] += gift[1]
+    for sent_ms, name, count in match_live_gifts(scoped_replays, windows):
+        if in_scope(sent_ms):
+            gifts["live_times"] += 1
+            gifts["live_items"] += count
+            gift_counts[name] += count
+    gifts["top"] = [{"name": name, "count": count} for name, count in gift_counts.most_common(6)]
+
     attended_counts = [len(lines) for lines in matched.values()]
     total_lives = len(scoped_replays)
     display_name = nickname_list[-1]["name"] if nickname_list else (
@@ -330,6 +375,7 @@ def build_report(
         "phrases": phrases,
         "ha": {"count": sum(text.count("哈") for text in all_texts), "longest": max(ha_runs, default=0)},
         "nicknames": nickname_list,
+        "gifts": gifts,
     }
 
 
