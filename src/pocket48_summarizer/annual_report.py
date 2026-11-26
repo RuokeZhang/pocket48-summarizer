@@ -356,11 +356,11 @@ class AnnualReportRepository:
             )
 
 
-def pixelate_avatar(image_bytes: bytes, size: int = 32) -> str:
-    """Shrink a profile picture to a small square PNG data URL.
+def shrink_avatar(image_bytes: bytes, size: int = 240) -> str:
+    """Crop a profile picture to a square JPEG data URL.
 
     Embedding the image keeps the browser canvas exportable (remote images
-    would taint it) and the tiny size matches the pixel-art poster.
+    would taint it). 240px matches the avatar box on the 2x poster canvas.
     """
     with Image.open(io.BytesIO(image_bytes)) as image:
         if image.width * image.height > 25_000_000:
@@ -368,10 +368,12 @@ def pixelate_avatar(image_bytes: bytes, size: int = 32) -> str:
         image = image.convert("RGB")
         side = min(image.size)
         left, top = (image.width - side) // 2, (image.height - side) // 2
-        square = image.crop((left, top, left + side, top + side)).resize((size, size), Image.Resampling.BOX)
+        square = image.crop((left, top, left + side, top + side)).resize(
+            (size, size), Image.Resampling.LANCZOS
+        )
         output = io.BytesIO()
-        square.save(output, format="PNG", optimize=True)
-    return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode()
+        square.save(output, format="JPEG", quality=85, optimize=True)
+    return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode()
 
 
 def load_member_snapshot() -> list[ReportMember]:
@@ -519,16 +521,16 @@ class AnnualReportWorker:
         result["notes"] = {"archive_truncated": truncated, "unreadable_lives": failed}
         latest_avatar = next((message.avatar for message in reversed(messages) if message.avatar), "")
         member = await asyncio.to_thread(self.repository.get_member, job.member_pocket_id)
-        result["fan_avatar"] = await self._pixel_avatar(latest_avatar)
-        result["member_avatar"] = await self._pixel_avatar(member.avatar if member else "")
+        result["fan_avatar"] = await self._avatar(latest_avatar)
+        result["member_avatar"] = await self._avatar(member.avatar if member else "")
         result["generated_at"] = _now().isoformat()
         return result
 
-    async def _pixel_avatar(self, url: str) -> str | None:
+    async def _avatar(self, url: str) -> str | None:
         if not url:
             return None
         try:
-            return await asyncio.to_thread(pixelate_avatar, await self.msg48.fetch_avatar(url))
+            return await asyncio.to_thread(shrink_avatar, await self.msg48.fetch_avatar(url))
         except Exception as exc:
             self.logger.info("Avatar skipped: %s", getattr(exc, "code", type(exc).__name__))
             return None

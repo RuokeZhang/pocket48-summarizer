@@ -34,7 +34,7 @@ DANMAKU_EVENT_RE = re.compile(
 )
 SPOKEN_ROOM_TYPES = {"TEXT", "REPLY"}
 # Bump when the statistics change meaning, so cached results are not reused.
-REPORT_VERSION = 2
+REPORT_VERSION = 3
 
 
 @dataclass(slots=True)
@@ -194,15 +194,11 @@ def build_report(
     matched = match_danmaku(scoped_replays, windows)
 
     # The poster is about one fan and one member: only her room and her
-    # lives count towards the main numbers. Other rooms are listed separately.
+    # lives count. Messages in other members' rooms are ignored.
     spoken: list[dict] = []
-    other_rooms: Counter = Counter()
     for message in room_messages:
         text = room_message_text(message)
-        if text is None or not in_scope(message.timestamp_ms):
-            continue
-        if message.room_owner != member_name:
-            other_rooms[message.room_owner] += 1
+        if text is None or not in_scope(message.timestamp_ms) or message.room_owner != member_name:
             continue
         spoken.append({"ms": message.timestamp_ms, "kind": "room", "room": message.room_owner,
                        "nickname": message.nickname, "text": text})
@@ -302,9 +298,6 @@ def build_report(
         if entry["name"]
     ]
 
-    listed_rooms = [{"name": name, "count": count} for name, count in other_rooms.most_common() if count >= 3]
-    small_rooms = [count for count in other_rooms.values() if count < 3]
-
     attended_counts = [len(lines) for lines in matched.values()]
     total_lives = len(scoped_replays)
     display_name = nickname_list[-1]["name"] if nickname_list else (
@@ -337,8 +330,6 @@ def build_report(
         "phrases": phrases,
         "ha": {"count": sum(text.count("哈") for text in all_texts), "longest": max(ha_runs, default=0)},
         "nicknames": nickname_list,
-        "other_rooms": listed_rooms,
-        "small_rooms": {"rooms": len(small_rooms), "messages": sum(small_rooms)},
     }
 
 

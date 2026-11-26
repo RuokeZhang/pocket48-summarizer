@@ -149,19 +149,22 @@
     return y;
   };
 
-  const AVATAR = 96;
+  const AVATAR = 120;
   const avatarFrame = (p, image, cx, y, label) => {
     const x = Math.round(cx - AVATAR / 2);
     frame(p, x, y, AVATAR, AVATAR, C.navyPanel, C.pink);
     if (p.draw && image) {
-      p.ctx.imageSmoothingEnabled = false;
+      p.ctx.imageSmoothingEnabled = true;
+      p.ctx.imageSmoothingQuality = "high";
       p.ctx.drawImage(image, x, y, AVATAR, AVATAR);
+      p.ctx.imageSmoothingEnabled = false;
     } else {
       // Pixel silhouette when the profile picture is missing.
-      rect(p, x + 36, y + 18, 24, 24, C.lightMuted);
-      rect(p, x + 30, y + 24, 36, 12, C.lightMuted);
-      rect(p, x + 18, y + 54, 60, 30, C.lightMuted);
-      rect(p, x + 24, y + 48, 48, 6, C.lightMuted);
+      const unit = AVATAR / 16;
+      rect(p, x + 6 * unit, y + 3 * unit, 4 * unit, 4 * unit, C.lightMuted);
+      rect(p, x + 5 * unit, y + 4 * unit, 6 * unit, 2 * unit, C.lightMuted);
+      rect(p, x + 4 * unit, y + 8 * unit, 8 * unit, unit, C.lightMuted);
+      rect(p, x + 3 * unit, y + 9 * unit, 10 * unit, 5 * unit, C.lightMuted);
     }
     const lines = wrap(p, label, 260, 24).slice(0, 2);
     lines.forEach((line, index) => text(p, line, cx, y + AVATAR + 16 + index * 32, 24, C.light, "center"));
@@ -187,7 +190,7 @@
     avatarFrame(p, p.images && p.images.fan, W / 2 - 150, avatarTop, fan);
     avatarFrame(p, p.images && p.images.member, W / 2 + 150, avatarTop, member);
     HEART.forEach((row, ry) => Array.from(row).forEach((char, rx) => {
-      if (char !== ".") rect(p, W / 2 - 21 + rx * 6, avatarTop + 30 + ry * 6, 6, 6, C.accent);
+      if (char !== ".") rect(p, W / 2 - 21 + rx * 6, avatarTop + AVATAR / 2 - 18 + ry * 6, 6, 6, C.accent);
     }));
     let cursor = y + avatarsBottom + 24;
     comboLines.forEach((line) => { text(p, line, W / 2, cursor, size, C.light, "center"); cursor += size * 1.25; });
@@ -459,22 +462,10 @@
     return y + 24;
   };
 
-  const roomsSection = (p, y, report) => {
-    const max = Math.max(1, ...report.other_rooms.map((room) => room.count));
-    report.other_rooms.forEach((room) => {
-      text(p, room.name, PAD, y + 4, 24, C.light);
-      rect(p, PAD + 132, y + 12, Math.max(4, Math.round(room.count / max * 300 / 4) * 4), 18, C.pink);
-      text(p, `${room.count}句`, PAD + 452, y + 4, 24, C.light);
-      y += 40;
-    });
-    if (report.small_rooms.rooms) y = para(p, `另有${report.small_rooms.rooms}个房间各1—2句，共${report.small_rooms.messages}句。`, PAD, y + 8, CW, 24, C.lightMuted);
-    return y + 16;
-  };
-
   const footer = (p, y, report) => {
     const notes = [
-      "数据：口袋48公开回放弹幕、msg48.org 公开房间存档。时间按北京时间。只统计文字发言，不含表情、礼物和翻牌。",
-      `弹幕只统计${report.member_name}的直播，并按你用过的昵称在对应时间段内匹配，可能有遗漏。`
+      `数据：口袋48公开回放弹幕、msg48.org 公开房间存档。只统计你在${report.member_name}房间的留言和她直播里的弹幕，时间按北京时间，不含表情、礼物和翻牌。`,
+      "弹幕按你用过的昵称在对应时间段内匹配，可能有遗漏。"
     ];
     if (report.notes && report.notes.archive_truncated) notes.push("你的房间留言超过1万条，只统计了最早的1万条。");
     if (report.notes && report.notes.unreadable_lives) notes.push(`有${report.notes.unreadable_lives}场回放的弹幕暂时读不到，没有计入。`);
@@ -565,13 +556,6 @@
       section(true, (q, sy) => {
         let yy = chapter(q, sy, true, "CH.8", "BEST LIVES", "直播间名场面", `一场最多刷了${report.top_lives[0].count}句`, "按单场弹幕数排的前三名，各摘几句。");
         return topLivesSection(q, yy, report);
-      });
-    }
-    if (report.other_rooms.length || report.small_rooms.rooms) {
-      section(true, (q, sy) => {
-        const visited = report.other_rooms.reduce((sum, room) => sum + room.count, 0) + report.small_rooms.messages;
-        let yy = chapter(q, sy, true, "CH.9", "VISITING", "在别人的房间", `串门${visited}句`, `${report.member_name}以外的成员房间留言，不计入前面的统计。`);
-        return roomsSection(q, yy + 16, report);
       });
     }
     if (dark === false) { y = divider(p, y, C.cream, C.navy); }

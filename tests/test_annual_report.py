@@ -11,7 +11,7 @@ from pocket48_summarizer.annual_report import (
     AnnualReportRepository,
     AnnualReportWorker,
     ReportMember,
-    pixelate_avatar,
+    shrink_avatar,
 )
 from pocket48_summarizer.annual_report_stats import (
     REPORT_VERSION,
@@ -127,8 +127,7 @@ def test_build_report_counts_spoken_messages_and_attendance():
     assert report["delay"]["2026"]["buckets"][0] == {"label": "2分钟内", "count": 1}
     assert report["top_lives"][0]["title"] == "第一场"
     assert report["top_lives"][0]["quotes"] == ["我来啦大家好", "今天的妆好好看呀"]
-    assert report["other_rooms"] == [{"name": "禹佳蔚", "count": 3}]
-    assert report["small_rooms"] == {"rooms": 1, "messages": 1}
+    assert "other_rooms" not in report
     assert "bookends" not in report
     assert report["display_name"] == "花果山大当家Ruoke"
     assert report["ha"] == {"count": 8, "longest": 5}
@@ -228,8 +227,8 @@ async def test_worker_pipeline_generates_and_caches_danmaku(settings, reports):
     assert result["totals"]["danmaku"] == 1
     assert result["totals"]["attended"] == 1
     assert result["top_lives"][0]["title"] == "开播啦"
-    assert result["fan_avatar"].startswith("data:image/png;base64,")
-    assert result["member_avatar"].startswith("data:image/png;base64,")
+    assert result["fan_avatar"].startswith("data:image/jpeg;base64,")
+    assert result["member_avatar"].startswith("data:image/jpeg;base64,")
     second = reports.enqueue(uid="1", member=MEMBER, scope="2026", extra_nicknames=[], requester="y")
     await worker._process(reports.claim_next(worker.worker_id, 60))
     assert reports.get(second.id).status == "completed"
@@ -321,11 +320,12 @@ async def test_member_list_without_search_fields_is_refreshed_from_snapshot(sett
     assert "二毛" in yang_ye.aliases
 
 
-def test_avatars_are_shrunk_to_small_pixel_squares():
+def test_avatars_are_cropped_to_sharp_squares():
     from PIL import Image
-    data_url = pixelate_avatar(png_bytes(120, 80))
+    data_url = shrink_avatar(png_bytes(600, 400))
+    assert data_url.startswith("data:image/jpeg;base64,")
     image = Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1])))
-    assert image.size == (32, 32)
+    assert image.size == (240, 240)
 
 
 async def test_avatar_download_only_allows_official_hosts(settings):
@@ -356,6 +356,4 @@ def test_other_rooms_do_not_count_towards_the_chosen_member():
     )
     assert report["totals"]["room"] == 1
     assert report["totals"]["active_days"] == 1
-    assert report["other_rooms"] == []
-    assert report["small_rooms"] == {"rooms": 1, "messages": 2}
     assert sum(month["room"] for month in report["monthly"] if month["month"].startswith("2026")) == 0
