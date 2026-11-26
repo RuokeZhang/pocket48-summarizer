@@ -111,6 +111,7 @@ class AnnualReportRepository:
         scope: str,
         extra_nicknames: list[str],
         requester: str,
+        unlimited: bool = False,
     ) -> AnnualReportJob:
         cache_key = self._hash(
             json.dumps([uid, member.pocket_id, scope, sorted(extra_nicknames)])
@@ -139,12 +140,12 @@ class AnnualReportRepository:
                     """,
                     (requester_hash, (now - timedelta(hours=1)).isoformat()),
                 ).fetchone()[0]
-                if recent >= self.settings.annual_report_hourly_limit:
+                if not unlimited and recent >= self.settings.annual_report_hourly_limit:
                     raise AppError("report_rate_limited", "生成太频繁了，请一小时后再试", True)
                 pending = connection.execute(
                     "SELECT COUNT(*) FROM annual_report_jobs WHERE status IN ('queued', 'running')"
                 ).fetchone()[0]
-                if pending >= self.settings.annual_report_queue_limit:
+                if not unlimited and pending >= self.settings.annual_report_queue_limit:
                     raise AppError("report_queue_full", "现在排队的人太多了，请稍后再试", True)
                 job_id = uuid.uuid4().hex
                 connection.execute(

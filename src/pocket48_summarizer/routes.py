@@ -2437,12 +2437,17 @@ async def create_annual_report(
     member = reports.get_member(payload.member_pocket_id)
     if member is None:
         raise AppError("report_member_unknown", "成员不在名单里，请刷新页面后重选", False)
+    context = optional_auth(request)
+    is_admin = context is not None and context.user.is_admin
+    if is_admin:
+        request.app.state.auth.require_csrf(request, context)
     job = reports.enqueue(
         uid=payload.uid,
         member=member,
         scope=payload.scope,
         extra_nicknames=payload.extra_nicknames,
         requester=request.client.host if request.client else "unknown",
+        unlimited=is_admin,
     )
     worker = request.app.state.services.annual_report_worker
     if worker:

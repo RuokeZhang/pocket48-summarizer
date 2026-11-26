@@ -19,6 +19,7 @@ from pocket48_summarizer.annual_report_stats import (
     parse_lrc_lines,
 )
 from pocket48_summarizer.app import create_app
+from pocket48_summarizer.auth import AuthRepository, hash_password
 from pocket48_summarizer.clients.msg48 import ArchiveMessage, ArchiveNickname
 from pocket48_summarizer.errors import AppError
 from pocket48_summarizer.models import ReplayMetadata
@@ -262,3 +263,25 @@ async def test_member_list_falls_back_to_snapshot_and_retries_soon(settings, rep
     monkeypatch.setattr(annual_report, "MEMBER_INDEX_RETRY", annual_report.timedelta(0))
     await worker._refresh_member_index_if_due()
     assert msg48.index_calls == 2
+
+
+def test_admins_are_not_rate_limited(settings, repository, reports):
+    configured = settings.model_copy(update={"auth_required": True, "session_cookie_secure": False})
+    AuthRepository(repository.database).create_user(
+        "boss", "boss", hash_password("boss has a secure password"), is_admin=True
+    )
+    app = create_app(configured, ApplicationServices(repository=repository))
+    body = {"member_pocket_id": "407126", "scope": "2026"}
+    with TestClient(app) as visitor:
+        codes = [visitor.post("/api/reports", json={**body, "uid": str(uid)}).status_code for uid in range(1, 5)]
+        assert codes == [202, 202, 202, 429]
+    with TestClient(app) as admin:
+        admin.post("/login", data={"username": "boss", "password": "boss has a secure password"},
+                   follow_redirects=False)
+        assert admin.post("/api/reports", json={**body, "uid": "10"}).status_code == 403
+        token = admin.cookies.get(configured.csrf_cookie_name)
+        codes = [
+            admin.post("/api/reports", json={**body, "uid": str(uid)}, headers={"X-CSRF-Token": token}).status_code
+            for uid in range(20, 25)
+        ]
+        assert codes == [202] * 5
