@@ -3293,3 +3293,13 @@ code { color: #d4c8ff; }
 .report-save-bar { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; background: #161a24; color: #fff; font-weight: 700; }
 .report-save-bar button { padding: 8px 14px; }
 .report-save-overlay img { display: block; width: 100%; max-width: 720px; margin: 0 auto; -webkit-touch-callout: default; user-select: auto; }
+.report-admin { max-width: 1100px; }
+.report-admin-stats { display: flex; gap: 16px; margin: 16px 0; }
+.report-admin-stats div { padding: 12px 18px; border: 1px solid #2b303d; border-radius: 14px; background: rgba(255, 255, 255, .03); }
+.report-admin-stats strong { display: block; font-size: 24px; }
+.report-admin-stats span { color: #9299aa; font-size: 13px; }
+.report-admin-table { overflow-x: auto; }
+.report-admin-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.report-admin-table th, .report-admin-table td { padding: 8px 10px; border-bottom: 1px solid #2b303d; text-align: left; white-space: nowrap; }
+.report-admin-table th { color: #9299aa; font-weight: 600; }
+.report-admin-table a { color: #ff8bad; }

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}报告记录 · 口袋48直播总结{% endblock %}
+{% block content %}
+<section class="report-page report-admin">
+  <h1>年度报告记录</h1>
+  <p class="report-hint">最近的生成记录（保留 7 天）。UID 在任务完成后已清空，访问者 IP 只以加密哈希保存，这里都不显示。</p>
+  <div class="report-admin-stats">
+    <div><strong>{{ today_count }}</strong><span>今天</span></div>
+    <div><strong>{{ week_count }}</strong><span>近 7 天</span></div>
+    <div><strong>{{ failed_count }}</strong><span>失败</span></div>
+  </div>
+  {% if top_members %}
+    <p class="report-hint">被查最多的成员：{% for name, count in top_members %}{{ name }}（{{ count }}）{% if not loop.last %}、{% endif %}{% endfor %}</p>
+  {% endif %}
+  <div class="report-admin-table">
+    <table>
+      <thead><tr><th>生成时间</th><th>粉丝</th><th>成员</th><th>范围</th><th>状态</th><th>耗时</th><th>弹幕 / 留言</th><th></th></tr></thead>
+      <tbody>
+        {% for job in jobs %}
+          <tr>
+            <td>{{ format_time(job.created_at) }}</td>
+            <td>{{ job.display_name or "—" }}</td>
+            <td>{{ job.member_name }}</td>
+            <td>{{ "2026" if job.scope == "2026" else "2025—2026" }}</td>
+            <td>{% if job.status == "failed" %}<span title="{{ job.error_message or "" }}">失败 · {{ job.error_code }}</span>{% elif job.status == "completed" %}完成{% else %}{{ job.progress_text }}{% endif %}</td>
+            <td>{{ job.seconds ~ " 秒" if job.seconds is not none else "—" }}</td>
+            <td>{{ job.danmaku if job.danmaku is not none else "—" }} / {{ job.room if job.room is not none else "—" }}</td>
+            <td>{% if job.status == "completed" %}<a href="/report?job={{ job.id }}">查看</a>{% endif %}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8">还没有生成记录。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

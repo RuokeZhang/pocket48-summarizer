@@ -437,3 +437,26 @@ def test_cached_danmaku_is_filtered_while_reading(reports):
     reports.store_replay("407126", "1", ms(2026, 1, 1), "直播", [(1, "小明", "来了"), (2, "路人", "你好")])
     cached = reports.cached_replays("407126", lambda author: author == "小明")
     assert cached["1"][3] == [[1, "小明", "来了"]]
+
+
+def test_admin_report_history_is_admin_only(settings, repository, reports):
+    configured = settings.model_copy(update={"auth_required": True, "session_cookie_secure": False})
+    auth = AuthRepository(repository.database)
+    auth.create_user("boss", "boss", hash_password("boss has a secure password"), is_admin=True)
+    auth.create_user("fan", "fan", hash_password("fan has a secure password"), is_admin=False)
+    job = reports.enqueue(uid="1", member=MEMBER, scope="2026", extra_nicknames=[], requester="x")
+    reports.claim_next("worker", 60)
+    reports.complete(job.id, {"display_name": "小明", "totals": {"danmaku": 5, "room": 2}})
+    app = create_app(configured, ApplicationServices(repository=repository))
+    with TestClient(app) as visitor:
+        assert visitor.get("/admin/reports", follow_redirects=False).status_code in {303, 401}
+    with TestClient(app) as fan:
+        fan.post("/login", data={"username": "fan", "password": "fan has a secure password"}, follow_redirects=False)
+        assert fan.get("/admin/reports").status_code == 403
+    with TestClient(app) as admin:
+        admin.post("/login", data={"username": "boss", "password": "boss has a secure password"}, follow_redirects=False)
+        page = admin.get("/admin/reports")
+    assert page.status_code == 200
+    assert "小明" in page.text and "杨晔" in page.text
+    assert f"/report?job={job.id}" in page.text
+    assert 'href="/admin/reports"' in page.text

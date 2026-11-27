@@ -261,6 +261,35 @@ class AnnualReportRepository:
                 (code, message, _now().isoformat(), job_id),
             )
 
+    def recent_jobs(self, limit: int = 200) -> list[dict]:
+        """Admin view of recent reports. UIDs are already cleared and requester
+        IPs are only stored as salted hashes, so neither is shown."""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, member_name, scope, status, progress_text, error_code, error_message,
+                       created_at, started_at, finished_at,
+                       json_extract(result_json, '$.display_name') AS display_name,
+                       json_extract(result_json, '$.totals.danmaku') AS danmaku,
+                       json_extract(result_json, '$.totals.room') AS room
+                FROM annual_report_jobs
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        jobs = []
+        for row in rows:
+            job = dict(row)
+            if row["started_at"] and row["finished_at"]:
+                job["seconds"] = round(
+                    (datetime.fromisoformat(row["finished_at"]) - datetime.fromisoformat(row["started_at"])).total_seconds()
+                )
+            else:
+                job["seconds"] = None
+            jobs.append(job)
+        return jobs
+
     def recover_expired(self) -> int:
         with self.database.connect() as connection:
             return connection.execute(

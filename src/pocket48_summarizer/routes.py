@@ -2428,6 +2428,31 @@ async def annual_report_page(request: Request) -> Response:
     )
 
 
+@router.get("/admin/reports", response_class=HTMLResponse)
+async def annual_report_admin_page(request: Request) -> Response:
+    context = require_admin(request)
+    jobs = request.app.state.annual_reports.recent_jobs()
+    today = china_datetime(datetime.now(UTC).isoformat()).date()
+    created_days = [china_datetime(job["created_at"]).date() for job in jobs]
+    member_counts: dict[str, int] = {}
+    for job in jobs:
+        member_counts[job["member_name"]] = member_counts.get(job["member_name"], 0) + 1
+    return request.app.state.templates.TemplateResponse(
+        request=request,
+        name="admin_reports.html",
+        context={
+            "current_user": context.user,
+            "csrf_token": context.csrf_token,
+            "jobs": jobs,
+            "today_count": sum(day == today for day in created_days),
+            "week_count": sum((today - day).days < 7 for day in created_days),
+            "failed_count": sum(job["status"] == "failed" for job in jobs),
+            "top_members": sorted(member_counts.items(), key=lambda item: -item[1])[:8],
+            "format_time": lambda value: format_china_time(value) if value else "—",
+        },
+    )
+
+
 @router.post("/api/reports")
 async def create_annual_report(
     request: Request, payload: CreateAnnualReportRequest
