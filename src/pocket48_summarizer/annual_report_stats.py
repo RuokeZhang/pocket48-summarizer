@@ -29,10 +29,14 @@ CATCHPHRASE_TOP_N = 6
 CATCHPHRASE_BG_SAMPLE = 80000
 CATCHPHRASE_FILLER = set("哈啊嗯哦呜嘿哇嘤咦诶欸唉呀哟喔嗷么了的是我你他她着呢吧啦哒呀喂")
 _CJK_RUN_RE = re.compile(r"[一-鿿]+")
+# Pocket48 chat stickers arrive inline as "[拥抱]" / "【鼓掌】". They are room-only
+# icons, so the word inside is not a catchphrase; strip the whole code first.
+_EMOJI_CODE_RE = re.compile(r"[\[【][^\[\]【】]{1,8}[\]】]")
 
 
 def _catchphrase_grams(text: str) -> set[str]:
     grams: set[str] = set()
+    text = _EMOJI_CODE_RE.sub("", text)
     for run in _CJK_RUN_RE.findall(text):
         for size in (2, 3, 4):
             for index in range(len(run) - size + 1):
@@ -169,7 +173,7 @@ DANMAKU_EVENT_RE = re.compile(
 )
 SPOKEN_ROOM_TYPES = {"TEXT", "REPLY"}
 # Bump when the statistics change meaning, so cached results are not reused.
-REPORT_VERSION = 8
+REPORT_VERSION = 9
 LIVE_GIFT_RE = re.compile(r"^送给\S+\s*(\d+)个(.+)$")
 
 

@@ -157,6 +157,18 @@ def test_extract_catchphrases_surfaces_personal_phrases():
     assert result["year_totals"] == {"2026": 20}
 
 
+def test_extract_catchphrases_ignores_sticker_codes():
+    # "[拥抱]" is a room sticker, common in messages but absent from danmaku, so
+    # without stripping it would score as a fake catchphrase. The word inside the
+    # brackets must not surface, while real text around it still counts.
+    fan_texts = ["[拥抱]今天开心"] * 8 + ["随便说点"] * 3
+    background = ["路人甲"] * 300
+    result = extract_catchphrases({2026: fan_texts}, background, "蒋舒婷")
+    phrases = [item["phrase"] for item in result["items"]]
+    assert "拥抱" not in phrases
+    assert any("开心" in phrase for phrase in phrases)
+
+
 def test_extract_catchphrases_excludes_member_name_and_empty_input():
     fan_texts = ["蒋舒婷今天状态真好"] * 8 + ["随便说点别的"] * 3
     background = ["路人甲"] * 50
