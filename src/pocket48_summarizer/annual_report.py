@@ -261,7 +261,7 @@ class AnnualReportRepository:
                 (code, message, _now().isoformat(), job_id),
             )
 
-    def recent_jobs(self, limit: int = 200) -> list[dict]:
+    def recent_jobs(self, limit: int = 2000) -> list[dict]:
         """Admin view of recent reports. UIDs are already cleared and requester
         IPs are only stored as salted hashes, so neither is shown."""
         with self.database.connect() as connection:

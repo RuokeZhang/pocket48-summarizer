@@ -25,6 +25,7 @@ CATCHPHRASE_MIN_SUPPORT = 5
 # the fan leans on sits many times higher, so the threshold cleanly splits them.
 CATCHPHRASE_MIN_LIFT = 8.0
 CATCHPHRASE_TOP_N = 6
+CATCHPHRASE_BG_SAMPLE = 80000
 CATCHPHRASE_FILLER = set("哈啊嗯哦呜嘿哇嘤咦诶欸唉呀哟喔嗷么了的是我你他她着呢吧啦哒呀喂")
 _CJK_RUN_RE = re.compile(r"[一-鿿]+")
 
@@ -67,32 +68,41 @@ def extract_catchphrases(
                 year_counter[gram] += 1
         per_year[str(year)] = year_counter
 
+    year_totals = {str(year): len(texts) for year, texts in fan_texts_by_year.items()}
+    # The member's own name is not a catchphrase; drop any phrase that overlaps
+    # it (either way), so "蒋舒婷" and "舒婷蒋舒婷" are both skipped.
+    member_bigrams = {member_name[index : index + 2] for index in range(len(member_name) - 1)}
+    candidate_grams = {
+        gram
+        for gram, count in fan_doc_freq.items()
+        if count >= CATCHPHRASE_MIN_SUPPORT
+        and not all(char in CATCHPHRASE_FILLER for char in gram)
+        and gram not in member_name
+        and not any(bigram in gram for bigram in member_bigrams)
+    }
+    if fan_total == 0 or not candidate_grams:
+        return {"items": [], "year_totals": year_totals}
+
+    # Background frequency only for the fan's candidate phrases, so a popular
+    # member's millions of danmaku never build a giant counter.
     background_doc_freq: Counter = Counter()
     background_total = 0
     for text in background_texts:
         background_total += 1
         for gram in _catchphrase_grams(text):
-            background_doc_freq[gram] += 1
-
-    year_totals = {str(year): len(texts) for year, texts in fan_texts_by_year.items()}
-    if fan_total == 0 or background_total == 0:
+            if gram in candidate_grams:
+                background_doc_freq[gram] += 1
+    if background_total == 0:
         return {"items": [], "year_totals": year_totals}
 
-    # The member's own name is not a catchphrase; drop any phrase that overlaps
-    # it (either way), so "蒋舒婷" and "舒婷蒋舒婷" are both skipped.
-    member_bigrams = {member_name[index : index + 2] for index in range(len(member_name) - 1)}
     scored = []
-    for gram, count in fan_doc_freq.items():
-        if count < CATCHPHRASE_MIN_SUPPORT:
-            continue
-        if all(char in CATCHPHRASE_FILLER for char in gram):
-            continue
-        if gram in member_name or any(bigram in gram for bigram in member_bigrams):
-            continue
+    for gram in candidate_grams:
+        count = fan_doc_freq[gram]
         fan_rate = count / fan_total
-        # Smooth the background so a phrase that is merely rare overall does not
-        # win on a couple of sightings.
-        background_rate = (background_doc_freq[gram] + 2) / background_total
+        # Floor the background at one sighting so an unseen phrase cannot score
+        # infinitely. A rate floor (not a +k count) keeps the lift stable no
+        # matter how big the sampled background is.
+        background_rate = max(background_doc_freq[gram], 1) / background_total
         lift = fan_rate / background_rate
         if lift < CATCHPHRASE_MIN_LIFT:
             continue
@@ -415,12 +425,17 @@ def build_report(
     for item in spoken:
         if item["kind"] == "danmaku":
             fan_texts_by_year[china_time(item["ms"]).year].append(item["text"])
-    background_texts = [
-        text
-        for replay in scoped_replays
-        for _, _, text in replay.lines
-        if not DANMAKU_EVENT_RE.match(text.strip())
-    ]
+    # Sample the background across all lives (never materialize every line) so a
+    # member with millions of danmaku stays cheap to report on.
+    total_lines = sum(len(replay.lines) for replay in scoped_replays)
+    stride = max(1, total_lines // CATCHPHRASE_BG_SAMPLE)
+    background_texts = []
+    position = 0
+    for replay in scoped_replays:
+        for _, _, text in replay.lines:
+            if position % stride == 0 and not DANMAKU_EVENT_RE.match(text.strip()):
+                background_texts.append(text)
+            position += 1
     phrases = extract_catchphrases(fan_texts_by_year, background_texts, member_name)
     all_texts = [item["text"] for item in spoken]
     ha_runs = [len(run) for text in all_texts for run in re.findall(r"哈+", text)]
