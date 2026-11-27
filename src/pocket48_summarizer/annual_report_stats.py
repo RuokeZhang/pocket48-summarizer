@@ -20,10 +20,11 @@ CHINA = ZoneInfo("Asia/Shanghai")
 DAY_MS = 86_400_000
 ALIAS_GRACE_MS = 2 * DAY_MS
 SCOPES = {"2025-2026": (2025, 2026), "2026": (2026,)}
-CATCHPHRASE_MIN_SUPPORT = 5
+CATCHPHRASE_MIN_SUPPORT = 3
 # Generic words everyone types ("不是", "好看") sit near 1x; a real catchphrase
-# the fan leans on sits many times higher, so the threshold cleanly splits them.
-CATCHPHRASE_MIN_LIFT = 8.0
+# the fan leans on sits several times higher, so the threshold splits them while
+# still letting quieter fans surface something.
+CATCHPHRASE_MIN_LIFT = 5.0
 CATCHPHRASE_TOP_N = 6
 CATCHPHRASE_BG_SAMPLE = 80000
 CATCHPHRASE_FILLER = set("哈啊嗯哦呜嘿哇嘤咦诶欸唉呀哟喔嗷么了的是我你他她着呢吧啦哒呀喂")
@@ -33,19 +34,23 @@ _CJK_RUN_RE = re.compile(r"[一-鿿]+")
 def _catchphrase_grams(text: str) -> set[str]:
     grams: set[str] = set()
     for run in _CJK_RUN_RE.findall(text):
-        for size in (2, 3, 4, 5):
+        for size in (2, 3, 4):
             for index in range(len(run) - size + 1):
                 grams.add(run[index : index + size])
     return grams
 
 
+# Connective characters worth stripping from the *front* of a phrase ("的小祖宗"
+# -> "小祖宗"). The tail is left alone: endings like 吧/呢/了 are often the point
+# of the catchphrase ("不是吧", "拉倒吧").
+CATCHPHRASE_LEADING_TRIM = set("的了着")
+
+
 def _trim_filler(phrase: str) -> str:
-    start, end = 0, len(phrase)
-    while end - start > 2 and phrase[start] in CATCHPHRASE_FILLER:
+    start = 0
+    while len(phrase) - start > 2 and phrase[start] in CATCHPHRASE_LEADING_TRIM:
         start += 1
-    while end - start > 2 and phrase[end - 1] in CATCHPHRASE_FILLER:
-        end -= 1
-    return phrase[start:end]
+    return phrase[start:]
 
 
 def extract_catchphrases(
@@ -83,6 +88,18 @@ def extract_catchphrases(
     if fan_total == 0 or not candidate_grams:
         return {"items": [], "year_totals": year_totals}
 
+    # Which of the fan's messages each candidate appears in. When someone repeats
+    # one sentence, its fragments ("上次还有", "页没写") share the same messages,
+    # so this lets us keep just one of them instead of a row of slivers.
+    gram_messages: dict[str, set[int]] = {gram: set() for gram in candidate_grams}
+    message_index = 0
+    for texts in fan_texts_by_year.values():
+        for text in texts:
+            for gram in _catchphrase_grams(text):
+                if gram in candidate_grams:
+                    gram_messages[gram].add(message_index)
+            message_index += 1
+
     # Background frequency only for the fan's candidate phrases, so a popular
     # member's millions of danmaku never build a giant counter.
     background_doc_freq: Counter = Counter()
@@ -115,11 +132,17 @@ def extract_catchphrases(
 
     items: list[dict] = []
     chosen_bigrams: list[set[str]] = []
+    chosen_messages: list[set[int]] = []
     for gram, count, lift in scored:
         gram_bigrams = bigrams(gram)
         # Skip variants of a phrase already shown (祖宗 after 小祖宗) so each
         # family appears once, represented by its strongest member.
         if any(gram_bigrams & seen for seen in chosen_bigrams):
+            continue
+        # Skip a fragment that rides along in the same messages as a phrase
+        # already shown (both came from one repeated sentence).
+        messages = gram_messages[gram]
+        if any(len(messages & seen) >= 0.6 * len(messages) for seen in chosen_messages):
             continue
         phrase = _trim_filler(gram)
         items.append({
@@ -129,6 +152,7 @@ def extract_catchphrases(
             "per_year": {year: counter[gram] for year, counter in per_year.items()},
         })
         chosen_bigrams.append(gram_bigrams)
+        chosen_messages.append(messages)
         if len(items) >= CATCHPHRASE_TOP_N:
             break
     return {"items": items, "year_totals": year_totals}

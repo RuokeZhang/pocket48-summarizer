@@ -140,7 +140,10 @@ def test_build_report_counts_spoken_messages_and_attendance():
 def test_extract_catchphrases_surfaces_personal_phrases():
     # The fan leans on "小祖宗"; "好看" is said by everyone, so only the
     # distinctive phrase should be reported, and its lift must match itself.
-    fan_texts = ["小祖宗又营业啦"] * 8 + ["今天好看"] * 8 + ["随便说点别的"] * 4
+    fan_texts = [
+        "小祖宗好", "爱小祖宗", "小祖宗加油", "想小祖宗", "小祖宗晚安",
+        "小祖宗冲", "夸夸小祖宗", "小祖宗最好",
+    ] + ["今天好看"] * 8 + ["随便说点别的"] * 4
     background = (["好看好看"] * 400) + (["小祖宗"] * 2) + (["路人甲"] * 400)
     result = extract_catchphrases({2026: fan_texts}, background, "蒋舒婷")
     phrases = [item["phrase"] for item in result["items"]]
