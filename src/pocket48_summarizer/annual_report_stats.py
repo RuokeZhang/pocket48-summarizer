@@ -20,7 +20,108 @@ CHINA = ZoneInfo("Asia/Shanghai")
 DAY_MS = 86_400_000
 ALIAS_GRACE_MS = 2 * DAY_MS
 SCOPES = {"2025-2026": (2025, 2026), "2026": (2026,)}
-PHRASES = ["哈哈", "笑死", "可爱", "好看", "辛苦", "晚安", "姐"]
+CATCHPHRASE_MIN_SUPPORT = 5
+# Generic words everyone types ("不是", "好看") sit near 1x; a real catchphrase
+# the fan leans on sits many times higher, so the threshold cleanly splits them.
+CATCHPHRASE_MIN_LIFT = 8.0
+CATCHPHRASE_TOP_N = 6
+CATCHPHRASE_FILLER = set("哈啊嗯哦呜嘿哇嘤咦诶欸唉呀哟喔嗷么了的是我你他她着呢吧啦哒呀喂")
+_CJK_RUN_RE = re.compile(r"[一-鿿]+")
+
+
+def _catchphrase_grams(text: str) -> set[str]:
+    grams: set[str] = set()
+    for run in _CJK_RUN_RE.findall(text):
+        for size in (2, 3, 4, 5):
+            for index in range(len(run) - size + 1):
+                grams.add(run[index : index + size])
+    return grams
+
+
+def _trim_filler(phrase: str) -> str:
+    start, end = 0, len(phrase)
+    while end - start > 2 and phrase[start] in CATCHPHRASE_FILLER:
+        start += 1
+    while end - start > 2 and phrase[end - 1] in CATCHPHRASE_FILLER:
+        end -= 1
+    return phrase[start:end]
+
+
+def extract_catchphrases(
+    fan_texts_by_year: dict[int, list[str]],
+    background_texts: list[str],
+    member_name: str,
+) -> dict:
+    """Each fan's own catchphrases: short phrases they use far more than the
+    average fan watching the same member, so the list reflects the person
+    instead of the generic words everyone types."""
+    fan_doc_freq: Counter = Counter()
+    per_year: dict[str, Counter] = {}
+    fan_total = 0
+    for year, texts in fan_texts_by_year.items():
+        year_counter: Counter = Counter()
+        for text in texts:
+            fan_total += 1
+            for gram in _catchphrase_grams(text):
+                fan_doc_freq[gram] += 1
+                year_counter[gram] += 1
+        per_year[str(year)] = year_counter
+
+    background_doc_freq: Counter = Counter()
+    background_total = 0
+    for text in background_texts:
+        background_total += 1
+        for gram in _catchphrase_grams(text):
+            background_doc_freq[gram] += 1
+
+    year_totals = {str(year): len(texts) for year, texts in fan_texts_by_year.items()}
+    if fan_total == 0 or background_total == 0:
+        return {"items": [], "year_totals": year_totals}
+
+    # The member's own name is not a catchphrase; drop any phrase that overlaps
+    # it (either way), so "蒋舒婷" and "舒婷蒋舒婷" are both skipped.
+    member_bigrams = {member_name[index : index + 2] for index in range(len(member_name) - 1)}
+    scored = []
+    for gram, count in fan_doc_freq.items():
+        if count < CATCHPHRASE_MIN_SUPPORT:
+            continue
+        if all(char in CATCHPHRASE_FILLER for char in gram):
+            continue
+        if gram in member_name or any(bigram in gram for bigram in member_bigrams):
+            continue
+        fan_rate = count / fan_total
+        # Smooth the background so a phrase that is merely rare overall does not
+        # win on a couple of sightings.
+        background_rate = (background_doc_freq[gram] + 2) / background_total
+        lift = fan_rate / background_rate
+        if lift < CATCHPHRASE_MIN_LIFT:
+            continue
+        scored.append((gram, count, lift))
+    # Highest lift first; a longer phrase breaks ties so "打个商量" beats "个商量".
+    scored.sort(key=lambda entry: (-entry[2], -len(entry[0]), -entry[1], entry[0]))
+
+    def bigrams(value: str) -> set[str]:
+        return {value[index : index + 2] for index in range(len(value) - 1)}
+
+    items: list[dict] = []
+    chosen_bigrams: list[set[str]] = []
+    for gram, count, lift in scored:
+        gram_bigrams = bigrams(gram)
+        # Skip variants of a phrase already shown (祖宗 after 小祖宗) so each
+        # family appears once, represented by its strongest member.
+        if any(gram_bigrams & seen for seen in chosen_bigrams):
+            continue
+        phrase = _trim_filler(gram)
+        items.append({
+            "phrase": phrase,
+            "total": count,
+            "lift": round(lift, 1),
+            "per_year": {year: counter[gram] for year, counter in per_year.items()},
+        })
+        chosen_bigrams.append(gram_bigrams)
+        if len(items) >= CATCHPHRASE_TOP_N:
+            break
+    return {"items": items, "year_totals": year_totals}
 DELAY_BUCKETS = [
     (0, 2, "2分钟内"),
     (2, 5, "2—5分钟"),
@@ -34,7 +135,7 @@ DANMAKU_EVENT_RE = re.compile(
 )
 SPOKEN_ROOM_TYPES = {"TEXT", "REPLY"}
 # Bump when the statistics change meaning, so cached results are not reused.
-REPORT_VERSION = 6
+REPORT_VERSION = 7
 LIVE_GIFT_RE = re.compile(r"^送给\S+\s*(\d+)个(.+)$")
 
 
@@ -307,12 +408,20 @@ def build_report(
             longest = {"days": run_length, "start": run_start.isoformat(), "end": day.isoformat()}
         previous = day
 
-    phrases = {}
-    for year in years:
-        texts = [item["text"] for item in spoken if china_time(item["ms"]).year == year]
-        if texts:
-            phrases[str(year)] = {"total": len(texts),
-                                  **{phrase: sum(phrase in text for text in texts) for phrase in PHRASES}}
+    # Catchphrases compare the fan's live danmaku against everyone else's in the
+    # same lives, so the fan corpus and the background must be the same kind of
+    # text: live danmaku only, not the longer room messages.
+    fan_texts_by_year: dict[int, list[str]] = {year: [] for year in years}
+    for item in spoken:
+        if item["kind"] == "danmaku":
+            fan_texts_by_year[china_time(item["ms"]).year].append(item["text"])
+    background_texts = [
+        text
+        for replay in scoped_replays
+        for _, _, text in replay.lines
+        if not DANMAKU_EVENT_RE.match(text.strip())
+    ]
+    phrases = extract_catchphrases(fan_texts_by_year, background_texts, member_name)
     all_texts = [item["text"] for item in spoken]
     ha_runs = [len(run) for text in all_texts for run in re.findall(r"哈+", text)]
 

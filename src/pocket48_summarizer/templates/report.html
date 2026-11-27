@@ -43,6 +43,7 @@
       <input id="report-member-search" type="search" autocomplete="off" maxlength="40"
         placeholder="搜索名字、拼音、昵称或队伍，比如 yangye、二毛" data-i18n-placeholder="reportMemberSearch">
       <select id="report-member" name="member_pocket_id" required>
+        <option value="" data-search=""{% if not default_member_id %} selected{% endif %} disabled hidden>先搜索并选择主推成员</option>
         {% for member in members %}
           <option value="{{ member.pocket_id }}" data-search="{{ member.search_text }}"{% if member.pocket_id == default_member_id %} selected{% endif %}>
             {{ member.name }} · {{ member.group_name }} {{ member.team_name }}{% if not member.in_group %}（已离团）{% endif %}

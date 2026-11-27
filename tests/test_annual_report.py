@@ -19,6 +19,7 @@ from pocket48_summarizer.annual_report_stats import (
     RoomMessage,
     build_alias_windows,
     build_report,
+    extract_catchphrases,
     match_danmaku,
     parse_lrc_lines,
 )
@@ -131,7 +132,37 @@ def test_build_report_counts_spoken_messages_and_attendance():
     assert "bookends" not in report
     assert report["display_name"] == "花果山大当家Ruoke"
     assert report["ha"] == {"count": 8, "longest": 5}
-    assert report["phrases"]["2025"]["好看"] == 2
+    # Too little data to clear the catchphrase thresholds, but the shape holds.
+    assert report["phrases"]["items"] == []
+    assert report["phrases"]["year_totals"] == {"2025": 3, "2026": 1}
+
+
+def test_extract_catchphrases_surfaces_personal_phrases():
+    # The fan leans on "小祖宗"; "好看" is said by everyone, so only the
+    # distinctive phrase should be reported, and its lift must match itself.
+    fan_texts = ["小祖宗又营业啦"] * 8 + ["今天好看"] * 8 + ["随便说点别的"] * 4
+    background = (["好看好看"] * 400) + (["小祖宗"] * 2) + (["路人甲"] * 400)
+    result = extract_catchphrases({2026: fan_texts}, background, "蒋舒婷")
+    phrases = [item["phrase"] for item in result["items"]]
+    assert "小祖宗" in phrases
+    assert "好看" not in phrases
+    top = next(item for item in result["items"] if item["phrase"] == "小祖宗")
+    assert top["total"] == 8
+    assert top["lift"] >= 8.0
+    assert top["per_year"] == {"2026": 8}
+    assert result["year_totals"] == {"2026": 20}
+
+
+def test_extract_catchphrases_excludes_member_name_and_empty_input():
+    fan_texts = ["蒋舒婷今天状态真好"] * 8 + ["随便说点别的"] * 3
+    background = ["路人甲"] * 50
+    result = extract_catchphrases({2026: fan_texts}, background, "蒋舒婷")
+    phrases = [item["phrase"] for item in result["items"]]
+    assert "蒋舒婷" not in phrases
+    assert "舒婷" not in phrases
+    assert extract_catchphrases({2026: []}, [], "蒋舒婷") == {
+        "items": [], "year_totals": {"2026": 0}
+    }
 
 
 def test_build_report_can_cover_only_2026():
@@ -140,7 +171,7 @@ def test_build_report_can_cover_only_2026():
     assert report["totals"]["room"] == 2
     assert report["totals"]["lives"] == 1
     assert report["monthly"][0]["month"] == "2026-01"
-    assert list(report["phrases"]) == ["2026"]
+    assert list(report["phrases"]["year_totals"]) == ["2026"]
 
 
 @pytest.fixture

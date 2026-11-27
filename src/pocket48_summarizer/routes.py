@@ -2422,7 +2422,7 @@ async def annual_report_page(request: Request) -> Response:
             "share_job_id": shared_job if re.fullmatch(r"[0-9a-f]{32}", shared_job) else "",
             "enabled": settings.annual_report_enabled,
             "members": members,
-            "default_member_id": DEFAULT_HOME_MEMBER_ID,
+            "default_member_id": None,
             "hourly_limit": settings.annual_report_hourly_limit,
         },
     )

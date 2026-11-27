@@ -14,7 +14,6 @@
     missed: "#E2CFA8", yearOld: "#B0657F", yearNew: "#F49AB0"
   };
   const HEAT = [[0, C.creamPanel], [1, "#F3C1CC"], [5, "#E58AA3"], [15, "#C2456E"], [40, "#7A1F45"]];
-  const PHRASE_LABELS = [["哈哈", "带“哈哈”"], ["笑死", "带“笑死”"], ["可爱", "夸“可爱”"], ["好看", "夸“好看”"], ["辛苦", "说“辛苦”"], ["晚安", "说“晚安”"], ["姐", "带“姐”字"]];
 
   // ---------- drawing primitives ----------
   const font = (size) => `${size}px "${FONT}"`;
@@ -389,16 +388,18 @@
   };
 
   const phraseSection = (p, y, report) => {
-    const years = Object.keys(report.phrases);
-    const maxShare = Math.max(0.01, ...years.flatMap((year) => PHRASE_LABELS.map(([key]) => report.phrases[year][key] / report.phrases[year].total)));
-    const rows = PHRASE_LABELS.map(([key, label]) => ({
-      label,
-      counts: years.map((year) => report.phrases[year][key]),
-      raw: years.map((year) => report.phrases[year][key] / report.phrases[year].total),
-      shares: years.map((year) => report.phrases[year][key] / report.phrases[year].total / maxShare)
-    }));
-    y = shareBars(p, y + 16, rows, years, 148, (row, index) => `${(row.raw[index] * 100).toFixed(1)}%（${row.counts[index]}句）`);
-    y = para(p, `占比 = 含该词的发言 ÷ 当年发言总数。`, PAD, y, CW, 24, C.lightMuted);
+    const items = (report.phrases && report.phrases.items) || [];
+    if (items.length) {
+      const maxLift = Math.max(1, ...items.map((item) => item.lift));
+      const rows = items.map((item) => ({
+        label: item.phrase,
+        counts: [item.total],
+        raw: [item.lift],
+        shares: [item.lift / maxLift]
+      }));
+      y = shareBars(p, y + 16, rows, [""], 140, (row) => `${row.counts[0]}次 · 多${Math.round(row.raw[0])}倍`);
+      y = para(p, `“口头禅”＝ 你比其他看${report.member_name}的粉丝更常说的话，“多N倍”是领先大家的倍数。`, PAD, y, CW, 24, C.lightMuted);
+    }
     if (report.ha.count) {
       const haText = `一共打出${fmt(report.ha.count)}个“哈”，最长一次连打${report.ha.longest}个`;
       const lines = wrap(p, haText, CW - 48, 24);
@@ -593,7 +594,7 @@
       let yy = chapter(q, sy, true, "CH.5", "TIME OF DAY", "你几点在说话？", `最常在${peakHour}点`, "按北京时间统计，包含房间留言和弹幕。");
       return hoursChart(q, yy + 24, report);
     });
-    if (Object.keys(report.phrases).length) {
+    if (report.phrases && report.phrases.items && (report.phrases.items.length || report.ha.count)) {
       section(true, (q, sy) => {
         let yy = chapter(q, sy, true, "CH.6", "CATCHPHRASE", "你的口头禅", "", "");
         return phraseSection(q, yy, report);
