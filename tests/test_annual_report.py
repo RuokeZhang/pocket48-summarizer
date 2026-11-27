@@ -133,8 +133,9 @@ def test_build_report_counts_spoken_messages_and_attendance():
     assert report["display_name"] == "花果山大当家Ruoke"
     assert report["ha"] == {"count": 8, "longest": 5}
     # Too little data to clear the catchphrase thresholds, but the shape holds.
+    # Totals count the fan's room messages and danmaku to this member together.
     assert report["phrases"]["items"] == []
-    assert report["phrases"]["year_totals"] == {"2025": 3, "2026": 1}
+    assert report["phrases"]["year_totals"] == {"2025": 6, "2026": 3}
 
 
 def test_extract_catchphrases_surfaces_personal_phrases():

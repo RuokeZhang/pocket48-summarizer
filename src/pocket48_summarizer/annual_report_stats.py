@@ -169,7 +169,7 @@ DANMAKU_EVENT_RE = re.compile(
 )
 SPOKEN_ROOM_TYPES = {"TEXT", "REPLY"}
 # Bump when the statistics change meaning, so cached results are not reused.
-REPORT_VERSION = 7
+REPORT_VERSION = 8
 LIVE_GIFT_RE = re.compile(r"^送给\S+\s*(\d+)个(.+)$")
 
 
@@ -442,13 +442,14 @@ def build_report(
             longest = {"days": run_length, "start": run_start.isoformat(), "end": day.isoformat()}
         previous = day
 
-    # Catchphrases compare the fan's live danmaku against everyone else's in the
-    # same lives, so the fan corpus and the background must be the same kind of
-    # text: live danmaku only, not the longer room messages.
+    # Catchphrases draw on everything the fan wrote to this member — both live
+    # danmaku and room messages — so quieter fans who mostly post in the room
+    # still get a list. The distinctiveness background stays the live danmaku of
+    # everyone in her lives (we have no all-fans room corpus), which is why the
+    # fan's room-only habits such as "早安" can score as their own.
     fan_texts_by_year: dict[int, list[str]] = {year: [] for year in years}
     for item in spoken:
-        if item["kind"] == "danmaku":
-            fan_texts_by_year[china_time(item["ms"]).year].append(item["text"])
+        fan_texts_by_year[china_time(item["ms"]).year].append(item["text"])
     # Sample the background across all lives (never materialize every line) so a
     # member with millions of danmaku stays cheap to report on.
     total_lines = sum(len(replay.lines) for replay in scoped_replays)
