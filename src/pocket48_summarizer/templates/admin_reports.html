@@ -22,7 +22,7 @@
             <td>{{ job.display_name or "—" }}</td>
             <td>{{ job.member_name }}</td>
             <td>{{ "2026" if job.scope == "2026" else "2025—2026" }}</td>
-            <td>{% if job.status == "failed" %}<span title="{{ job.error_message or "" }}">失败 · {{ job.error_code }}</span>{% elif job.status == "completed" %}完成{% else %}{{ job.progress_text }}{% endif %}</td>
+            <td class="report-admin-status">{% if job.status == "failed" %}失败 · {{ job.error_code }}<small>{{ job.error_message or "" }}</small>{% elif job.status == "completed" %}完成{% else %}{{ job.progress_text }}{% endif %}</td>
             <td>{{ job.seconds ~ " 秒" if job.seconds is not none else "—" }}</td>
             <td>{{ job.danmaku if job.danmaku is not none else "—" }} / {{ job.room if job.room is not none else "—" }}</td>
             <td>{% if job.status == "completed" %}<a href="/report?job={{ job.id }}">查看</a>{% endif %}</td>

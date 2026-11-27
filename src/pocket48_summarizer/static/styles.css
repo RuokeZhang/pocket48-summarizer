@@ -3303,3 +3303,5 @@ code { color: #d4c8ff; }
 .report-admin-table th, .report-admin-table td { padding: 8px 10px; border-bottom: 1px solid #2b303d; text-align: left; white-space: nowrap; }
 .report-admin-table th { color: #9299aa; font-weight: 600; }
 .report-admin-table a { color: #ff8bad; }
+.report-admin-table td.report-admin-status { white-space: normal; min-width: 180px; }
+.report-admin-status small { display: block; color: #ff8aaa; font-size: 12px; }

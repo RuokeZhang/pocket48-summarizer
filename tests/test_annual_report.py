@@ -447,6 +447,9 @@ def test_admin_report_history_is_admin_only(settings, repository, reports):
     job = reports.enqueue(uid="1", member=MEMBER, scope="2026", extra_nicknames=[], requester="x")
     reports.claim_next("worker", 60)
     reports.complete(job.id, {"display_name": "小明", "totals": {"danmaku": 5, "room": 2}})
+    failed = reports.enqueue(uid="2", member=MEMBER, scope="2026", extra_nicknames=[], requester="y")
+    reports.claim_next("worker", 60)
+    reports.fail(failed.id, "report_user_not_found", "公开存档里没有找到这个账号的发言")
     app = create_app(configured, ApplicationServices(repository=repository))
     with TestClient(app) as visitor:
         assert visitor.get("/admin/reports", follow_redirects=False).status_code in {303, 401}
@@ -458,5 +461,6 @@ def test_admin_report_history_is_admin_only(settings, repository, reports):
         page = admin.get("/admin/reports")
     assert page.status_code == 200
     assert "小明" in page.text and "杨晔" in page.text
+    assert "公开存档里没有找到这个账号" in page.text
     assert f"/report?job={job.id}" in page.text
     assert 'href="/admin/reports"' in page.text

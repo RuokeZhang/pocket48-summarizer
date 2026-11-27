@@ -852,7 +852,16 @@
         return;
       }
       if (job.status === "failed") {
-        showStatus(job.error ? job.error.message : "生成失败，请稍后再试", true);
+        const advanced = document.querySelector(".report-advanced");
+        if (job.error && job.error.code === "report_user_not_found" && advanced) {
+          // Fans who only chat in lives never appear in the room archive, so
+          // their nicknames have to be typed in before danmaku can be matched.
+          showStatus("公开存档里没有这个 UID 的房间留言，所以认不出你在直播间用的昵称。请在下面「补充用过的昵称」里填上你在直播间的昵称（每行一个），再点生成。", true);
+          advanced.open = true;
+          document.querySelector("#report-nicknames")?.focus();
+        } else {
+          showStatus(job.error ? job.error.message : "生成失败，请稍后再试", true);
+        }
         if (submit) submit.disabled = false;
         return;
       }
